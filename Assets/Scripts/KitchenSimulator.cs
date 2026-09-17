@@ -133,12 +133,51 @@ public class KitchenSimulator : MonoBehaviour
     private const float WallHeight = 2.75f;
     private const float DoorHeight = 2.1f;
 
+    // 跳跃：参考地球重力加速度
+    private const float Gravity = 9.81f;
+    private const float JumpSpeed = 3.9f;   // 起跳高度约 0.78m
+    private const float GroundLevel = 0.02f;
+    private const float StepInterval = 0.38f;
+
+    private enum ToolKind { Drill, Screwdriver, Wrench, Hammer, Scissors, Tape, Tester }
+
+    private class ToolInfo
+    {
+        public string name;
+        public ToolKind kind;
+        public Color color;
+
+        public ToolInfo(string name, ToolKind kind, Color color)
+        {
+            this.name = name;
+            this.kind = kind;
+            this.color = color;
+        }
+    }
+
     // 第一人称手持工具（视图模型）
     private Transform toolPivot;
     private float toolAnim;
     private bool walking;
 
-    private readonly Vector3 spawnPosition = new Vector3(-15f, 0f, -3f);
+    // 跳跃
+    private float verticalVelocity;
+    private bool grounded = true;
+
+    // 工具背包
+    private readonly List<ToolInfo> tools = new List<ToolInfo>();
+    private int currentTool;
+    private bool bagOpen;
+
+    // 音效（运行时合成，无需音频素材）
+    private AudioSource footstepSource;
+    private AudioSource voiceSource;
+    private AudioClip footstepClip;
+    private AudioClip[] voiceBlips;
+    private float voiceTimer;
+    private float stepTimer;
+
+    private readonly Vector3 spawnPosition = new Vector3(-15f, GroundLevel, -3f);
 
     // 开场 NPC 对话
     private class DialogueLine
@@ -224,6 +263,8 @@ public class KitchenSimulator : MonoBehaviour
             BuildPlayer();
             BuildNpc();
             BuildIntroDialogue();
+            BuildTools();
+            BuildAudio();
         }
         catch (System.Exception e)
         {
@@ -286,38 +327,45 @@ public class KitchenSimulator : MonoBehaviour
     // ── 室外小区环境 ──────────────────────────────────────
     private void BuildOutdoor()
     {
-        // 草坪
-        CreateDecoCube("Lawn", new Vector3(4f, -0.2f, 2f), new Vector3(140f, 0.4f, 110f), new Color(0.38f, 0.6f, 0.3f));
+        // 各层顶面高度严格错开，避免共面导致的 z-fighting 闪烁
+        // 草坪顶 -0.02 / 小路顶 0.00 / 路缘石顶 0.06 / 路面顶 -0.06 / 车道线顶 -0.025
+        CreateDecoCube("Lawn", new Vector3(4f, -0.27f, 2f), new Vector3(140f, 0.5f, 110f), new Color(0.38f, 0.6f, 0.3f));
 
-        // 道路
         Color asphalt = new Color(0.29f, 0.3f, 0.31f);
         Color pavement = new Color(0.68f, 0.68f, 0.66f);
-        CreateDecoCube("Road Main", new Vector3(4f, -0.03f, -15f), new Vector3(140f, 0.06f, 8f), asphalt);
-        CreateDecoCube("Curb North", new Vector3(4f, 0f, -10.7f), new Vector3(140f, 0.1f, 0.6f), pavement);
-        CreateDecoCube("Curb South", new Vector3(4f, 0f, -19.3f), new Vector3(140f, 0.1f, 0.6f), pavement);
+        CreateDecoCube("Road Main", new Vector3(4f, -0.2f, -15f), new Vector3(140f, 0.28f, 8f), asphalt);
+        CreateDecoCube("Curb North", new Vector3(4f, -0.02f, -10.7f), new Vector3(140f, 0.16f, 0.6f), pavement);
+        CreateDecoCube("Curb South", new Vector3(4f, -0.02f, -19.3f), new Vector3(140f, 0.16f, 0.6f), pavement);
         for (int x = -60; x < 70; x += 9)
         {
-            CreateDecoCube("Road Mark", new Vector3(x, 0.01f, -15f), new Vector3(4f, 0.02f, 0.22f), new Color(0.93f, 0.91f, 0.8f));
+            CreateDecoCube("Road Mark", new Vector3(x, -0.04f, -15f), new Vector3(4f, 0.03f, 0.22f), new Color(0.93f, 0.91f, 0.8f));
         }
 
         // 通往两栋楼的小路
-        CreateDecoCube("Path Company", new Vector3(-13f, -0.03f, -7.6f), new Vector3(3f, 0.06f, 6.4f), pavement);
-        CreateDecoCube("Path House", new Vector3(3.4f, -0.03f, -4f), new Vector3(2.8f, 0.06f, 9f), pavement);
-        CreateDecoCube("Path House Cross", new Vector3(6f, -0.03f, -9f), new Vector3(8f, 0.06f, 2.4f), pavement);
+        CreateDecoCube("Path Company", new Vector3(-13f, -0.06f, -7.6f), new Vector3(3f, 0.12f, 6.4f), pavement);
+        CreateDecoCube("Path House", new Vector3(3.4f, -0.06f, -4f), new Vector3(2.8f, 0.12f, 9f), pavement);
+        CreateDecoCube("Path House Cross", new Vector3(6f, -0.06f, -9f), new Vector3(8f, 0.12f, 2.4f), pavement);
 
-        // 树木
-        float[] tx = { -25f, -21f, 8f, 20f, 30f, -32f, 34f, 13f, -6f, 26f, -15f };
-        float[] tz = { -5f, 5f, -3f, -3f, 3f, 12f, -12f, 15f, 14f, 16f, 16f };
+        // 树木（避开两栋楼的范围）
+        float[] tx = { -25f, -21f, 30f, -32f, 34f, 13f, -6f, 26f, 32f, -28f, 8f };
+        float[] tz = { -5f, 5f, 3f, 12f, -12f, 15f, 14f, 16f, -6f, -14f, 13f };
         for (int i = 0; i < tx.Length; i++)
         {
-            BuildTree(tx[i], tz[i]);
+            if (!InsideBuilding(tx[i], tz[i]))
+            {
+                BuildTree(tx[i], tz[i]);
+            }
         }
 
         // 灌木
         for (int i = 0; i < 8; i++)
         {
             float bx = -30f + i * 9f;
-            CreateDecoSphere("Bush", new Vector3(bx, 0.32f, -9.6f), 0.5f, MakeMaterial(new Color(0.26f, 0.5f, 0.24f), 0.02f, 0.3f));
+            if (InsideBuilding(bx, -9.6f))
+            {
+                continue;
+            }
+            CreateDecoSphere("Bush", new Vector3(bx, 0.3f, -9.6f), 0.5f, MakeMaterial(new Color(0.26f, 0.5f, 0.24f), 0.02f, 0.3f));
         }
 
         // 云
@@ -327,6 +375,16 @@ public class KitchenSimulator : MonoBehaviour
         BuildCloud(new Vector3(36f, 20f, 18f), 1.3f);
         BuildCloud(new Vector3(-44f, 18f, 10f), 1.4f);
         BuildCloud(new Vector3(24f, 16.5f, 48f), 1.1f);
+    }
+
+    // 两栋建筑的外扩范围，用于避免绿化穿模进屋
+    private static bool InsideBuilding(float x, float z)
+    {
+        if (x > -19.8f && x < -6.2f && z > -6.8f && z < 6.8f)
+        {
+            return true;
+        }
+        return x > 0.2f && x < 27.8f && z > -9.8f && z < 11.8f;
     }
 
     private void BuildTree(float x, float z)
@@ -851,6 +909,21 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        // 工具切换：Q 键 / 鼠标滚轮；B 键开关背包
+        if (Input.GetKeyDown(KeyCode.Q))
+        {
+            NextTool(1);
+        }
+        float scroll = Input.mouseScrollDelta.y;
+        if (Mathf.Abs(scroll) > 0.01f)
+        {
+            NextTool(scroll > 0f ? 1 : -1);
+        }
+        if (Input.GetKeyDown(KeyCode.B))
+        {
+            bagOpen = !bagOpen;
+        }
+
         // 按住 Tab 唤出鼠标（松开自动收回），Esc 也可释放
         bool wantMouse = Input.GetKey(KeyCode.Tab);
         if (Input.GetKeyDown(KeyCode.Escape))
@@ -924,30 +997,192 @@ public class KitchenSimulator : MonoBehaviour
         BuildViewmodel();
     }
 
+    // ── 工具背包 ──────────────────────────────────────────
+    private void BuildTools()
+    {
+        tools.Add(new ToolInfo("电动起子", ToolKind.Drill, new Color(0.85f, 0.35f, 0.12f)));
+        tools.Add(new ToolInfo("螺丝刀", ToolKind.Screwdriver, new Color(0.85f, 0.72f, 0.1f)));
+        tools.Add(new ToolInfo("活动扳手", ToolKind.Wrench, new Color(0.6f, 0.62f, 0.66f)));
+        tools.Add(new ToolInfo("羊角锤", ToolKind.Hammer, new Color(0.45f, 0.47f, 0.5f)));
+        tools.Add(new ToolInfo("剪刀", ToolKind.Scissors, new Color(0.75f, 0.76f, 0.8f)));
+        tools.Add(new ToolInfo("防水胶布", ToolKind.Tape, new Color(0.15f, 0.15f, 0.16f)));
+        tools.Add(new ToolInfo("测电笔", ToolKind.Tester, new Color(0.9f, 0.25f, 0.2f)));
+        currentTool = 0;
+        BuildToolModel();
+    }
+
+    private void NextTool(int delta)
+    {
+        if (tools.Count == 0)
+        {
+            return;
+        }
+        currentTool = (currentTool + delta) % tools.Count;
+        if (currentTool < 0)
+        {
+            currentTool += tools.Count;
+        }
+        BuildToolModel();
+        ShowToast("切换工具：" + tools[currentTool].name, 2f);
+    }
+
+    // 按当前工具重建手持模型
+    private void BuildToolModel()
+    {
+        if (toolPivot == null || tools.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = toolPivot.childCount - 1; i >= 0; i--)
+        {
+            Transform child = toolPivot.GetChild(i);
+            child.SetParent(null, false);
+            Destroy(child.gameObject);
+        }
+
+        ToolInfo tool = tools[currentTool];
+        Material grip = MakeMaterial(new Color(0.24f, 0.26f, 0.3f), 0.15f, 0.45f);
+        Material metal = MakeMaterial(new Color(0.78f, 0.8f, 0.84f), 0.85f, 0.8f);
+        Material accent = MakeMaterial(tool.color, 0.35f, 0.55f);
+        Material skin = MakeMaterial(new Color(0.82f, 0.64f, 0.47f), 0.02f, 0.3f);
+
+        // 握持的手
+        DecoPart(PrimitiveType.Cube, "Hand", toolPivot, new Vector3(0.01f, -0.06f, -0.02f), new Vector3(0.085f, 0.085f, 0.11f), Quaternion.identity, skin);
+
+        switch (tool.kind)
+        {
+            case ToolKind.Drill:
+                DecoPart(PrimitiveType.Cube, "Body", toolPivot, Vector3.zero, new Vector3(0.075f, 0.09f, 0.22f), Quaternion.identity, accent);
+                DecoPart(PrimitiveType.Cube, "Grip", toolPivot, new Vector3(0f, -0.11f, -0.05f), new Vector3(0.06f, 0.14f, 0.07f), Quaternion.Euler(14f, 0f, 0f), grip);
+                DecoPart(PrimitiveType.Cylinder, "Bit", toolPivot, new Vector3(0f, 0f, 0.16f), new Vector3(0.014f, 0.05f, 0.014f), Quaternion.Euler(90f, 0f, 0f), metal);
+                break;
+
+            case ToolKind.Screwdriver:
+                DecoPart(PrimitiveType.Cylinder, "Shaft", toolPivot, new Vector3(0f, 0f, 0.11f), new Vector3(0.013f, 0.09f, 0.013f), Quaternion.Euler(90f, 0f, 0f), metal);
+                DecoPart(PrimitiveType.Cylinder, "Ferrule", toolPivot, new Vector3(0f, 0f, 0.02f), new Vector3(0.022f, 0.02f, 0.022f), Quaternion.Euler(90f, 0f, 0f), metal);
+                DecoPart(PrimitiveType.Cylinder, "Handle", toolPivot, new Vector3(0f, 0f, -0.05f), new Vector3(0.035f, 0.055f, 0.035f), Quaternion.Euler(90f, 0f, 0f), accent);
+                break;
+
+            case ToolKind.Wrench:
+                DecoPart(PrimitiveType.Cube, "Handle", toolPivot, new Vector3(0f, 0f, -0.02f), new Vector3(0.035f, 0.028f, 0.2f), Quaternion.identity, metal);
+                DecoPart(PrimitiveType.Cube, "Head", toolPivot, new Vector3(0f, 0f, 0.12f), new Vector3(0.09f, 0.03f, 0.08f), Quaternion.identity, metal);
+                DecoPart(PrimitiveType.Cube, "Jaw Top", toolPivot, new Vector3(0.028f, 0.01f, 0.17f), new Vector3(0.03f, 0.03f, 0.05f), Quaternion.identity, metal);
+                DecoPart(PrimitiveType.Cube, "Jaw Bottom", toolPivot, new Vector3(0.028f, -0.01f, 0.17f), new Vector3(0.03f, 0.02f, 0.05f), Quaternion.identity, metal);
+                break;
+
+            case ToolKind.Hammer:
+                DecoPart(PrimitiveType.Cylinder, "Handle", toolPivot, new Vector3(0f, 0f, -0.03f), new Vector3(0.018f, 0.1f, 0.018f), Quaternion.Euler(90f, 0f, 0f), grip);
+                DecoPart(PrimitiveType.Cube, "Head", toolPivot, new Vector3(0f, 0f, 0.1f), new Vector3(0.055f, 0.055f, 0.13f), Quaternion.identity, metal);
+                DecoPart(PrimitiveType.Cube, "Claw", toolPivot, new Vector3(0f, 0f, 0.18f), new Vector3(0.04f, 0.05f, 0.05f), Quaternion.Euler(0f, 0f, 0f), metal);
+                break;
+
+            case ToolKind.Scissors:
+                DecoPart(PrimitiveType.Cube, "Blade L", toolPivot, new Vector3(-0.014f, 0f, 0.1f), new Vector3(0.012f, 0.035f, 0.16f), Quaternion.Euler(0f, 6f, 0f), metal);
+                DecoPart(PrimitiveType.Cube, "Blade R", toolPivot, new Vector3(0.014f, 0f, 0.1f), new Vector3(0.012f, 0.035f, 0.16f), Quaternion.Euler(0f, -6f, 0f), metal);
+                DecoPart(PrimitiveType.Cylinder, "Pivot", toolPivot, new Vector3(0f, 0f, 0.03f), new Vector3(0.015f, 0.008f, 0.015f), Quaternion.Euler(90f, 0f, 0f), metal);
+                DecoPart(PrimitiveType.Cylinder, "Grip L", toolPivot, new Vector3(-0.03f, 0f, -0.06f), new Vector3(0.03f, 0.012f, 0.03f), Quaternion.Euler(90f, 0f, 0f), accent);
+                DecoPart(PrimitiveType.Cylinder, "Grip R", toolPivot, new Vector3(0.03f, 0f, -0.06f), new Vector3(0.03f, 0.012f, 0.03f), Quaternion.Euler(90f, 0f, 0f), accent);
+                break;
+
+            case ToolKind.Tape:
+                DecoPart(PrimitiveType.Cylinder, "Roll", toolPivot, new Vector3(0f, 0f, 0.02f), new Vector3(0.07f, 0.03f, 0.07f), Quaternion.Euler(90f, 0f, 0f), accent);
+                DecoPart(PrimitiveType.Cylinder, "Core", toolPivot, new Vector3(0f, 0f, 0.02f), new Vector3(0.032f, 0.035f, 0.032f), Quaternion.Euler(90f, 0f, 0f), MakeMaterial(new Color(0.85f, 0.83f, 0.78f), 0.05f, 0.5f));
+                DecoPart(PrimitiveType.Cube, "Strip", toolPivot, new Vector3(0.03f, -0.05f, 0.09f), new Vector3(0.03f, 0.005f, 0.11f), Quaternion.Euler(24f, 0f, 0f), MakeMaterial(new Color(0.88f, 0.86f, 0.82f), 0.05f, 0.5f));
+                break;
+
+            case ToolKind.Tester:
+                DecoPart(PrimitiveType.Cube, "Body", toolPivot, new Vector3(0f, 0f, 0.02f), new Vector3(0.03f, 0.03f, 0.16f), Quaternion.identity, accent);
+                DecoPart(PrimitiveType.Cylinder, "Tip", toolPivot, new Vector3(0f, 0f, 0.14f), new Vector3(0.008f, 0.03f, 0.008f), Quaternion.Euler(90f, 0f, 0f), metal);
+                DecoPart(PrimitiveType.Cube, "Lamp", toolPivot, new Vector3(0f, 0.02f, -0.02f), new Vector3(0.022f, 0.022f, 0.022f), Quaternion.identity, MakeMaterial(new Color(0.4f, 1f, 0.45f), 0f, 0.6f));
+                break;
+        }
+    }
+
     // 第一人称手持工具（挂在相机下，随视角移动）
     private void BuildViewmodel()
     {
         Material sleeve = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
-        Material skin = MakeMaterial(new Color(0.82f, 0.64f, 0.47f), 0.02f, 0.3f);
-        Material toolBody = MakeMaterial(new Color(0.85f, 0.35f, 0.12f), 0.55f, 0.6f);
-        Material toolMetal = MakeMaterial(new Color(0.75f, 0.77f, 0.8f), 0.85f, 0.8f);
-
         Transform cam = viewCamera.transform;
 
         // 两条前臂，从画面下方伸向工具
         MakePrimitive(PrimitiveType.Cube, "View Left Arm", cam, new Vector3(0.05f, -0.42f, 0.36f), new Vector3(0.1f, 0.1f, 0.34f), Quaternion.Euler(-10f, 12f, 0f), sleeve);
         MakePrimitive(PrimitiveType.Cube, "View Right Arm", cam, new Vector3(0.3f, -0.44f, 0.34f), new Vector3(0.1f, 0.1f, 0.36f), Quaternion.Euler(-8f, -10f, 0f), sleeve);
 
-        // 手持工具：电动起子（机身 + 握把 + 钻头）
+        // 手持工具的挂点（具体模型由 BuildToolModel 按当前工具生成）
         toolPivot = new GameObject("Tool").transform;
         toolPivot.SetParent(cam, false);
         toolPivot.localPosition = new Vector3(0.19f, -0.31f, 0.5f);
         toolPivot.localRotation = Quaternion.Euler(-8f, -14f, 4f);
+    }
 
-        MakePrimitive(PrimitiveType.Cube, "Tool Body", toolPivot, Vector3.zero, new Vector3(0.075f, 0.09f, 0.22f), Quaternion.identity, toolBody);
-        MakePrimitive(PrimitiveType.Cube, "Tool Grip", toolPivot, new Vector3(0f, -0.11f, -0.05f), new Vector3(0.06f, 0.14f, 0.07f), Quaternion.Euler(14f, 0f, 0f), toolBody);
-        MakePrimitive(PrimitiveType.Cylinder, "Tool Bit", toolPivot, new Vector3(0f, 0f, 0.16f), new Vector3(0.016f, 0.05f, 0.016f), Quaternion.Euler(90f, 0f, 0f), toolMetal);
-        MakePrimitive(PrimitiveType.Cube, "Tool Hand", toolPivot, new Vector3(0.01f, -0.06f, -0.02f), new Vector3(0.085f, 0.085f, 0.11f), Quaternion.identity, skin);
+    // ── 音效（运行时合成，不依赖音频素材）─────────────────
+    private void BuildAudio()
+    {
+        footstepSource = player.AddComponent<AudioSource>();
+        footstepSource.playOnAwake = false;
+        footstepSource.spatialBlend = 0f;
+        voiceSource = gameObject.AddComponent<AudioSource>();
+        voiceSource.playOnAwake = false;
+        voiceSource.spatialBlend = 0f;
+        voiceSource.volume = 0.55f;
+
+        footstepClip = CreateFootstepClip();
+        voiceBlips = new AudioClip[5];
+        float[] freqs = { 210f, 245f, 280f, 320f, 175f };
+        for (int i = 0; i < voiceBlips.Length; i++)
+        {
+            voiceBlips[i] = CreateBlipClip(freqs[i], 0.11f);
+        }
+    }
+
+    private static AudioClip CreateFootstepClip()
+    {
+        const int rate = 44100;
+        int length = (int)(rate * 0.16f);
+        float[] data = new float[length];
+        System.Random rng = new System.Random(20250917);
+        for (int i = 0; i < length; i++)
+        {
+            float t = (float)i / rate;
+            float envelope = Mathf.Exp(-t * 34f);
+            float noise = (float)(rng.NextDouble() * 2.0 - 1.0) * 0.5f;
+            float thud = Mathf.Sin(2f * Mathf.PI * 92f * t) * 0.7f;
+            data[i] = (noise + thud) * envelope * 0.4f;
+        }
+        AudioClip clip = AudioClip.Create("Footstep", length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    private static AudioClip CreateBlipClip(float frequency, float duration)
+    {
+        const int rate = 44100;
+        int length = Mathf.Max(1, (int)(rate * duration));
+        float[] data = new float[length];
+        for (int i = 0; i < length; i++)
+        {
+            float t = (float)i / rate;
+            // 短促起音 + 快速衰减，做成卡通配音的"哔哔"声
+            float envelope = Mathf.Min(1f, t / 0.006f) * Mathf.Exp(-t * 24f);
+            float square = Mathf.Sign(Mathf.Sin(2f * Mathf.PI * frequency * t)) * 0.5f;
+            float overtone = Mathf.Sin(2f * Mathf.PI * frequency * 2.2f * t) * 0.3f;
+            data[i] = (square + overtone) * envelope * 0.3f;
+        }
+        AudioClip clip = AudioClip.Create("Blip", length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    private void SpeakBlip()
+    {
+        if (voiceSource == null || voiceBlips == null || voiceBlips.Length == 0)
+        {
+            return;
+        }
+        voiceTimer = Random.Range(0.07f, 0.12f);
+        voiceSource.pitch = Random.Range(0.85f, 1.18f);
+        voiceSource.PlayOneShot(voiceBlips[Random.Range(0, voiceBlips.Length)], 0.5f);
     }
 
     // ── 开场 NPC 与对话 ───────────────────────────────────
@@ -1007,13 +1242,22 @@ public class KitchenSimulator : MonoBehaviour
             if (introDelay <= 0f)
             {
                 dialogueIndex = 0;
+                SpeakBlip();
             }
             return;
+        }
+
+        // 说话时按节奏"嘟嘟"（模仿戴夫那类卡通配音）
+        voiceTimer -= Time.deltaTime;
+        if (voiceTimer <= 0f)
+        {
+            SpeakBlip();
         }
 
         if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Space))
         {
             dialogueIndex++;
+            SpeakBlip();
             if (dialogueIndex >= dialogue.Count)
             {
                 dialogueIndex = -1;
@@ -1032,45 +1276,82 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        // 对话中或维修中不允许移动 / 跳跃
+        bool blocked = repairingOrder != null || dialogueIndex >= 0;
+
+        // 垂直：真实重力 + 跳跃；落地即停，绝不穿地
+        if (grounded && !blocked && Input.GetKeyDown(KeyCode.Space))
+        {
+            verticalVelocity = JumpSpeed;
+            grounded = false;
+        }
+        verticalVelocity -= Gravity * Time.deltaTime;
+        playerPosition.y += verticalVelocity * Time.deltaTime;
+        if (playerPosition.y <= GroundLevel)
+        {
+            playerPosition.y = GroundLevel;
+            verticalVelocity = 0f;
+            grounded = true;
+        }
+
         Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));
         input = Vector3.ClampMagnitude(input, 1f);
-
-        // 对话中或维修中不允许移动
-        bool blocked = repairingOrder != null || dialogueIndex >= 0;
         bool moving = input.sqrMagnitude > 0.01f && !blocked;
-        if (!moving)
+
+        if (moving)
         {
-            walking = false;
+            // 以视角朝向为基准移动
+            Vector3 direction = Quaternion.Euler(0f, lookYaw, 0f) * input.normalized;
+            Vector3 move = direction * MoveSpeed * Time.deltaTime;
+            Vector3 target = playerPosition + move;
+
+            if (!Collides(target))
+            {
+                playerPosition = target;
+            }
+            else
+            {
+                // 分离轴滑动，让角色贴墙走
+                Vector3 xOnly = new Vector3(playerPosition.x + move.x, 0f, playerPosition.z);
+                if (!Collides(xOnly))
+                {
+                    playerPosition = xOnly;
+                }
+                Vector3 zOnly = new Vector3(playerPosition.x, 0f, playerPosition.z + move.z);
+                if (!Collides(zOnly))
+                {
+                    playerPosition = zOnly;
+                }
+            }
+        }
+
+        walking = moving;
+        player.transform.position = playerPosition;
+        UpdateFootsteps();
+    }
+
+    // 走路脚步声：与步伐同步，音量随机微变避免机械感
+    private void UpdateFootsteps()
+    {
+        if (footstepSource == null || footstepClip == null)
+        {
             return;
         }
 
-        // 以视角朝向为基准移动
-        Vector3 direction = Quaternion.Euler(0f, lookYaw, 0f) * input.normalized;
-
-        Vector3 move = direction * MoveSpeed * Time.deltaTime;
-        Vector3 target = playerPosition + move;
-
-        if (!Collides(target))
+        if (walking && grounded)
         {
-            playerPosition = target;
+            stepTimer -= Time.deltaTime;
+            if (stepTimer <= 0f)
+            {
+                stepTimer = StepInterval;
+                footstepSource.pitch = Random.Range(0.9f, 1.1f);
+                footstepSource.PlayOneShot(footstepClip, 0.5f);
+            }
         }
         else
         {
-            // 分离轴滑动，让角色贴墙走
-            Vector3 xOnly = new Vector3(playerPosition.x + move.x, 0f, playerPosition.z);
-            if (!Collides(xOnly))
-            {
-                playerPosition = xOnly;
-            }
-            Vector3 zOnly = new Vector3(playerPosition.x, 0f, playerPosition.z + move.z);
-            if (!Collides(zOnly))
-            {
-                playerPosition = zOnly;
-            }
+            stepTimer = 0f;
         }
-
-        player.transform.position = playerPosition;
-        walking = true;
     }
 
     private bool Collides(Vector3 position)
@@ -1100,7 +1381,16 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         float t = Time.time * 9f;
-        if (walking)
+        if (!grounded)
+        {
+            // 腾空：收腿抬臂
+            leftArmPivot.localRotation = Quaternion.Euler(-38f, 0f, 0f);
+            rightArmPivot.localRotation = Quaternion.Euler(-38f, 0f, 0f);
+            leftLegPivot.localRotation = Quaternion.Euler(32f, 0f, 0f);
+            rightLegPivot.localRotation = Quaternion.Euler(24f, 0f, 0f);
+            playerBody.localPosition = new Vector3(0f, 0.85f, 0f);
+        }
+        else if (walking)
         {
             float swing = Mathf.Sin(t) * 26f;
             leftArmPivot.localRotation = Quaternion.Euler(swing, 0f, 0f);
@@ -1478,6 +1768,8 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
     private Rect PromptRect { get { return new Rect(16f, Screen.height - 152f, 430f, 112f); } }
+    private Rect ToolChipRect { get { return new Rect(16f, Screen.height - 196f, 340f, 36f); } }
+    private Rect BagRect { get { return new Rect(16f, 146f, 288f, 56f + tools.Count * 32f); } }
     private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
 
     private void OnGUI()
@@ -1486,6 +1778,8 @@ public class KitchenSimulator : MonoBehaviour
         DrawMinimap();
         DrawBudgetPanel();
         DrawTaskList();
+        DrawBag();
+        DrawToolChip();
         DrawPromptPanel();
         DrawDialogue();
         DrawHintBar();
@@ -1678,6 +1972,56 @@ public class KitchenSimulator : MonoBehaviour
         return order.state == OrderState.Fixed ? fixedColor : pendingColor;
     }
 
+    // ── 工具背包 ──────────────────────────────────────────
+    private void DrawToolChip()
+    {
+        if (tools.Count == 0)
+        {
+            return;
+        }
+
+        Rect rect = ToolChipRect;
+        DrawPanel(rect, panelFill, panelBorder);
+        Fill(new Rect(rect.x + 10f, rect.y + 9f, 4f, 18f), tools[currentTool].color);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 8f, rect.width - 32f, 22f),
+            "当前工具：" + tools[currentTool].name + "   [Q / 滚轮 切换]", smallStyle);
+    }
+
+    private void DrawBag()
+    {
+        if (!bagOpen || tools.Count == 0)
+        {
+            return;
+        }
+
+        Rect rect = BagRect;
+        DrawPanel(rect, panelFill, panelBorder);
+        Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 28f), btnBlue);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 200f, 26f), "工具包", titleStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 220f, 18f), "Q / 滚轮 切换　·　B 收起", smallStyle);
+
+        for (int i = 0; i < tools.Count; i++)
+        {
+            Rect row = new Rect(rect.x + 10f, rect.y + 62f + i * 32f, rect.width - 20f, 28f);
+            bool isCurrent = i == currentTool;
+            bool hover = row.Contains(Event.current.mousePosition);
+
+            DrawPanel(row, isCurrent ? new Color(1f, 1f, 1f, 0.14f) : (hover ? new Color(1f, 1f, 1f, 0.08f) : new Color(1f, 1f, 1f, 0.03f)), Color.clear);
+            if (GUI.Button(row, GUIContent.none, GUIStyle.none))
+            {
+                currentTool = i;
+                BuildToolModel();
+            }
+
+            Fill(new Rect(row.x + 10f, row.y + 9f, 10f, 10f), tools[i].color);
+            GUI.Label(new Rect(row.x + 28f, row.y + 4f, row.width - 38f, 20f), tools[i].name, cardTitleStyle);
+            if (isCurrent)
+            {
+                GUI.Label(new Rect(row.x + row.width - 60f, row.y + 6f, 52f, 18f), "使用中", smallStyle);
+            }
+        }
+    }
+
     private void DrawPromptPanel()
     {
         Rect rect = PromptRect;
@@ -1719,7 +2063,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　鼠标 转动视角　·　按住 Tab 唤出鼠标　·　靠近红色感叹号按 E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　空格 跳跃　·　鼠标 转视角　·　按住 Tab 唤出鼠标　·　Q/滚轮 换工具　·　B 工具包　·　E 维修", centerStyle);
     }
 
     private void DrawToast()
@@ -1841,8 +2185,8 @@ public class KitchenSimulator : MonoBehaviour
     private bool IsPointerOverGui(Vector2 mousePosition)
     {
         Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
-        return BudgetRect.Contains(point) || TaskListRect.Contains(point)
-            || PromptRect.Contains(point) || MinimapRect.Contains(point);
+        return BudgetRect.Contains(point) || TaskListRect.Contains(point) || MinimapRect.Contains(point)
+            || PromptRect.Contains(point) || ToolChipRect.Contains(point) || (bagOpen && BagRect.Contains(point));
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
