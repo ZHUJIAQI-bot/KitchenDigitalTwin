@@ -532,7 +532,7 @@ public class KitchenSimulator : MonoBehaviour
 
         // 外墙：前墙留大门洞，左右与后墙开窗
         BuildWallWithOpenings("Company Wall Front", true, z0, x0, x1, 0.24f, wall,
-            doorStart, doorEnd, 0f, 2.2f);
+            doorStart, doorEnd, 0f, 1.95f);
         BuildWallWithOpenings("Company Wall Back", true, z1, x0, x1, 0.24f, wall,
             -18f, -15.5f, 0.95f, 2.15f,
             -13f, -10.5f, 0.95f, 2.15f);
@@ -550,14 +550,15 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildRoof("Company Roof", -14f, -1f, 12f, 12f, new Color(0.42f, 0.36f, 0.34f));
 
-        // 招牌 + 标价牌（前墙外侧）；文字朝向来路方向（-Z），并留出足够空隙避免穿模
-        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.47f, z0 - 0.25f), new Vector3(5.4f, 0.5f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
-        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.47f, z0 - 0.42f), 0.26f, Color.white);
+        // 招牌 + 标价牌（前墙外侧）
+        // TextMesh 每行世界高度 = characterSize × fontSize(64) ÷ 10，按此精确配尺寸，避免溢出
+        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.36f, z0 - 0.25f), new Vector3(4.4f, 0.72f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
+        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.36f, z0 - 0.42f), 0.09f, Color.white);   // 3.46 × 0.58
 
         CreateDecoCube("Price Board", new Vector3(-12.6f, 1.6f, z0 - 0.25f), new Vector3(3.4f, 2.2f, 0.1f), new Color(0.93f, 0.92f, 0.88f));
         CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.6f, z0 - 0.19f), new Vector3(3.7f, 2.5f, 0.08f), new Color(0.35f, 0.28f, 0.2f));
-        CreateWorldLabel("维 修 价 目 表\n──────────\n水路渗漏  ¥3200\n电路检修  ¥2600\n燃气管道  ¥4600\n墙面翻新  ¥2800\n地面空鼓  ¥2200\n门窗调整  ¥1200",
-            new Vector3(-12.6f, 1.6f, z0 - 0.45f), 0.15f, new Color(0.15f, 0.15f, 0.18f));
+        CreateWorldLabel("维 修 价 目 表\n────────\n水路渗漏 ¥3200\n电路检修 ¥2600\n燃气管道 ¥4600\n墙面翻新 ¥2800\n地面空鼓 ¥2200",
+            new Vector3(-12.6f, 1.6f, z0 - 0.45f), 0.046f, new Color(0.15f, 0.15f, 0.18f));            // 2.94 × 1.62
 
         // 室内陈设
         BuildDeskStation(-15f, -4.2f, 180f, false);
