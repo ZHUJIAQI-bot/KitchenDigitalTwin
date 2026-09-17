@@ -171,6 +171,7 @@ public class KitchenSimulator : MonoBehaviour
     private readonly List<ToolInfo> tools = new List<ToolInfo>();
     private int currentTool;
     private bool bagOpen;
+    private bool minimapLarge;
 
     // 门
     private class HouseDoor
@@ -531,7 +532,7 @@ public class KitchenSimulator : MonoBehaviour
 
         // 外墙：前墙留大门洞，左右与后墙开窗
         BuildWallWithOpenings("Company Wall Front", true, z0, x0, x1, 0.24f, wall,
-            doorStart, doorEnd, 0f, 2.4f);
+            doorStart, doorEnd, 0f, 2.2f);
         BuildWallWithOpenings("Company Wall Back", true, z1, x0, x1, 0.24f, wall,
             -18f, -15.5f, 0.95f, 2.15f,
             -13f, -10.5f, 0.95f, 2.15f);
@@ -549,14 +550,14 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildRoof("Company Roof", -14f, -1f, 12f, 12f, new Color(0.42f, 0.36f, 0.34f));
 
-        // 招牌 + 标价牌（前墙外侧）
-        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.75f, z0 - 0.25f), new Vector3(5.4f, 0.9f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
-        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.75f, z0 - 0.33f), 0.36f, Color.white);
+        // 招牌 + 标价牌（前墙外侧）；文字朝向来路方向（-Z），并留出足够空隙避免穿模
+        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.47f, z0 - 0.25f), new Vector3(5.4f, 0.5f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
+        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.47f, z0 - 0.42f), 0.26f, Color.white);
 
         CreateDecoCube("Price Board", new Vector3(-12.6f, 1.6f, z0 - 0.25f), new Vector3(3.4f, 2.2f, 0.1f), new Color(0.93f, 0.92f, 0.88f));
-        CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.6f, z0 - 0.21f), new Vector3(3.6f, 2.4f, 0.06f), new Color(0.35f, 0.28f, 0.2f));
+        CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.6f, z0 - 0.19f), new Vector3(3.7f, 2.5f, 0.08f), new Color(0.35f, 0.28f, 0.2f));
         CreateWorldLabel("维 修 价 目 表\n──────────\n水路渗漏  ¥3200\n电路检修  ¥2600\n燃气管道  ¥4600\n墙面翻新  ¥2800\n地面空鼓  ¥2200\n门窗调整  ¥1200",
-            new Vector3(-12.6f, 1.6f, z0 - 0.3f), 0.16f, new Color(0.15f, 0.15f, 0.18f));
+            new Vector3(-12.6f, 1.6f, z0 - 0.45f), 0.15f, new Color(0.15f, 0.15f, 0.18f));
 
         // 室内陈设
         BuildDeskStation(-15f, -4.2f, 180f, false);
@@ -636,7 +637,8 @@ public class KitchenSimulator : MonoBehaviour
         GameObject label = new GameObject("Label");
         label.transform.SetParent(transform, false);
         label.transform.position = position;
-        label.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+        // TextMesh 默认正面朝 -Z，正好面向从南侧道路走来的玩家
+        label.transform.rotation = Quaternion.identity;
 
         TextMesh mesh = label.AddComponent<TextMesh>();
         mesh.font = UiFont;
@@ -1245,6 +1247,10 @@ public class KitchenSimulator : MonoBehaviour
         {
             bagOpen = !bagOpen;
         }
+        if (Input.GetKeyDown(KeyCode.M))
+        {
+            minimapLarge = !minimapLarge;
+        }
 
         // 按住 Tab 唤出鼠标（松开自动收回），Esc 也可释放
         bool wantMouse = Input.GetKey(KeyCode.Tab);
@@ -1679,9 +1685,17 @@ public class KitchenSimulator : MonoBehaviour
     private bool Collides(Vector3 position)
     {
         Vector2 p = new Vector2(position.x, position.z);
+        float bodyBottom = position.y;
+        float bodyTop = position.y + 1.7f;
+
         for (int i = 0; i < obstacles.Count; i++)
         {
             Bounds b = obstacles[i];
+            // 垂直方向不重叠就不算碰撞：门楣、窗楣在头顶上方，不该挡路
+            if (b.max.y <= bodyBottom || b.min.y >= bodyTop)
+            {
+                continue;
+            }
             float closestX = Mathf.Clamp(p.x, b.min.x, b.max.x);
             float closestZ = Mathf.Clamp(p.y, b.min.z, b.max.z);
             float dx = p.x - closestX;
@@ -2146,8 +2160,16 @@ public class KitchenSimulator : MonoBehaviour
         DrawStartError();
     }
 
-    // ── 小地图 ────────────────────────────────────────────
-    private Rect MinimapRect { get { return new Rect(Screen.width - 316f, Screen.height - 200f, 300f, 138f); } }
+    // ── 小地图（M 键切换大/小）────────────────────────────
+    private Rect MinimapRect
+    {
+        get
+        {
+            return minimapLarge
+                ? new Rect(Screen.width - 512f, Screen.height - 314f, 496f, 244f)
+                : new Rect(Screen.width - 312f, Screen.height - 180f, 296f, 128f);
+        }
+    }
 
     private Vector2 WorldToMap(Vector3 world)
     {
@@ -2162,7 +2184,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = MinimapRect;
         DrawPanel(rect, panelFill, panelBorder);
-        GUI.Label(new Rect(rect.x + 12f, rect.y + 6f, 160f, 22f), "现场平面图", cardTitleStyle);
+        GUI.Label(new Rect(rect.x + 12f, rect.y + 6f, 200f, 22f), "现场平面图", cardTitleStyle);
+        GUI.Label(new Rect(rect.x + rect.width - 90f, rect.y + 8f, 78f, 20f), minimapLarge ? "[M] 缩小" : "[M] 放大", smallStyle);
 
         Rect map = new Rect(rect.x + 12f, rect.y + 28f, rect.width - 24f, rect.height - 40f);
 
@@ -2421,7 +2444,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　空格 跳跃　·　F 开关门　·　按住 Tab 唤出鼠标　·　Q/滚轮 换工具　·　B 工具包　·　E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　空格 跳跃　·　F 开关门　·　M 地图　·　Tab 唤出鼠标　·　Q/滚轮 换工具　·　B 工具包　·　E 维修", centerStyle);
     }
 
     private void DrawToast()
