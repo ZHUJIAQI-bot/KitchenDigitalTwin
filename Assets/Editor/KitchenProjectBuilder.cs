@@ -50,6 +50,10 @@ public static class KitchenProjectBuilder
     [MenuItem("Kitchen/Build WebGL")]
     public static void BuildWebGL()
     {
+        // GitHub Pages 不返回 Content-Encoding 头，必须禁用压缩，否则加载进度条会一直卡住
+        PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
+        PlayerSettings.WebGL.decompressionFallback = false;
+
         string outputPath = Path.GetFullPath("docs");
         Directory.CreateDirectory(outputPath);
         BuildPipeline.BuildPlayer(new BuildPlayerOptions
