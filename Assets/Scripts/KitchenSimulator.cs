@@ -17,26 +17,59 @@ public class KitchenSimulator : MonoBehaviour
     private const float MarkerHeight = 1.95f;
     private const float PlayerRadius = 0.34f;
 
-    private enum ProblemState
+    // 派单节奏
+    private const float OrderIntervalMin = 9f;
+    private const float OrderIntervalMax = 16f;
+    private const int MaxActiveOrders = 4;
+    private const int MaxVisibleDone = 3;
+
+    private enum OrderState
     {
-        Pending,    // 待修复（红色感叹号）
-        Repairing,  // 修复中（黄色）
-        Fixed       // 已修复（绿色）
+        Pending,    // 待维修（红色感叹号）
+        Repairing,  // 维修中（黄色）
+        Fixed       // 已完工（绿色）
     }
 
-    private class Problem
+    // 一张维修工单
+    private class Order
     {
-        public string code;
+        public int id;
         public string title;
         public string room;
         public string cause;
         public string plan;
         public int cost;
         public Vector3 site;
-        public ProblemState state;
+        public OrderState state;
         public GameObject marker;
         public Renderer[] renderers;
         public float repairProgress;
+        public bool needsRebuild;
+
+        public string Code { get { return "#" + id.ToString("D3"); } }
+    }
+
+    // 派单模板：决定某个房间的某个位置会出现什么问题
+    private class OrderTemplate
+    {
+        public string room;
+        public string title;
+        public string cause;
+        public string plan;
+        public int costMin;
+        public int costMax;
+        public Vector3 spot;
+
+        public OrderTemplate(string room, string title, string cause, string plan, int costMin, int costMax, float x, float z)
+        {
+            this.room = room;
+            this.title = title;
+            this.cause = cause;
+            this.plan = plan;
+            this.costMin = costMin;
+            this.costMax = costMax;
+            spot = new Vector3(x, 0f, z);
+        }
     }
 
     private class Room
@@ -72,12 +105,14 @@ public class KitchenSimulator : MonoBehaviour
     private readonly Color btnBlue = new Color(0.18f, 0.47f, 0.63f);
 
     // ── 运行时状态 ────────────────────────────────────────
-    private readonly List<Problem> points = new List<Problem>();
+    private readonly List<Order> orders = new List<Order>();
+    private readonly List<OrderTemplate> templates = new List<OrderTemplate>();
     private readonly List<Room> rooms = new List<Room>();
     private readonly List<Bounds> obstacles = new List<Bounds>();
     private readonly List<GameObject> generatedObjects = new List<GameObject>();
 
     private Material[] stateMaterials;
+    private Color[] stateColors;
     private Material wallMaterial;
     private Material floorMaterial;
 
@@ -95,10 +130,11 @@ public class KitchenSimulator : MonoBehaviour
     private readonly Vector3 cameraOffset = new Vector3(0f, 10.5f, -7.5f);
     private readonly Vector3 spawnPosition = new Vector3(-13f, 0f, 0f);
 
-    private Vector3 taskCounterPosition = new Vector3(-11f, 0f, 0f);
-    private bool taskAccepted;
-    private Problem activeProblem;
-    private Problem repairingProblem;
+    private Order activeOrder;
+    private Order repairingOrder;
+    private int orderSerial;
+    private float orderTimer;
+    private bool taskListExpanded = true;
     private int spent;
     private string toastText = string.Empty;
     private float toastTimer;
@@ -111,6 +147,8 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle buttonStyle;
     private GUIStyle toastStyle;
     private GUIStyle centerStyle;
+    private GUIStyle cardTitleStyle;
+    private GUIStyle cardButtonStyle;
 
     private int Remaining { get { return TotalBudget - spent; } }
 
@@ -154,7 +192,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             BuildMaterials();
             BuildWorld();
-            BuildProblems();
+            InitializeOrders();
             BuildPlayer();
         }
         catch (System.Exception e)
@@ -163,7 +201,7 @@ public class KitchenSimulator : MonoBehaviour
             Debug.LogError("初始化失败：" + e);
         }
 
-        ShowToast("你是装修公司员工：先去任务台（蓝色柜台）接单，再到业主家上门维修", 8f);
+        ShowToast("系统自动派单中：新工单会随机出现在业主家各房间，前往现场按 E 维修", 8f);
     }
 
     private void Update()
@@ -171,6 +209,7 @@ public class KitchenSimulator : MonoBehaviour
         HandleCamera();
         HandleClickMove();
         HandleMovement();
+        UpdateOrderSpawning();
         DetectInteraction();
         UpdateRepair();
         UpdateMarkers();
@@ -184,11 +223,11 @@ public class KitchenSimulator : MonoBehaviour
     // ── 资源 ──────────────────────────────────────────────
     private void BuildMaterials()
     {
-        Color[] colors = { pendingColor, workingColor, fixedColor };
-        stateMaterials = new Material[colors.Length];
-        for (int i = 0; i < colors.Length; i++)
+        stateColors = new[] { pendingColor, workingColor, fixedColor };
+        stateMaterials = new Material[stateColors.Length];
+        for (int i = 0; i < stateColors.Length; i++)
         {
-            stateMaterials[i] = MakeMaterial(colors[i], 0.05f, 0.35f);
+            stateMaterials[i] = MakeMaterial(stateColors[i], 0.05f, 0.35f);
         }
         wallMaterial = MakeMaterial(wallColor, 0.02f, 0.4f);
         floorMaterial = MakeMaterial(floorA, 0.02f, 0.35f);
@@ -509,13 +548,13 @@ public class KitchenSimulator : MonoBehaviour
         Vector3 direction = Vector3.zero;
         bool moving = false;
 
-        if (input.sqrMagnitude > 0.01f && repairingProblem == null)
+        if (input.sqrMagnitude > 0.01f && repairingOrder == null)
         {
             direction = input.normalized;
             moving = true;
             hasMoveTarget = false;
         }
-        else if (hasMoveTarget && repairingProblem == null)
+        else if (hasMoveTarget && repairingOrder == null)
         {
             Vector3 toTarget = moveTarget - playerPosition;
             toTarget.y = 0f;
@@ -566,11 +605,11 @@ public class KitchenSimulator : MonoBehaviour
 
     private void HandleClickMove()
     {
-        if (repairingProblem != null)
+        if (viewCamera == null || repairingOrder != null)
         {
             return;
         }
-        if (Input.GetMouseButtonDown(0))
+        if (Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
         {
             Ray ray = viewCamera.ScreenPointToRay(Input.mousePosition);
             if (ray.direction.y < -0.01f)
@@ -630,183 +669,248 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    // ── 问题点 ────────────────────────────────────────────
-    private void BuildProblems()
+    // ── 工单模板与派单 ────────────────────────────────────
+    private void InitializeOrders()
     {
-        AddProblem("P1", "水槽下方渗漏", "厨房", 3800, new Vector3(4f, 0f, 8.5f),
-            "水槽柜内给水接口老化渗水", "更换角阀与存水弯，柜底加防水托盘");
-        AddProblem("P2", "墙面返潮粉化", "卫生间", 3400, new Vector3(3f, 0f, -7f),
-            "外墙渗水导致内墙返潮粉化", "外墙重做防水，内墙铲除后批耐水腻子");
-        AddProblem("P3", "地面瓷砖空鼓", "客厅", 2200, new Vector3(21f, 0f, -3f),
-            "地面瓷砖局部空鼓松动", "空鼓砖拆除重铺，基层找平");
-        AddProblem("P4", "吊灯线路老化", "餐厅", 2600, new Vector3(19f, 0f, 7.5f),
-            "吊灯线路绝缘层老化", "更换线路线缆并加装漏电保护");
-        AddProblem("P5", "卧室木门变形", "卧室", 1800, new Vector3(15f, 0f, -1f),
-            "木门受潮变形开关困难", "调整门铰链并做防潮处理");
+        // 厨房
+        templates.Add(new OrderTemplate("厨房", "水槽下方渗漏", "水槽柜内给水角阀老化，柜底板见渗水痕迹", "更换角阀与存水弯，柜底增设防水托盘", 3200, 4200, 3.6f, 8.6f));
+        templates.Add(new OrderTemplate("厨房", "灶台燃气管老化", "燃气软管超期服役，接口处有轻微泄漏", "更换不锈钢波纹管并做气密性检测", 2800, 3800, 7.6f, 8.6f));
+        templates.Add(new OrderTemplate("厨房", "橱柜门板变形", "地柜门板受潮变形，开合卡顿异响", "更换门板并调整铰链，柜体做防潮处理", 1200, 2000, 6.5f, 8.0f));
+        templates.Add(new OrderTemplate("厨房", "冰箱插座接触不良", "冰箱专用插座松动，插头发热变色", "更换 16A 插座面板并紧固线路", 900, 1600, 10.6f, 5.6f));
+
+        // 卫生间
+        templates.Add(new OrderTemplate("卫生间", "地漏返味", "地漏存水弯干涸失效，下水道异味返涌", "更换防臭地漏芯，补做存水弯", 800, 1400, 5f, -5f));
+        templates.Add(new OrderTemplate("卫生间", "墙面瓷砖空鼓", "淋浴区瓷砖空鼓脱层，存在脱落风险", "空鼓砖拆除重贴，基层做防水处理", 2200, 3200, 3f, -6.2f));
+        templates.Add(new OrderTemplate("卫生间", "马桶底座渗水", "马桶法兰密封圈老化，底座渗水返碱", "更换法兰密封圈并重新打胶固定", 1500, 2400, 6.5f, -6.8f));
+        templates.Add(new OrderTemplate("卫生间", "浴缸密封胶老化", "浴缸边缘密封胶发霉开裂，渗水至楼下", "铲除旧胶重新打防霉硅酮胶", 900, 1500, 5f, -1.5f));
+
+        // 卧室
+        templates.Add(new OrderTemplate("卧室", "木门变形关不严", "木门受潮膨胀变形，闭合困难漏风", "刨修门边并调整铰链，门扇做防潮封边", 1200, 2000, 14.6f, -1f));
+        templates.Add(new OrderTemplate("卧室", "墙面返潮发霉", "外墙渗水导致内墙返潮霉变", "外墙迎水面重做防水，内墙铲除后批耐水腻子", 2800, 3800, 9.2f, -6f));
+        templates.Add(new OrderTemplate("卧室", "衣柜滑轨卡顿", "衣柜推拉门滑轨变形积尘，推拉困难", "更换滑轨并调整门扇垂直度", 600, 1200, 14.6f, -6.8f));
+        templates.Add(new OrderTemplate("卧室", "床头插座松动", "床头插座面板松动，插拔打火", "更换面板并加固暗盒", 800, 1400, 11f, -5.6f));
+
+        // 客厅
+        templates.Add(new OrderTemplate("客厅", "地面瓷砖空鼓", "地面瓷砖局部空鼓脱层，踩踏有松动异响", "空鼓砖拆除重铺，基层找平做界面处理", 1800, 2800, 21f, -3f));
+        templates.Add(new OrderTemplate("客厅", "吊顶灯带脱落", "吊顶灯带卡扣老化脱落，线路外露", "更换卡扣并整理线路，加装线槽", 1000, 1800, 20f, -1.2f));
+        templates.Add(new OrderTemplate("客厅", "沙发背景墙开裂", "背景墙基层开裂，饰面起皮脱落", "铲除空鼓层，挂网后重新批刮饰面", 2200, 3200, 24.4f, -5.6f));
+        templates.Add(new OrderTemplate("客厅", "电视线缆外露", "电视墙线缆杂乱外露，存在安全隐患", "加装线槽归拢线缆并做隐蔽处理", 700, 1300, 17.6f, -6.8f));
+
+        // 餐厅
+        templates.Add(new OrderTemplate("餐厅", "吊灯线路老化", "吊灯线路绝缘层老化变脆，有漏电风险", "更换线缆并加装 30mA 漏电保护器", 2000, 3000, 19f, 6f));
+        templates.Add(new OrderTemplate("餐厅", "餐边柜受潮", "餐边柜背板受潮发霉，板材膨胀", "更换背板为防潮板并加装离墙通风条", 1600, 2600, 24.4f, 8.4f));
+        templates.Add(new OrderTemplate("餐厅", "墙面插座漏电", "墙面插座接线松动，接地不良", "重新接线并测量接地电阻", 1200, 2000, 14f, 6f));
+
+        orderTimer = 2f;
     }
 
-    private void AddProblem(string code, string title, string room, int cost, Vector3 site, string cause, string plan)
+    private void UpdateOrderSpawning()
     {
-        Problem problem = new Problem
+        if (orderTimer > 0f)
         {
-            code = code,
-            title = title,
-            room = room,
+            orderTimer -= Time.deltaTime;
+            return;
+        }
+
+        if (CountActive() < MaxActiveOrders && TrySpawnOrder())
+        {
+            orderTimer = Random.Range(OrderIntervalMin, OrderIntervalMax);
+        }
+        else
+        {
+            orderTimer = 1.5f; // 满单或无可派位置，稍后重试
+        }
+    }
+
+    private bool TrySpawnOrder()
+    {
+        // 只在"当前没有活跃工单"的位置派新单，避免重叠
+        List<OrderTemplate> available = new List<OrderTemplate>();
+        for (int i = 0; i < templates.Count; i++)
+        {
+            if (!HasActiveOrderAt(templates[i].spot))
+            {
+                available.Add(templates[i]);
+            }
+        }
+        if (available.Count == 0)
+        {
+            return false;
+        }
+
+        OrderTemplate template = available[Random.Range(0, available.Count)];
+        int cost = Mathf.RoundToInt(Random.Range(template.costMin, template.costMax + 1) / 100f) * 100;
+
+        Order order = new Order
+        {
+            id = ++orderSerial,
+            title = template.title,
+            room = template.room,
+            cause = template.cause,
+            plan = template.plan,
             cost = cost,
-            site = site,
-            cause = cause,
-            plan = plan,
-            state = ProblemState.Pending
+            site = template.spot,
+            state = OrderState.Pending
         };
 
-        GameObject marker = new GameObject("Marker " + code);
+        BuildOrderMarker(order);
+        orders.Add(order);
+        ShowToast("新工单 " + order.Code + " · " + order.room + " " + order.title + "（自动接单）", 4.5f);
+        return true;
+    }
+
+    private bool HasActiveOrderAt(Vector3 spot)
+    {
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state == OrderState.Fixed)
+            {
+                continue;
+            }
+            if (Distance2D(orders[i].site, spot) < 1.2f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void BuildOrderMarker(Order order)
+    {
+        GameObject marker = new GameObject("Marker " + order.Code);
         marker.transform.SetParent(transform, false);
-        marker.transform.position = new Vector3(site.x, MarkerHeight, site.z);
+        marker.transform.position = new Vector3(order.site.x, MarkerHeight, order.site.z);
 
         GameObject bar = MakePrimitive(PrimitiveType.Cube, "Bar", marker.transform, new Vector3(0f, 0.34f, 0f), new Vector3(0.09f, 0.3f, 0.09f), Quaternion.identity, stateMaterials[0]);
         GameObject dot = MakePrimitive(PrimitiveType.Sphere, "Dot", marker.transform, new Vector3(0f, 0.06f, 0f), Vector3.one * 0.14f, Quaternion.identity, stateMaterials[0]);
-        GameObject ring = CreateCylinder("Ring " + code, new Vector3(site.x, 0.02f, site.z), 0.28f, 0.016f, Quaternion.identity, stateMaterials[0]);
-        GameObject beam = CreateCylinder("Beam " + code, new Vector3(site.x, MarkerHeight * 0.5f, site.z), 0.014f, MarkerHeight, Quaternion.identity, stateMaterials[0]);
+        GameObject ring = CreateCylinder("Ring", new Vector3(order.site.x, 0.02f, order.site.z), 0.28f, 0.016f, Quaternion.identity, stateMaterials[0]);
+        GameObject beam = CreateCylinder("Beam", new Vector3(order.site.x, MarkerHeight * 0.5f, order.site.z), 0.014f, MarkerHeight, Quaternion.identity, stateMaterials[0]);
         ring.transform.SetParent(marker.transform, true);
         beam.transform.SetParent(marker.transform, true);
 
-        problem.marker = marker;
-        problem.renderers = new[]
+        order.marker = marker;
+        order.renderers = new[]
         {
             bar.GetComponent<Renderer>(),
             dot.GetComponent<Renderer>(),
             ring.GetComponent<Renderer>(),
             beam.GetComponent<Renderer>()
         };
-        points.Add(problem);
     }
 
-    // ── 交互与任务 ────────────────────────────────────────
+    // ── 交互与维修 ────────────────────────────────────────
     private void DetectInteraction()
     {
-        if (repairingProblem != null)
+        if (repairingOrder != null)
         {
             return;
         }
 
-        // 任务台接单
-        if (!taskAccepted && Input.GetKeyDown(KeyCode.E) && Distance2D(playerPosition, taskCounterPosition) < InteractDistance + 0.5f)
-        {
-            taskAccepted = true;
-            ShowToast("接到上门维修单：业主家共 5 处问题，请前往各房间排查修复", 7f);
-            return;
-        }
-
-        if (!taskAccepted)
-        {
-            return;
-        }
-
-        // 找最近的待修复问题
-        Problem nearest = null;
+        Order nearest = null;
         float best = InteractDistance;
-        for (int i = 0; i < points.Count; i++)
+        for (int i = 0; i < orders.Count; i++)
         {
-            if (points[i].state != ProblemState.Pending)
+            if (orders[i].state != OrderState.Pending)
             {
                 continue;
             }
-            float d = Distance2D(playerPosition, points[i].site);
+            float d = Distance2D(playerPosition, orders[i].site);
             if (d < best)
             {
                 best = d;
-                nearest = points[i];
+                nearest = orders[i];
             }
         }
-        activeProblem = nearest;
+        activeOrder = nearest;
 
-        if (activeProblem != null && Input.GetKeyDown(KeyCode.E))
+        if (activeOrder != null && Input.GetKeyDown(KeyCode.E))
         {
-            StartRepair(activeProblem);
+            StartRepair(activeOrder);
         }
     }
 
-    private void StartRepair(Problem problem)
+    private void StartRepair(Order order)
     {
-        repairingProblem = problem;
-        problem.state = ProblemState.Repairing;
-        problem.repairProgress = 0f;
+        repairingOrder = order;
+        order.state = OrderState.Repairing;
+        order.repairProgress = 0f;
 
-        Vector3 direction = problem.site - playerPosition;
+        Vector3 direction = order.site - playerPosition;
         direction.y = 0f;
         if (direction.sqrMagnitude > 0.001f)
         {
             player.transform.forward = direction.normalized;
         }
 
-        ShowToast("开始维修 · " + problem.room + " · " + problem.title, 3f);
+        ShowToast("开始维修 " + order.Code + " · " + order.room + " · " + order.title, 3f);
     }
 
     private void UpdateRepair()
     {
-        if (repairingProblem == null)
+        if (repairingOrder == null)
         {
             return;
         }
 
-        repairingProblem.repairProgress += Time.deltaTime / RepairDuration;
-        if (repairingProblem.repairProgress >= 1f)
+        repairingOrder.repairProgress += Time.deltaTime / RepairDuration;
+        if (repairingOrder.repairProgress >= 1f)
         {
-            repairingProblem.repairProgress = 1f;
-            repairingProblem.state = ProblemState.Fixed;
-            spent += repairingProblem.cost;
-            ShowToast("维修完成 · " + repairingProblem.room + " · " + repairingProblem.title + "（¥" + repairingProblem.cost.ToString("N0") + "）", 5f);
+            repairingOrder.repairProgress = 1f;
+            repairingOrder.state = OrderState.Fixed;
+            spent += repairingOrder.cost;
+            ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
 
-            repairingProblem = null;
-            activeProblem = null;
-
-            if (CountFixed() == points.Count)
-            {
-                ShowToast("全部维修完成！上门任务结束，改造投入 ¥" + spent.ToString("N0"), 8f);
-            }
+            repairingOrder = null;
+            activeOrder = null;
         }
     }
 
     private void UpdateMarkers()
     {
-        for (int i = 0; i < points.Count; i++)
+        for (int i = 0; i < orders.Count; i++)
         {
-            Problem problem = points[i];
-            if (problem.marker == null)
+            Order order = orders[i];
+            if (order.marker == null)
             {
                 continue;
             }
 
-            bool active = taskAccepted;
-            problem.marker.SetActive(active);
-            if (!active)
+            Material material = stateMaterials[(int)order.state];
+            for (int r = 0; r < order.renderers.Length; r++)
             {
-                continue;
-            }
-
-            Material material = stateMaterials[(int)problem.state];
-            for (int r = 0; r < problem.renderers.Length; r++)
-            {
-                if (problem.renderers[r] != null)
+                if (order.renderers[r] != null)
                 {
-                    problem.renderers[r].sharedMaterial = material;
+                    order.renderers[r].sharedMaterial = material;
                 }
             }
 
-            float speed = problem.state == ProblemState.Repairing ? 6f : 3f;
+            float speed = order.state == OrderState.Repairing ? 6f : 3f;
             float pulse = 1f + Mathf.Sin(Time.time * speed + i) * 0.07f;
-            if (problem == activeProblem || problem == repairingProblem)
+            if (order == activeOrder || order == repairingOrder)
             {
                 pulse += 0.15f;
             }
-            problem.marker.transform.localScale = Vector3.one * pulse;
+            order.marker.transform.localScale = Vector3.one * pulse;
 
-            Vector3 look = problem.marker.transform.position - viewCamera.transform.position;
+            Vector3 look = order.marker.transform.position - viewCamera.transform.position;
             if (look.sqrMagnitude > 0.01f)
             {
-                problem.marker.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
+                order.marker.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
             }
         }
+    }
+
+    private int CountActive()
+    {
+        int count = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state != OrderState.Fixed)
+            {
+                count++;
+            }
+        }
+        return count;
     }
 
     private void UpdateCurrentRoom()
@@ -832,14 +936,41 @@ public class KitchenSimulator : MonoBehaviour
     private int CountFixed()
     {
         int count = 0;
-        for (int i = 0; i < points.Count; i++)
+        for (int i = 0; i < orders.Count; i++)
         {
-            if (points[i].state == ProblemState.Fixed)
+            if (orders[i].state == OrderState.Fixed)
             {
                 count++;
             }
         }
         return count;
+    }
+
+    // 待办在前、最近完工在后，用于渲染工单卡片
+    private List<Order> BuildDisplayList()
+    {
+        List<Order> list = new List<Order>();
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state != OrderState.Fixed)
+            {
+                list.Add(orders[i]);
+            }
+        }
+
+        List<Order> done = new List<Order>();
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state == OrderState.Fixed)
+            {
+                done.Add(orders[i]);
+            }
+        }
+        for (int i = done.Count - 1; i >= 0 && done.Count - i <= MaxVisibleDone; i--)
+        {
+            list.Add(done[i]);
+        }
+        return list;
     }
 
     private void ShowToast(string text, float duration = 4f)
@@ -849,17 +980,24 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 界面 ──────────────────────────────────────────────
-    private Rect BudgetRect { get { return new Rect(16f, 16f, 320f, 120f); } }
-    private Rect ProgressRect { get { return new Rect(Screen.width - 252f, 16f, 236f, 120f); } }
-    private Rect ActionRect { get { return new Rect((Screen.width - 600f) * 0.5f, Screen.height - 180f, 600f, 148f); } }
+    private Rect BudgetRect { get { return new Rect(16f, 16f, 320f, 116f); } }
+    private Rect TaskListRect
+    {
+        get
+        {
+            float height = taskListExpanded ? (104f + BuildDisplayList().Count * 52f) : 60f;
+            return new Rect(Screen.width - 348f, 16f, 332f, height);
+        }
+    }
+    private Rect PromptRect { get { return new Rect(16f, Screen.height - 152f, 430f, 112f); } }
     private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
 
     private void OnGUI()
     {
         EnsureStyles();
         DrawBudgetPanel();
-        DrawProgressPanel();
-        DrawActionPanel();
+        DrawTaskList();
+        DrawPromptPanel();
         DrawHintBar();
         DrawToast();
         DrawStartError();
@@ -887,70 +1025,122 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(rect.x + 22f, rect.y + 78f, 290f, 22f), "维修总预算  ¥" + TotalBudget.ToString("N0") + "    结余 ¥" + Remaining.ToString("N0"), bodyStyle);
     }
 
-    private void DrawProgressPanel()
+    private void DrawTaskList()
     {
-        Rect rect = ProgressRect;
+        Rect rect = TaskListRect;
         DrawPanel(rect, panelFill, panelBorder);
-        Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 44f), fixedColor);
-        GUI.Label(new Rect(rect.x + 26f, rect.y + 16f, 190f, 26f), taskAccepted ? "维修进度" : "待接单", titleStyle);
-        Fill(new Rect(rect.x + 18f, rect.y + 46f, rect.width - 36f, 1f), dividerColor);
-        GUI.Label(new Rect(rect.x + 18f, rect.y + 54f, 200f, 24f), CountFixed() + " / " + points.Count + " 已修复", bodyStyle);
+        Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), fixedColor);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 180f, 26f), "维修工单", titleStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 200f, 18f), CountActive() + " 进行中 · " + CountFixed() + " 已完工", smallStyle);
 
-        float ratio = points.Count == 0 ? 0f : (float)CountFixed() / points.Count;
-        Fill(new Rect(rect.x + 18f, rect.y + 88f, rect.width - 36f, 6f), new Color(1f, 1f, 1f, 0.1f));
-        Fill(new Rect(rect.x + 18f, rect.y + 88f, (rect.width - 36f) * ratio, 6f), fixedColor);
-        GUI.Label(new Rect(rect.x + 18f, rect.y + 98f, 200f, 18f), "完成度  " + Mathf.RoundToInt(ratio * 100f) + "%", smallStyle);
+        // 折叠 / 展开
+        Rect toggle = new Rect(rect.x + rect.width - 86f, rect.y + 16f, 70f, 28f);
+        bool hoverToggle = toggle.Contains(Event.current.mousePosition);
+        DrawPanel(toggle, hoverToggle ? Color.Lerp(btnBlue, Color.white, 0.15f) : btnBlue, Color.clear);
+        if (GUI.Button(toggle, GUIContent.none, GUIStyle.none))
+        {
+            taskListExpanded = !taskListExpanded;
+        }
+        GUI.Label(toggle, taskListExpanded ? "收起" : "展开", cardButtonStyle);
+
+        if (!taskListExpanded)
+        {
+            return;
+        }
+
+        float y = rect.y + 64f;
+        Fill(new Rect(rect.x + 18f, y, rect.width - 36f, 1f), dividerColor);
+        y += 10f;
+
+        List<Order> display = BuildDisplayList();
+        if (display.Count == 0)
+        {
+            GUI.Label(new Rect(rect.x + 18f, y + 6f, rect.width - 36f, 22f), "暂无工单，系统正在派单…", smallStyle);
+            return;
+        }
+
+        for (int i = 0; i < display.Count; i++)
+        {
+            DrawOrderCard(new Rect(rect.x + 12f, y + i * 52f, rect.width - 24f, 44f), display[i]);
+        }
     }
 
-    private void DrawActionPanel()
+    private void DrawOrderCard(Rect card, Order order)
     {
-        Rect rect = ActionRect;
+        bool isActive = order == activeOrder || order == repairingOrder;
+        DrawPanel(card, isActive ? new Color(1f, 1f, 1f, 0.11f) : new Color(1f, 1f, 1f, 0.04f), Color.clear);
+        Fill(new Rect(card.x + 9f, card.y + 8f, 4f, card.height - 16f), stateColors[(int)order.state]);
 
-        if (repairingProblem != null)
+        GUI.Label(new Rect(card.x + 22f, card.y + 4f, card.width - 32f, 20f),
+            order.Code + "  " + order.room + " · " + order.title, cardTitleStyle);
+
+        Color previous = GUI.color;
+        GUI.color = StateTextColor(order);
+        GUI.Label(new Rect(card.x + 22f, card.y + 23f, card.width - 32f, 18f),
+            StateText(order) + "　　¥" + order.cost.ToString("N0"), smallStyle);
+        GUI.color = previous;
+    }
+
+    private string StateText(Order order)
+    {
+        if (order.state == OrderState.Repairing)
+        {
+            return "维修中 " + Mathf.RoundToInt(order.repairProgress * 100f) + "%";
+        }
+        return order.state == OrderState.Fixed ? "已完工" : "待维修";
+    }
+
+    private Color StateTextColor(Order order)
+    {
+        if (order.state == OrderState.Repairing)
+        {
+            return workingColor;
+        }
+        return order.state == OrderState.Fixed ? fixedColor : pendingColor;
+    }
+
+    private void DrawPromptPanel()
+    {
+        Rect rect = PromptRect;
+
+        if (repairingOrder != null)
         {
             DrawPanel(rect, panelFill, panelBorder);
             Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), workingColor);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 26f), repairingProblem.room + " · " + repairingProblem.title + "（维修中）", titleStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 44f, rect.width - 56f, 22f), "成因：" + repairingProblem.cause, bodyStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 66f, rect.width - 56f, 22f), "方案：" + repairingProblem.plan, bodyStyle);
-            Fill(new Rect(rect.x + 28f, rect.y + 96f, rect.width - 56f, 8f), new Color(1f, 1f, 1f, 0.12f));
-            Fill(new Rect(rect.x + 28f, rect.y + 96f, (rect.width - 56f) * repairingProblem.repairProgress, 8f), workingColor);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 110f, rect.width - 56f, 22f), "维修进度  " + Mathf.RoundToInt(repairingProblem.repairProgress * 100f) + "%    经费 ¥" + repairingProblem.cost.ToString("N0"), smallStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 12f, rect.width - 56f, 26f), repairingOrder.Code + " " + repairingOrder.room + " · " + repairingOrder.title, titleStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 40f, rect.width - 56f, 20f), "方案：" + repairingOrder.plan, bodyStyle);
+            Fill(new Rect(rect.x + 28f, rect.y + 68f, rect.width - 56f, 8f), new Color(1f, 1f, 1f, 0.12f));
+            Fill(new Rect(rect.x + 28f, rect.y + 68f, (rect.width - 56f) * repairingOrder.repairProgress, 8f), workingColor);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 82f, rect.width - 56f, 22f),
+                "维修中 " + Mathf.RoundToInt(repairingOrder.repairProgress * 100f) + "%　¥" + repairingOrder.cost.ToString("N0"), smallStyle);
             return;
         }
 
-        if (!taskAccepted)
-        {
-            DrawPanel(rect, panelFill, panelBorder);
-            Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 16f, rect.width - 56f, 28f), "前往任务台接单", titleStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 50f, rect.width - 56f, 24f), "走到公司里的蓝色柜台旁，按 E 接收业主的上门维修任务", bodyStyle);
-            return;
-        }
-
-        if (activeProblem != null)
+        if (activeOrder != null)
         {
             DrawPanel(rect, panelFill, panelBorder);
             Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), pendingColor);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), activeProblem.room + " · " + activeProblem.title, titleStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f), "发现一处问题，按 E 现场维修", bodyStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 74f, rect.width - 56f, 22f), "核定经费 ¥" + activeProblem.cost.ToString("N0"), smallStyle);
-            Color prev = GUI.color;
-            GUI.color = btnBlue;
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 102f, 220f, 32f), "按  [E]  开始维修", buttonStyle);
-            GUI.color = prev;
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 12f, rect.width - 56f, 26f), activeOrder.Code + " " + activeOrder.room + " · " + activeOrder.title, titleStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 40f, rect.width - 56f, 20f), "成因：" + activeOrder.cause, bodyStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 62f, 240f, 20f), "核定经费 ¥" + activeOrder.cost.ToString("N0"), smallStyle);
+
+            Rect button = new Rect(rect.x + rect.width - 150f, rect.y + 66f, 132f, 34f);
+            DrawPanel(button, btnBlue, Color.clear);
+            GUI.Label(button, "按 [E] 维修", cardButtonStyle);
             return;
         }
 
-        DrawPanel(rect, new Color(0.05f, 0.07f, 0.09f, 0.55f), Color.clear);
-        GUI.Label(new Rect(rect.x + 24f, rect.y + 14f, rect.width - 48f, 26f), "前往业主家各房间，找到红色感叹号进行维修", centerStyle);
+        DrawPanel(rect, new Color(0.04f, 0.06f, 0.08f, 0.6f), Color.clear);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 14f, rect.width - 44f, 24f), "系统自动派单中", bodyStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 38f, rect.width - 44f, 20f),
+            CountActive() < MaxActiveOrders ? "下一张工单约 " + Mathf.CeilToInt(orderTimer) + " 秒后到达" : "当前工单已满，先完成现场维修", smallStyle);
     }
 
     private void DrawHintBar()
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD / 方向键 移动　·　靠近任务台或问题点后按 E　·　镜头固定俯角自动跟随", centerStyle);
+        GUI.Label(rect, "WASD / 方向键 移动　·　左键点击地面自动寻路　·　靠近红色感叹号按 E 维修　·　镜头固定俯角跟随", centerStyle);
     }
 
     private void DrawToast()
@@ -959,8 +1149,8 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        float width = Mathf.Min(Screen.width - 80f, 760f);
-        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height - 350f, width, 46f);
+        float width = Mathf.Clamp(Screen.width - 760f, 260f, 560f);
+        Rect rect = new Rect((Screen.width - width) * 0.5f, 18f, width, 46f);
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 14f, rect.y + 8f, 4f, rect.height - 16f), toastTimer > 5f ? fixedColor : pendingColor);
         GUI.Label(new Rect(rect.x + 28f, rect.y, rect.width - 44f, rect.height), toastText, toastStyle);
@@ -1051,6 +1241,8 @@ public class KitchenSimulator : MonoBehaviour
         buttonStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
         centerStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.72f, 0.79f, 0.82f) } };
         toastStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleLeft, wordWrap = true, normal = { textColor = new Color(0.88f, 0.92f, 0.91f) } };
+        cardTitleStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
+        cardButtonStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
 
         Font font = UiFont;
         if (font != null)
@@ -1062,7 +1254,15 @@ public class KitchenSimulator : MonoBehaviour
             buttonStyle.font = font;
             centerStyle.font = font;
             toastStyle.font = font;
+            cardTitleStyle.font = font;
+            cardButtonStyle.font = font;
         }
+    }
+
+    private bool IsPointerOverGui(Vector2 mousePosition)
+    {
+        Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
+        return BudgetRect.Contains(point) || TaskListRect.Contains(point) || PromptRect.Contains(point);
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
