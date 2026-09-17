@@ -114,16 +114,36 @@ public class KitchenSimulator : MonoBehaviour
 
     private int Remaining { get { return TotalBudget - spent; } }
 
+    private static Font uiFont;
+    private static bool uiFontLoaded;
+
+    // WebGL 下默认字体不含中文字形，惰性加载打包进来的黑体；失败时静默回退，绝不影响游戏主流程
+    private static Font UiFont
+    {
+        get
+        {
+            if (!uiFontLoaded)
+            {
+                uiFontLoaded = true;
+                try
+                {
+                    uiFont = Resources.Load<Font>("simhei");
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning("中文字体加载失败，回退默认字体：" + e.Message);
+                    uiFont = null;
+                }
+            }
+            return uiFont;
+        }
+    }
+
     // ── 生命周期 ──────────────────────────────────────────
     private void Start()
     {
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
-        Font chineseFont = Resources.Load<Font>("simhei");
-        if (chineseFont != null)
-        {
-            GUI.skin.font = chineseFont; // WebGL 下默认字体无中文字形，改用打包的黑体
-        }
         BuildMaterials();
         BuildWorld();
         BuildCamera();
@@ -1005,6 +1025,18 @@ public class KitchenSimulator : MonoBehaviour
         buttonStyle = new GUIStyle(GUI.skin.label) { fontSize = 15, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
         centerStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.72f, 0.79f, 0.82f) } };
         toastStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleLeft, wordWrap = true, normal = { textColor = new Color(0.88f, 0.92f, 0.91f) } };
+
+        Font font = UiFont;
+        if (font != null)
+        {
+            titleStyle.font = font;
+            hintStyle.font = font;
+            bodyStyle.font = font;
+            smallStyle.font = font;
+            buttonStyle.font = font;
+            centerStyle.font = font;
+            toastStyle.font = font;
+        }
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
