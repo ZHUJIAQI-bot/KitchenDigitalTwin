@@ -146,7 +146,7 @@ public class KitchenSimulator : MonoBehaviour
         stateMaterials = new Material[colors.Length];
         for (int i = 0; i < colors.Length; i++)
         {
-            stateMaterials[i] = MakeMaterial(colors[i], 0.05f, 0.3f, true);
+            stateMaterials[i] = MakeMaterial(colors[i], 0.05f, 0.35f);
         }
         wallMaterial = MakeMaterial(wallColor, 0.02f, 0.4f);
         floorMaterial = MakeMaterial(floorA, 0.02f, 0.35f);
@@ -192,7 +192,7 @@ public class KitchenSimulator : MonoBehaviour
         AddSolidBox("Task Counter", new Vector3(-11f, 0.5f, 1.5f), new Vector3(3.2f, 1f, 0.9f), new Color(0.16f, 0.5f, 0.72f));
         CreateDecoCube("Counter Top", new Vector3(-11f, 1.02f, 1.5f), new Vector3(3.4f, 0.08f, 1f), new Color(0.9f, 0.92f, 0.94f));
         // 任务台标识灯（发光小方块，作为"接单点"视觉提示）
-        CreateDecoCube("Task Beacon", new Vector3(-11f, 1.3f, 0.6f), new Vector3(0.3f, 0.3f, 0.3f), MakeMaterial(new Color(0.2f, 0.8f, 1f), 0f, 0.5f, true));
+        CreateDecoCube("Task Beacon", new Vector3(-11f, 1.3f, 0.6f), new Vector3(0.3f, 0.3f, 0.3f), MakeMaterial(new Color(0.15f, 0.85f, 1f), 0f, 0.5f));
 
         // ── 办公室家具 ──
         // 两张员工办公桌 + 电脑 + 转椅
@@ -235,12 +235,11 @@ public class KitchenSimulator : MonoBehaviour
         AddSolidBox("House Wall Back", new Vector3(14f, 0.9f, zMax), new Vector3(24f, 1.8f, 0.24f), wallColor);
         AddSolidBox("House Wall Right", new Vector3(xMax, 0.9f, 1f), new Vector3(0.24f, 1.8f, 18f), wallColor);
         AddSolidBox("House Wall Front", new Vector3(14f, 0.9f, zMin), new Vector3(24f, 1.8f, 0.24f), wallColor);
-        AddWallWithDoorZ(xMin, zMin, zMax, 1.8f, 0.24f, 0f, 2f, wallColor);
+        AddWallWithDoorX(xMin, zMin, zMax, 1.8f, 0.24f, 0f, 2f, wallColor);
 
         // 内墙
         AddWallWithDoorX(12f, 2f, 10f, 1.8f, 0.22f, 5.2f, 6.8f, interiorWallColor);   // 厨房|餐厅
-        AddWallWithDoorZ(2f, xMin, xMax, 1.8f, 0.22f, 4.5f, 6.5f, interiorWallColor); // 上排|下排(厨房门下)
-        AddWallWithDoorZ(2f, xMin, xMax, 1.8f, 0.22f, 18.5f, 20.5f, interiorWallColor); // 上排|下排(餐厅门下)
+        AddHorizontalWallWithDoors(2f, xMin, xMax, 1.8f, 0.22f, interiorWallColor, 4.5f, 6.5f, 18.5f, 20.5f);
         AddWallWithDoorX(8f, -8f, 2f, 1.8f, 0.22f, -1f, 1f, interiorWallColor);       // 卫生间|卧室
         AddWallWithDoorX(16f, -8f, 2f, 1.8f, 0.22f, -1f, 1f, interiorWallColor);      // 卧室|客厅
 
@@ -370,6 +369,27 @@ public class KitchenSimulator : MonoBehaviour
         if (midW > 0f)
         {
             AddSolidBox("Lintel", new Vector3(midX, height - 0.15f, z), new Vector3(midW, 0.3f, thickness), color);
+        }
+    }
+
+    private void AddHorizontalWallWithDoors(float z, float xMin, float xMax, float height, float thickness, Color color, params float[] doors)
+    {
+        // 水平墙（沿 X 方向），doors 是成对的门洞 [start, end]
+        float current = xMin;
+        for (int i = 0; i < doors.Length; i += 2)
+        {
+            float doorStart = doors[i];
+            float doorEnd = doors[i + 1];
+            if (doorStart > current)
+            {
+                AddSolidBox("Wall", new Vector3((current + doorStart) * 0.5f, height * 0.5f, z), new Vector3(doorStart - current, height, thickness), color);
+            }
+            AddSolidBox("Lintel", new Vector3((doorStart + doorEnd) * 0.5f, height - 0.15f, z), new Vector3(doorEnd - doorStart, 0.3f, thickness), color);
+            current = doorEnd;
+        }
+        if (current < xMax)
+        {
+            AddSolidBox("Wall", new Vector3((current + xMax) * 0.5f, height * 0.5f, z), new Vector3(xMax - current, height, thickness), color);
         }
     }
 
@@ -562,6 +582,8 @@ public class KitchenSimulator : MonoBehaviour
         GameObject dot = MakePrimitive(PrimitiveType.Sphere, "Dot", marker.transform, new Vector3(0f, 0.06f, 0f), Vector3.one * 0.14f, Quaternion.identity, stateMaterials[0]);
         GameObject ring = CreateCylinder("Ring " + code, new Vector3(site.x, 0.02f, site.z), 0.28f, 0.016f, Quaternion.identity, stateMaterials[0]);
         GameObject beam = CreateCylinder("Beam " + code, new Vector3(site.x, MarkerHeight * 0.5f, site.z), 0.014f, MarkerHeight, Quaternion.identity, stateMaterials[0]);
+        ring.transform.SetParent(marker.transform, true);
+        beam.transform.SetParent(marker.transform, true);
 
         problem.marker = marker;
         problem.renderers = new[]
@@ -937,11 +959,26 @@ public class KitchenSimulator : MonoBehaviour
     // ── 材质/几何工具 ─────────────────────────────────────
     private Material MakeMaterial(Color color, float metallic, float smoothness, bool emissive = false)
     {
-        Material material = new Material(Shader.Find("Standard"));
+        Shader shader = Shader.Find("Standard");
+        if (shader == null)
+        {
+            shader = Shader.Find("Legacy Shaders/Diffuse");
+        }
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Color");
+        }
+        Material material = new Material(shader);
         material.color = color;
-        material.SetFloat("_Metallic", metallic);
-        material.SetFloat("_Glossiness", smoothness);
-        if (emissive)
+        if (material.HasProperty("_Metallic"))
+        {
+            material.SetFloat("_Metallic", metallic);
+        }
+        if (material.HasProperty("_Glossiness"))
+        {
+            material.SetFloat("_Glossiness", smoothness);
+        }
+        if (emissive && material.HasProperty("_EmissionColor"))
         {
             material.EnableKeyword("_EMISSION");
             material.SetColor("_EmissionColor", color * 0.4f);
