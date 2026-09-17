@@ -1,0 +1,33 @@
+# ── Unity 生成目录 ──────────────────────────────
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+[Uu]ser[Ss]ettings/
+
+# Unity 崩溃恢复备份
+[Aa]ssets/_Recovery/
+
+# ── IDE / 编辑器 ───────────────────────────────
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
+
+# ── 系统 / 平台 ────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 本地临时文件 ───────────────────────────────
+compile_check.log
+codex-batch-build.log
+sysinfo.txt
+*.stackdump
