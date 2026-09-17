@@ -179,7 +179,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         // 装修公司：x [-18,-8], z [-5,5]
         float xMin = -18f, xMax = -8f, zMin = -5f, zMax = 5f;
-        AddSolidBox("Company Floor", new Vector3(-13f, 0.01f, 0f), new Vector3(10f, 0.02f, 10f), new Color(0.7f, 0.75f, 0.78f));
+        CreateDecoCube("Company Floor", new Vector3(-13f, 0.01f, 0f), new Vector3(10f, 0.02f, 10f), new Color(0.7f, 0.75f, 0.78f));
 
         // 外墙（门在右墙 z=0）
         AddSolidBox("Company Wall Back", new Vector3(-13f, 0.9f, zMax), new Vector3(10f, 1.8f, 0.24f), companyColor);
@@ -193,6 +193,28 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Counter Top", new Vector3(-11f, 1.02f, 1.5f), new Vector3(3.4f, 0.08f, 1f), new Color(0.9f, 0.92f, 0.94f));
         // 任务台标识灯（发光小方块，作为"接单点"视觉提示）
         CreateDecoCube("Task Beacon", new Vector3(-11f, 1.3f, 0.6f), new Vector3(0.3f, 0.3f, 0.3f), MakeMaterial(new Color(0.2f, 0.8f, 1f), 0f, 0.5f, true));
+
+        // ── 办公室家具 ──
+        // 两张员工办公桌 + 电脑 + 转椅
+        AddSolidBox("Office Desk 1", new Vector3(-15f, 0.45f, -2f), new Vector3(2.4f, 0.9f, 1.1f), woodLightColor);
+        CreateDecoCube("Computer 1", new Vector3(-15f, 0.92f, -2.2f), new Vector3(0.7f, 0.45f, 0.12f), new Color(0.1f, 0.12f, 0.15f));
+        AddSolidBox("Office Chair 1", new Vector3(-15f, 0.4f, -1.1f), new Vector3(0.6f, 0.8f, 0.6f), new Color(0.3f, 0.35f, 0.4f));
+
+        AddSolidBox("Office Desk 2", new Vector3(-11f, 0.45f, -3f), new Vector3(2.4f, 0.9f, 1.1f), woodLightColor);
+        CreateDecoCube("Computer 2", new Vector3(-11f, 0.92f, -3.2f), new Vector3(0.7f, 0.45f, 0.12f), new Color(0.1f, 0.12f, 0.15f));
+        AddSolidBox("Office Chair 2", new Vector3(-11f, 0.4f, -2.1f), new Vector3(0.6f, 0.8f, 0.6f), new Color(0.3f, 0.35f, 0.4f));
+
+        // 文件柜（靠后墙）
+        AddSolidBox("File Cabinet", new Vector3(-17f, 0.7f, 4f), new Vector3(1.5f, 1.4f, 0.9f), new Color(0.55f, 0.58f, 0.6f));
+        CreateDecoCube("File Drawer", new Vector3(-17f, 0.55f, 4.1f), new Vector3(1.3f, 0.5f, 0.06f), new Color(0.7f, 0.72f, 0.74f));
+
+        // 绿植（左前角）
+        CreateDecoCube("Plant Pot", new Vector3(-17f, 0.3f, -4.2f), new Vector3(0.5f, 0.6f, 0.5f), new Color(0.6f, 0.4f, 0.3f));
+        CreateDecoCube("Plant Leaves", new Vector3(-17f, 0.85f, -4.2f), new Vector3(0.55f, 0.8f, 0.55f), new Color(0.2f, 0.55f, 0.3f));
+
+        // 等候沙发（靠右墙，不挡门）
+        AddSolidBox("Waiting Sofa", new Vector3(-9.5f, 0.4f, 3f), new Vector3(2.2f, 0.8f, 0.9f), new Color(0.42f, 0.48f, 0.52f));
+        CreateDecoCube("Sofa Back", new Vector3(-9.5f, 0.75f, 3.4f), new Vector3(2.2f, 0.5f, 0.18f), new Color(0.32f, 0.38f, 0.42f));
 
         rooms.Add(new Room { name = "装修公司", xMin = xMin, xMax = xMax, zMin = zMin, zMax = zMax });
     }
