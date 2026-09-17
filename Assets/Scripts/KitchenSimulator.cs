@@ -114,6 +114,8 @@ public class KitchenSimulator : MonoBehaviour
 
     private int Remaining { get { return TotalBudget - spent; } }
 
+    private string startError;
+
     private static Font uiFont;
     private static bool uiFontLoaded;
 
@@ -144,11 +146,23 @@ public class KitchenSimulator : MonoBehaviour
     {
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
-        BuildMaterials();
-        BuildWorld();
+
+        // 相机最先创建：即使后续初始化抛异常，也能渲染出画面而不是全黑
         BuildCamera();
-        BuildProblems();
-        BuildPlayer();
+
+        try
+        {
+            BuildMaterials();
+            BuildWorld();
+            BuildProblems();
+            BuildPlayer();
+        }
+        catch (System.Exception e)
+        {
+            startError = e.GetType().Name + ": " + e.Message;
+            Debug.LogError("初始化失败：" + e);
+        }
+
         ShowToast("你是装修公司员工：先去任务台（蓝色柜台）接单，再到业主家上门维修", 8f);
     }
 
@@ -848,6 +862,18 @@ public class KitchenSimulator : MonoBehaviour
         DrawActionPanel();
         DrawHintBar();
         DrawToast();
+        DrawStartError();
+    }
+
+    private void DrawStartError()
+    {
+        if (string.IsNullOrEmpty(startError))
+        {
+            return;
+        }
+        Rect rect = new Rect(16f, Screen.height - 96f, Screen.width - 32f, 60f);
+        Fill(rect, new Color(0.45f, 0.08f, 0.08f, 0.95f));
+        GUI.Label(new Rect(rect.x + 16f, rect.y + 8f, rect.width - 32f, 44f), "⚠ 初始化异常（请截图反馈）：" + startError, toastStyle);
     }
 
     private void DrawBudgetPanel()
