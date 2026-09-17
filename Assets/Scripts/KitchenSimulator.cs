@@ -118,8 +118,6 @@ public class KitchenSimulator : MonoBehaviour
 
     private GameObject player;
     private Vector3 playerPosition;
-    private Vector3 moveTarget;
-    private bool hasMoveTarget;
     private Transform playerBody;
     private Transform leftArmPivot;
     private Transform rightArmPivot;
@@ -127,8 +125,36 @@ public class KitchenSimulator : MonoBehaviour
     private Transform rightLegPivot;
 
     private Camera viewCamera;
-    private readonly Vector3 cameraOffset = new Vector3(0f, 10.5f, -7.5f);
-    private readonly Vector3 spawnPosition = new Vector3(-13f, 0f, 0f);
+    private float lookYaw;
+    private float lookPitch;
+    private bool cursorLocked;
+    private const float EyeHeight = 1.58f;
+    private const float MouseSensitivity = 2.6f;
+
+    // 第一人称手持工具（视图模型）
+    private Transform toolPivot;
+    private float toolAnim;
+    private bool walking;
+
+    private readonly Vector3 spawnPosition = new Vector3(-15f, 0f, -0.95f);
+
+    // 开场 NPC 对话
+    private class DialogueLine
+    {
+        public string speaker;
+        public string text;
+    }
+    private readonly List<DialogueLine> dialogue = new List<DialogueLine>();
+    private int dialogueIndex = -1;
+    private bool introDone;
+    private float introDelay = 1.2f;
+    private Transform npcTransform;
+
+    // 小地图
+    private const float WorldMinX = -19f;
+    private const float WorldMaxX = 27f;
+    private const float WorldMinZ = -9f;
+    private const float WorldMaxZ = 11f;
 
     private Order activeOrder;
     private Order repairingOrder;
@@ -194,24 +220,25 @@ public class KitchenSimulator : MonoBehaviour
             BuildWorld();
             InitializeOrders();
             BuildPlayer();
+            BuildNpc();
+            BuildIntroDialogue();
         }
         catch (System.Exception e)
         {
             startError = e.GetType().Name + ": " + e.Message;
             Debug.LogError("初始化失败：" + e);
         }
-
-        ShowToast("系统自动派单中：新工单会随机出现在业主家各房间，前往现场按 E 维修", 8f);
     }
 
     private void Update()
     {
-        HandleCamera();
-        HandleClickMove();
+        HandleLook();
         HandleMovement();
+        HandleDialogue();
         UpdateOrderSpawning();
         DetectInteraction();
         UpdateRepair();
+        UpdateAnimate();
         UpdateMarkers();
         UpdateCurrentRoom();
         if (toastTimer > 0f)
@@ -279,7 +306,7 @@ public class KitchenSimulator : MonoBehaviour
         // 两张员工办公桌 + 电脑 + 转椅
         AddSolidBox("Office Desk 1", new Vector3(-15f, 0.45f, -2f), new Vector3(2.4f, 0.9f, 1.1f), woodLightColor);
         CreateDecoCube("Computer 1", new Vector3(-15f, 0.92f, -2.2f), new Vector3(0.7f, 0.45f, 0.12f), new Color(0.1f, 0.12f, 0.15f));
-        AddSolidBox("Office Chair 1", new Vector3(-15f, 0.4f, -1.1f), new Vector3(0.6f, 0.8f, 0.6f), new Color(0.3f, 0.35f, 0.4f));
+        AddSolidBox("Office Chair 1", new Vector3(-16f, 0.4f, -1.6f), new Vector3(0.6f, 0.8f, 0.6f), new Color(0.3f, 0.35f, 0.4f));
 
         AddSolidBox("Office Desk 2", new Vector3(-11f, 0.45f, -3f), new Vector3(2.4f, 0.9f, 1.1f), woodLightColor);
         CreateDecoCube("Computer 2", new Vector3(-11f, 0.92f, -3.2f), new Vector3(0.7f, 0.45f, 0.12f), new Color(0.1f, 0.12f, 0.15f));
@@ -477,28 +504,52 @@ public class KitchenSimulator : MonoBehaviour
     // ── 相机 ──────────────────────────────────────────────
     private void BuildCamera()
     {
-        GameObject cameraObject = new GameObject("Follow Camera");
+        GameObject cameraObject = new GameObject("First Person Camera");
         viewCamera = cameraObject.AddComponent<Camera>();
         cameraObject.AddComponent<AudioListener>();
         cameraObject.tag = "MainCamera";
-        viewCamera.fieldOfView = 46f;
-        viewCamera.nearClipPlane = 0.1f;
+        viewCamera.fieldOfView = 68f;
+        viewCamera.nearClipPlane = 0.06f;
         viewCamera.farClipPlane = 400f;
         viewCamera.clearFlags = CameraClearFlags.SolidColor;
         viewCamera.backgroundColor = new Color(0.09f, 0.12f, 0.14f);
-        viewCamera.transform.position = spawnPosition + cameraOffset;
-        viewCamera.transform.LookAt(spawnPosition + Vector3.up * 1.1f);
+        viewCamera.transform.position = spawnPosition + Vector3.up * EyeHeight;
     }
 
-    private void HandleCamera()
+    // ── 第一人称视角 ──────────────────────────────────────
+    private void HandleLook()
     {
-        if (player == null || viewCamera == null)
+        if (viewCamera == null || player == null)
         {
             return;
         }
-        Vector3 target = playerPosition + cameraOffset;
-        viewCamera.transform.position = Vector3.Lerp(viewCamera.transform.position, target, Time.deltaTime * 7f);
-        viewCamera.transform.LookAt(playerPosition + Vector3.up * 1.1f);
+
+        if (Input.GetKeyDown(KeyCode.Escape))
+        {
+            SetCursorLock(false);
+        }
+        // WebGL 需要一次点击才能锁定鼠标
+        if (!cursorLocked && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
+        {
+            SetCursorLock(true);
+        }
+
+        if (cursorLocked)
+        {
+            lookYaw += Input.GetAxis("Mouse X") * MouseSensitivity;
+            lookPitch = Mathf.Clamp(lookPitch - Input.GetAxis("Mouse Y") * MouseSensitivity, -75f, 75f);
+        }
+
+        player.transform.rotation = Quaternion.Euler(0f, lookYaw, 0f);
+        viewCamera.transform.position = playerPosition + Vector3.up * EyeHeight;
+        viewCamera.transform.rotation = Quaternion.Euler(lookPitch, lookYaw, 0f);
+    }
+
+    private void SetCursorLock(bool locked)
+    {
+        cursorLocked = locked;
+        Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
+        Cursor.visible = !locked;
     }
 
     // ── 玩家 ──────────────────────────────────────────────
@@ -507,13 +558,14 @@ public class KitchenSimulator : MonoBehaviour
         player = new GameObject("Inspector");
         playerPosition = spawnPosition;
         player.transform.position = spawnPosition;
-
-        playerBody = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f)).transform;
-        MakePrimitive(PrimitiveType.Cube, "Head", playerBody, new Vector3(0f, 0.53f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, MakeMaterial(new Color(0.82f, 0.64f, 0.47f), 0.02f, 0.3f));
-        MakePrimitive(PrimitiveType.Cube, "Helmet", playerBody, new Vector3(0f, 0.72f, 0f), new Vector3(0.42f, 0.1f, 0.42f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f));
+        player.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+        lookYaw = 180f;
 
         Material bodyMaterial = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
         Material legMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
+
+        // 身体与四肢在世界中可见（低头能看见），头部隐藏避免遮挡视线
+        playerBody = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, bodyMaterial).transform;
 
         leftArmPivot = new GameObject("Left Arm Pivot").transform;
         leftArmPivot.SetParent(player.transform, false);
@@ -532,6 +584,108 @@ public class KitchenSimulator : MonoBehaviour
         rightLegPivot.SetParent(player.transform, false);
         rightLegPivot.localPosition = new Vector3(0.13f, 0.68f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Right Leg", rightLegPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.16f, 0.56f, 0.16f), Quaternion.identity, legMaterial);
+
+        BuildViewmodel();
+    }
+
+    // 第一人称手持工具（挂在相机下，随视角移动）
+    private void BuildViewmodel()
+    {
+        Material sleeve = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
+        Material skin = MakeMaterial(new Color(0.82f, 0.64f, 0.47f), 0.02f, 0.3f);
+        Material toolBody = MakeMaterial(new Color(0.85f, 0.35f, 0.12f), 0.55f, 0.6f);
+        Material toolMetal = MakeMaterial(new Color(0.75f, 0.77f, 0.8f), 0.85f, 0.8f);
+
+        Transform cam = viewCamera.transform;
+
+        // 两条前臂，从画面下方伸向工具
+        MakePrimitive(PrimitiveType.Cube, "View Left Arm", cam, new Vector3(0.05f, -0.42f, 0.36f), new Vector3(0.1f, 0.1f, 0.34f), Quaternion.Euler(-10f, 12f, 0f), sleeve);
+        MakePrimitive(PrimitiveType.Cube, "View Right Arm", cam, new Vector3(0.3f, -0.44f, 0.34f), new Vector3(0.1f, 0.1f, 0.36f), Quaternion.Euler(-8f, -10f, 0f), sleeve);
+
+        // 手持工具：电动起子（机身 + 握把 + 钻头）
+        toolPivot = new GameObject("Tool").transform;
+        toolPivot.SetParent(cam, false);
+        toolPivot.localPosition = new Vector3(0.19f, -0.31f, 0.5f);
+        toolPivot.localRotation = Quaternion.Euler(-8f, -14f, 4f);
+
+        MakePrimitive(PrimitiveType.Cube, "Tool Body", toolPivot, Vector3.zero, new Vector3(0.075f, 0.09f, 0.22f), Quaternion.identity, toolBody);
+        MakePrimitive(PrimitiveType.Cube, "Tool Grip", toolPivot, new Vector3(0f, -0.11f, -0.05f), new Vector3(0.06f, 0.14f, 0.07f), Quaternion.Euler(14f, 0f, 0f), toolBody);
+        MakePrimitive(PrimitiveType.Cylinder, "Tool Bit", toolPivot, new Vector3(0f, 0f, 0.16f), new Vector3(0.016f, 0.05f, 0.016f), Quaternion.Euler(90f, 0f, 0f), toolMetal);
+        MakePrimitive(PrimitiveType.Cube, "Tool Hand", toolPivot, new Vector3(0.01f, -0.06f, -0.02f), new Vector3(0.085f, 0.085f, 0.11f), Quaternion.identity, skin);
+    }
+
+    // ── 开场 NPC 与对话 ───────────────────────────────────
+    private void BuildNpc()
+    {
+        // 工头站在工位旁，面朝玩家
+        npcTransform = BuildCharacterModel("Boss", new Vector3(-13.6f, 0f, -1.7f), 235f,
+            new Color(0.62f, 0.3f, 0.22f), new Color(0.83f, 0.66f, 0.5f));
+    }
+
+    private Transform BuildCharacterModel(string name, Vector3 position, float yaw, Color cloth, Color skin)
+    {
+        GameObject root = new GameObject(name);
+        root.transform.SetParent(transform, false);
+        root.transform.position = position;
+        root.transform.rotation = Quaternion.Euler(0f, yaw, 0f);
+
+        Material clothMaterial = MakeMaterial(cloth, 0.05f, 0.35f);
+        Material skinMaterial = MakeMaterial(skin, 0.02f, 0.3f);
+        Material trouserMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
+        Material helmetMaterial = MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f);
+
+        MakePrimitive(PrimitiveType.Cube, "Torso", root.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Head", root.transform, new Vector3(0f, 1.37f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Helmet", root.transform, new Vector3(0f, 1.57f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Left Arm", root.transform, new Vector3(-0.34f, 0.8f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Right Arm", root.transform, new Vector3(0.34f, 0.8f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Left Leg", root.transform, new Vector3(-0.13f, 0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Right Leg", root.transform, new Vector3(0.13f, 0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+
+        Collider[] colliders = root.GetComponentsInChildren<Collider>();
+        for (int i = 0; i < colliders.Length; i++)
+        {
+            colliders[i].enabled = false;
+        }
+        return root.transform;
+    }
+
+    private void BuildIntroDialogue()
+    {
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那户老房子问题一堆，业主催得紧。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "单子我都派进你系统了 —— 谁家有毛病、在哪个屋，工单上写着。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前按 E 就能开工，修完记得登记费用。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "预算三万，省着点花。去吧！" });
+    }
+
+    private void HandleDialogue()
+    {
+        if (introDone)
+        {
+            return;
+        }
+
+        if (dialogueIndex < 0)
+        {
+            introDelay -= Time.deltaTime;
+            if (introDelay <= 0f)
+            {
+                dialogueIndex = 0;
+            }
+            return;
+        }
+
+        if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Space))
+        {
+            dialogueIndex++;
+            if (dialogueIndex >= dialogue.Count)
+            {
+                dialogueIndex = -1;
+                introDone = true;
+                orderTimer = 1.5f;
+                ShowToast("系统自动派单中：新工单会随机出现在各房间，走近红色感叹号按 E 维修", 7f);
+            }
+        }
     }
 
     // ── 移动（手动 AABB 碰撞）────────────────────────────
@@ -545,37 +699,17 @@ public class KitchenSimulator : MonoBehaviour
         Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));
         input = Vector3.ClampMagnitude(input, 1f);
 
-        Vector3 direction = Vector3.zero;
-        bool moving = false;
-
-        if (input.sqrMagnitude > 0.01f && repairingOrder == null)
-        {
-            direction = input.normalized;
-            moving = true;
-            hasMoveTarget = false;
-        }
-        else if (hasMoveTarget && repairingOrder == null)
-        {
-            Vector3 toTarget = moveTarget - playerPosition;
-            toTarget.y = 0f;
-            if (toTarget.magnitude > 0.25f)
-            {
-                direction = toTarget.normalized;
-                moving = true;
-            }
-            else
-            {
-                hasMoveTarget = false;
-            }
-        }
-
+        // 对话中或维修中不允许移动
+        bool blocked = repairingOrder != null || dialogueIndex >= 0;
+        bool moving = input.sqrMagnitude > 0.01f && !blocked;
         if (!moving)
         {
-            AnimateCharacter(false);
+            walking = false;
             return;
         }
 
-        player.transform.forward = Vector3.Slerp(player.transform.forward, direction, Time.deltaTime * 14f);
+        // 以视角朝向为基准移动
+        Vector3 direction = Quaternion.Euler(0f, lookYaw, 0f) * input.normalized;
 
         Vector3 move = direction * MoveSpeed * Time.deltaTime;
         Vector3 target = playerPosition + move;
@@ -600,29 +734,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         player.transform.position = playerPosition;
-        AnimateCharacter(true);
-    }
-
-    private void HandleClickMove()
-    {
-        if (viewCamera == null || repairingOrder != null)
-        {
-            return;
-        }
-        if (Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
-        {
-            Ray ray = viewCamera.ScreenPointToRay(Input.mousePosition);
-            if (ray.direction.y < -0.01f)
-            {
-                float t = -ray.origin.y / ray.direction.y;
-                if (t > 0f)
-                {
-                    moveTarget = ray.origin + ray.direction * t;
-                    moveTarget.y = 0f;
-                    hasMoveTarget = true;
-                }
-            }
-        }
+        walking = true;
     }
 
     private bool Collides(Vector3 position)
@@ -643,14 +755,16 @@ public class KitchenSimulator : MonoBehaviour
         return false;
     }
 
-    private void AnimateCharacter(bool moving)
+    // 行走摆臂 + 手持工具动作
+    private void UpdateAnimate()
     {
         if (playerBody == null)
         {
             return;
         }
+
         float t = Time.time * 9f;
-        if (moving)
+        if (walking)
         {
             float swing = Mathf.Sin(t) * 26f;
             leftArmPivot.localRotation = Quaternion.Euler(swing, 0f, 0f);
@@ -666,6 +780,38 @@ public class KitchenSimulator : MonoBehaviour
             leftLegPivot.localRotation = Quaternion.identity;
             rightLegPivot.localRotation = Quaternion.identity;
             playerBody.localPosition = new Vector3(0f, 0.85f, 0f);
+        }
+
+        UpdateTool();
+    }
+
+    // 施工时工具来回作业，平时随步伐轻微晃动
+    private void UpdateTool()
+    {
+        if (toolPivot == null)
+        {
+            return;
+        }
+
+        Vector3 basePosition = new Vector3(0.19f, -0.31f, 0.5f);
+        Vector3 baseEuler = new Vector3(-8f, -14f, 4f);
+
+        if (repairingOrder != null)
+        {
+            // 作业：机身前后推动 + 轻微旋转抖动
+            float t = Time.time * 16f;
+            toolAnim = Mathf.Lerp(toolAnim, 1f, Time.deltaTime * 6f);
+            float push = (Mathf.Sin(t) * 0.5f + 0.5f) * 0.09f;
+            float shake = Mathf.Sin(t * 2.4f) * 3f;
+            toolPivot.localPosition = basePosition + new Vector3(0f, push * 0.35f, push) + new Vector3(0f, 0f, 0f);
+            toolPivot.localRotation = Quaternion.Euler(baseEuler.x + push * 90f, baseEuler.y, baseEuler.z + shake);
+        }
+        else
+        {
+            toolAnim = Mathf.Lerp(toolAnim, 0f, Time.deltaTime * 5f);
+            float bob = walking ? Mathf.Sin(Time.time * 9f) * 0.022f : Mathf.Sin(Time.time * 1.6f) * 0.006f;
+            toolPivot.localPosition = basePosition + new Vector3(0f, bob, 0f);
+            toolPivot.localRotation = Quaternion.Euler(baseEuler.x, baseEuler.y, baseEuler.z);
         }
     }
 
@@ -706,6 +852,11 @@ public class KitchenSimulator : MonoBehaviour
 
     private void UpdateOrderSpawning()
     {
+        if (!introDone)
+        {
+            return;
+        }
+
         if (orderTimer > 0f)
         {
             orderTimer -= Time.deltaTime;
@@ -801,8 +952,9 @@ public class KitchenSimulator : MonoBehaviour
     // ── 交互与维修 ────────────────────────────────────────
     private void DetectInteraction()
     {
-        if (repairingOrder != null)
+        if (repairingOrder != null || dialogueIndex >= 0)
         {
+            activeOrder = null;
             return;
         }
 
@@ -995,12 +1147,103 @@ public class KitchenSimulator : MonoBehaviour
     private void OnGUI()
     {
         EnsureStyles();
+        DrawMinimap();
         DrawBudgetPanel();
         DrawTaskList();
         DrawPromptPanel();
+        DrawDialogue();
         DrawHintBar();
         DrawToast();
+        DrawStartOverlay();
         DrawStartError();
+    }
+
+    // ── 小地图 ────────────────────────────────────────────
+    private Rect MinimapRect { get { return new Rect(Screen.width - 316f, Screen.height - 200f, 300f, 138f); } }
+
+    private Vector2 WorldToMap(Vector3 world)
+    {
+        Rect rect = MinimapRect;
+        float u = Mathf.InverseLerp(WorldMinX, WorldMaxX, world.x);
+        float v = Mathf.InverseLerp(WorldMinZ, WorldMaxZ, world.z);
+        // 世界 +Z 朝上，映射到地图上方
+        return new Vector2(rect.x + u * rect.width, rect.y + (1f - v) * rect.height);
+    }
+
+    private void DrawMinimap()
+    {
+        Rect rect = MinimapRect;
+        DrawPanel(rect, panelFill, panelBorder);
+        GUI.Label(new Rect(rect.x + 12f, rect.y + 6f, 160f, 22f), "现场平面图", cardTitleStyle);
+
+        Rect map = new Rect(rect.x + 12f, rect.y + 28f, rect.width - 24f, rect.height - 40f);
+
+        // 房间底色
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Room room = rooms[i];
+            Vector2 a = WorldToMap(new Vector3(room.xMin, 0f, room.zMax));
+            Vector2 b = WorldToMap(new Vector3(room.xMax, 0f, room.zMin));
+            Rect r = new Rect(Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y), Mathf.Abs(b.x - a.x), Mathf.Abs(b.y - a.y));
+            bool company = room.name == "装修公司";
+            Fill(r, company ? new Color(0.22f, 0.42f, 0.58f, 0.55f) : new Color(1f, 1f, 1f, 0.10f));
+            // 边框
+            Color outline = new Color(1f, 1f, 1f, 0.22f);
+            Fill(new Rect(r.x, r.y, r.width, 1f), outline);
+            Fill(new Rect(r.x, r.yMax, r.width, 1f), outline);
+            Fill(new Rect(r.x, r.y, 1f, r.height), outline);
+            Fill(new Rect(r.xMax, r.y, 1f, r.height), outline);
+        }
+
+        // 工单位置
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Vector2 p = WorldToMap(orders[i].site);
+            Fill(new Rect(p.x - 3f, p.y - 3f, 6f, 6f), stateColors[(int)orders[i].state]);
+        }
+
+        // 玩家（带朝向的三角）
+        Vector2 me = WorldToMap(playerPosition);
+        Fill(new Rect(me.x - 3.5f, me.y - 3.5f, 7f, 7f), new Color(1f, 1f, 1f, 0.95f));
+        Vector2 ahead = WorldToMap(playerPosition + Quaternion.Euler(0f, lookYaw, 0f) * Vector3.forward * 2f);
+        Vector2 dir = (ahead - me).normalized;
+        Fill(new Rect(me.x + dir.x * 6f - 1.5f, me.y + dir.y * 6f - 1.5f, 3f, 3f), fixedColor);
+
+        GUI.Label(new Rect(rect.x + 12f, rect.yMax - 22f, rect.width - 24f, 18f), "白点=你　彩点=工单　当前：" + currentRoomName, smallStyle);
+    }
+
+    // ── 对话 ──────────────────────────────────────────────
+    private void DrawDialogue()
+    {
+        if (dialogueIndex < 0 || dialogueIndex >= dialogue.Count)
+        {
+            return;
+        }
+
+        DialogueLine line = dialogue[dialogueIndex];
+        float width = Mathf.Min(Screen.width - 120f, 720f);
+        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height - 150f, width, 104f);
+        DrawPanel(rect, panelFill, panelBorder);
+        Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
+
+        GUI.Label(new Rect(rect.x + 28f, rect.y + 12f, rect.width - 56f, 24f), line.speaker, cardTitleStyle);
+        GUI.Label(new Rect(rect.x + 28f, rect.y + 38f, rect.width - 56f, 44f), line.text, bodyStyle);
+        GUI.Label(new Rect(rect.x + rect.width - 150f, rect.y + rect.height - 26f, 130f, 20f), "按 E 继续 (" + (dialogueIndex + 1) + "/" + dialogue.Count + ")", smallStyle);
+    }
+
+    // ── 点击开始（WebGL 需用户手势才能锁定鼠标）────────────
+    private void DrawStartOverlay()
+    {
+        if (cursorLocked || dialogueIndex >= 0)
+        {
+            return;
+        }
+
+        float width = Mathf.Min(Screen.width - 120f, 460f);
+        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height * 0.5f - 40f, width, 80f);
+        DrawPanel(rect, new Color(0.04f, 0.06f, 0.08f, 0.92f), panelBorder);
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 16f, rect.width - 40f, 26f), "点击画面开始", titleStyle);
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 44f, rect.width - 40f, 22f), "锁定鼠标后可转动视角　·　按 Esc 释放鼠标", smallStyle);
     }
 
     private void DrawStartError()
@@ -1140,7 +1383,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD / 方向键 移动　·　左键点击地面自动寻路　·　靠近红色感叹号按 E 维修　·　镜头固定俯角跟随", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　鼠标 转动视角　·　靠近红色感叹号按 E 维修　·　Esc 释放鼠标", centerStyle);
     }
 
     private void DrawToast()
@@ -1262,7 +1505,8 @@ public class KitchenSimulator : MonoBehaviour
     private bool IsPointerOverGui(Vector2 mousePosition)
     {
         Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
-        return BudgetRect.Contains(point) || TaskListRect.Contains(point) || PromptRect.Contains(point);
+        return BudgetRect.Contains(point) || TaskListRect.Contains(point)
+            || PromptRect.Contains(point) || MinimapRect.Contains(point);
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
