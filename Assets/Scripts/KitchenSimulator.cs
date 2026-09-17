@@ -166,6 +166,7 @@ public class KitchenSimulator : MonoBehaviour
     // 跳跃
     private float verticalVelocity;
     private bool grounded = true;
+    private bool running_;
 
     // 工具背包
     private readonly List<ToolInfo> tools = new List<ToolInfo>();
@@ -532,7 +533,7 @@ public class KitchenSimulator : MonoBehaviour
 
         // 外墙：前墙留大门洞，左右与后墙开窗
         BuildWallWithOpenings("Company Wall Front", true, z0, x0, x1, 0.24f, wall,
-            doorStart, doorEnd, 0f, 1.95f);
+            doorStart, doorEnd, 0f, 1.9f);
         BuildWallWithOpenings("Company Wall Back", true, z1, x0, x1, 0.24f, wall,
             -18f, -15.5f, 0.95f, 2.15f,
             -13f, -10.5f, 0.95f, 2.15f);
@@ -551,14 +552,14 @@ public class KitchenSimulator : MonoBehaviour
         BuildRoof("Company Roof", -14f, -1f, 12f, 12f, new Color(0.42f, 0.36f, 0.34f));
 
         // 招牌 + 标价牌（前墙外侧）
-        // TextMesh 每行世界高度 = characterSize × fontSize(64) ÷ 10，按此精确配尺寸，避免溢出
-        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.36f, z0 - 0.25f), new Vector3(4.4f, 0.72f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
-        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.36f, z0 - 0.42f), 0.09f, Color.white);   // 3.46 × 0.58
+        // 实测公式：每行世界高度 = characterSize × 64 ÷ 10，再乘 lineSpacing(1.1)，留足余量防外溢
+        CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.35f, z0 - 0.25f), new Vector3(5f, 0.78f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
+        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.35f, z0 - 0.42f), 0.08f, Color.white);   // 3.07 × 0.56
 
-        CreateDecoCube("Price Board", new Vector3(-12.6f, 1.6f, z0 - 0.25f), new Vector3(3.4f, 2.2f, 0.1f), new Color(0.93f, 0.92f, 0.88f));
-        CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.6f, z0 - 0.19f), new Vector3(3.7f, 2.5f, 0.08f), new Color(0.35f, 0.28f, 0.2f));
-        CreateWorldLabel("维 修 价 目 表\n────────\n水路渗漏 ¥3200\n电路检修 ¥2600\n燃气管道 ¥4600\n墙面翻新 ¥2800\n地面空鼓 ¥2200",
-            new Vector3(-12.6f, 1.6f, z0 - 0.45f), 0.046f, new Color(0.15f, 0.15f, 0.18f));            // 2.94 × 1.62
+        CreateDecoCube("Price Board", new Vector3(-12.6f, 1.45f, z0 - 0.25f), new Vector3(3.4f, 2.2f, 0.1f), new Color(0.93f, 0.92f, 0.88f));
+        CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.45f, z0 - 0.19f), new Vector3(3.7f, 2.5f, 0.08f), new Color(0.35f, 0.28f, 0.2f));
+        CreateWorldLabel("维 修 价 目 表\n────────\n水路渗漏 ¥3200\n电路检修 ¥2600\n燃气管道 ¥4600\n墙面翻新 ¥2800",
+            new Vector3(-12.6f, 1.45f, z0 - 0.45f), 0.040f, new Color(0.15f, 0.15f, 0.18f));           // 2.05 × 1.24
 
         // 室内陈设
         BuildDeskStation(-15f, -4.2f, 180f, false);
@@ -766,6 +767,10 @@ public class KitchenSimulator : MonoBehaviour
         AddRoomLight(x0 + 6f, zMid - 1f, 15f);
 
         BuildHouseDoor(tag + " Door", x0 + 2f, x0 + 4.2f, z0);
+
+        // 门牌号（门右侧墙面外侧）
+        CreateDecoCube(tag + " Plate", new Vector3(x0 + 5.4f, 1.75f, z0 - 0.19f), new Vector3(1.5f, 0.6f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
+        CreateWorldLabel(index + "号楼", new Vector3(x0 + 5.4f, 1.75f, z0 - 0.30f), 0.05f, Color.white);   // 0.96 × 0.35
     }
 
     private void AddRoom(string name, string type, float xMin, float xMax, float zMin, float zMax)
@@ -1629,9 +1634,13 @@ public class KitchenSimulator : MonoBehaviour
 
         if (moving)
         {
-            // 以视角朝向为基准移动
+            // 以视角朝向为基准移动；按住 Shift 加速跑
+            bool running = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            float speed = MoveSpeed * (running ? 1.8f : 1f);
+            running_ = running;
+
             Vector3 direction = Quaternion.Euler(0f, lookYaw, 0f) * input.normalized;
-            Vector3 move = direction * MoveSpeed * Time.deltaTime;
+            Vector3 move = direction * speed * Time.deltaTime;
             Vector3 target = playerPosition + move;
 
             if (!Collides(target))
@@ -1655,6 +1664,10 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         walking = moving;
+        if (!moving)
+        {
+            running_ = false;
+        }
         player.transform.position = playerPosition;
         UpdateFootsteps();
     }
@@ -1672,9 +1685,9 @@ public class KitchenSimulator : MonoBehaviour
             stepTimer -= Time.deltaTime;
             if (stepTimer <= 0f)
             {
-                stepTimer = StepInterval;
-                footstepSource.pitch = Random.Range(0.9f, 1.1f);
-                footstepSource.PlayOneShot(footstepClip, 0.5f);
+                stepTimer = running_ ? StepInterval * 0.62f : StepInterval;
+                footstepSource.pitch = Random.Range(0.9f, 1.1f) * (running_ ? 1.12f : 1f);
+                footstepSource.PlayOneShot(footstepClip, running_ ? 0.62f : 0.5f);
             }
         }
         else
@@ -1734,7 +1747,7 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
-        float t = Time.time * 9f;
+        float t = Time.time * (running_ ? 12.5f : 9f);
         if (!grounded)
         {
             // 腾空：收腿抬臂
@@ -1746,7 +1759,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         else if (walking)
         {
-            float swing = Mathf.Sin(t) * 26f;
+            float swing = Mathf.Sin(t) * (running_ ? 38f : 26f);
             leftArmPivot.localRotation = Quaternion.Euler(swing, 0f, 0f);
             rightArmPivot.localRotation = Quaternion.Euler(-swing, 0f, 0f);
             leftLegPivot.localRotation = Quaternion.Euler(-swing, 0f, 0f);
@@ -2445,7 +2458,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　空格 跳跃　·　F 开关门　·　M 地图　·　Tab 唤出鼠标　·　Q/滚轮 换工具　·　B 工具包　·　E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　Tab 唤出鼠标　·　Q/滚轮 换工具　·　B 工具包　·　E 维修", centerStyle);
     }
 
     private void DrawToast()
