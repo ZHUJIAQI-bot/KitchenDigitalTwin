@@ -83,6 +83,8 @@ public class KitchenSimulator : MonoBehaviour
 
     private GameObject player;
     private Vector3 playerPosition;
+    private Vector3 moveTarget;
+    private bool hasMoveTarget;
     private Transform playerBody;
     private Transform leftArmPivot;
     private Transform rightArmPivot;
@@ -117,6 +119,11 @@ public class KitchenSimulator : MonoBehaviour
     {
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
+        Font chineseFont = Resources.Load<Font>("simhei");
+        if (chineseFont != null)
+        {
+            GUI.skin.font = chineseFont; // WebGL 下默认字体无中文字形，改用打包的黑体
+        }
         BuildMaterials();
         BuildWorld();
         BuildCamera();
@@ -128,6 +135,7 @@ public class KitchenSimulator : MonoBehaviour
     private void Update()
     {
         HandleCamera();
+        HandleClickMove();
         HandleMovement();
         DetectInteraction();
         UpdateRepair();
@@ -265,7 +273,7 @@ public class KitchenSimulator : MonoBehaviour
         // 水槽 + 灶台
         CreateDecoCube("Sink", new Vector3(3.6f, 1.08f, 9f), new Vector3(1.3f, 0.06f, 0.9f), new Color(0.6f, 0.64f, 0.67f));
         CreateDecoCube("Stove", new Vector3(7.6f, 1.08f, 9f), new Vector3(1.4f, 0.06f, 0.85f), new Color(0.1f, 0.12f, 0.13f));
-        CreateDecoCube("Fridge", new Vector3(11f, 0.9f, 5f), new Vector3(1.1f, 1.8f, 1.3f), new Color(0.72f, 0.75f, 0.77f));
+        AddSolidBox("Fridge", new Vector3(11f, 0.9f, 5f), new Vector3(1.1f, 1.8f, 1.3f), new Color(0.72f, 0.75f, 0.77f));
         AddSolidBox("Kitchen Table", new Vector3(5f, 0.45f, 4.5f), new Vector3(2.4f, 0.9f, 1.4f), woodLightColor);
     }
 
@@ -347,7 +355,7 @@ public class KitchenSimulator : MonoBehaviour
         float midH = doorMax - doorMin;
         if (midH > 0f)
         {
-            AddSolidBox("Lintel", new Vector3(x, height - 0.15f, midZ), new Vector3(thickness, 0.3f, midH), color);
+            CreateDecoCube("Lintel", new Vector3(x, height - 0.15f, midZ), new Vector3(thickness, 0.3f, midH), color);
         }
     }
 
@@ -368,7 +376,7 @@ public class KitchenSimulator : MonoBehaviour
         float midW = doorMax - doorMin;
         if (midW > 0f)
         {
-            AddSolidBox("Lintel", new Vector3(midX, height - 0.15f, z), new Vector3(midW, 0.3f, thickness), color);
+            CreateDecoCube("Lintel", new Vector3(midX, height - 0.15f, z), new Vector3(midW, 0.3f, thickness), color);
         }
     }
 
@@ -384,7 +392,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 AddSolidBox("Wall", new Vector3((current + doorStart) * 0.5f, height * 0.5f, z), new Vector3(doorStart - current, height, thickness), color);
             }
-            AddSolidBox("Lintel", new Vector3((doorStart + doorEnd) * 0.5f, height - 0.15f, z), new Vector3(doorEnd - doorStart, 0.3f, thickness), color);
+            CreateDecoCube("Lintel", new Vector3((doorStart + doorEnd) * 0.5f, height - 0.15f, z), new Vector3(doorEnd - doorStart, 0.3f, thickness), color);
             current = doorEnd;
         }
         if (current < xMax)
@@ -464,15 +472,36 @@ public class KitchenSimulator : MonoBehaviour
         Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));
         input = Vector3.ClampMagnitude(input, 1f);
 
-        bool moving = input.sqrMagnitude > 0.01f && repairingProblem == null;
+        Vector3 direction = Vector3.zero;
+        bool moving = false;
+
+        if (input.sqrMagnitude > 0.01f && repairingProblem == null)
+        {
+            direction = input.normalized;
+            moving = true;
+            hasMoveTarget = false;
+        }
+        else if (hasMoveTarget && repairingProblem == null)
+        {
+            Vector3 toTarget = moveTarget - playerPosition;
+            toTarget.y = 0f;
+            if (toTarget.magnitude > 0.25f)
+            {
+                direction = toTarget.normalized;
+                moving = true;
+            }
+            else
+            {
+                hasMoveTarget = false;
+            }
+        }
+
         if (!moving)
         {
             AnimateCharacter(false);
             return;
         }
 
-        Vector3 direction = input;
-        direction.Normalize();
         player.transform.forward = Vector3.Slerp(player.transform.forward, direction, Time.deltaTime * 14f);
 
         Vector3 move = direction * MoveSpeed * Time.deltaTime;
@@ -499,6 +528,28 @@ public class KitchenSimulator : MonoBehaviour
 
         player.transform.position = playerPosition;
         AnimateCharacter(true);
+    }
+
+    private void HandleClickMove()
+    {
+        if (repairingProblem != null)
+        {
+            return;
+        }
+        if (Input.GetMouseButtonDown(0))
+        {
+            Ray ray = viewCamera.ScreenPointToRay(Input.mousePosition);
+            if (ray.direction.y < -0.01f)
+            {
+                float t = -ray.origin.y / ray.direction.y;
+                if (t > 0f)
+                {
+                    moveTarget = ray.origin + ray.direction * t;
+                    moveTarget.y = 0f;
+                    hasMoveTarget = true;
+                }
+            }
+        }
     }
 
     private bool Collides(Vector3 position)
