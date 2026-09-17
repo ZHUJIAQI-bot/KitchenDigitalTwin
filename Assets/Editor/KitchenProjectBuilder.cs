@@ -53,6 +53,8 @@ public static class KitchenProjectBuilder
         // GitHub Pages 不返回 Content-Encoding 头，必须禁用压缩，否则加载进度条会一直卡住
         PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Disabled;
         PlayerSettings.WebGL.decompressionFallback = false;
+        // 文件名带内容哈希：避免浏览器缓存旧的 .wasm/.data 导致一直玩到旧版本
+        PlayerSettings.WebGL.nameFilesAsHashes = true;
 
         // 运行时用 Shader.Find("Standard") 建材质，必须保证 Standard 打进包，否则黑屏
         EnsureStandardShaderIncluded();
