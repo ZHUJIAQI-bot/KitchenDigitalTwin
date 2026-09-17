@@ -116,6 +116,7 @@ public class KitchenSimulator : MonoBehaviour
     private void Start()
     {
         Application.targetFrameRate = 60;
+        Time.maximumDeltaTime = 0.1f; // 防止 WebGL 首帧大步长导致穿模
         BuildMaterials();
         BuildEnvironment();
         BuildCamera();
@@ -489,7 +490,7 @@ public class KitchenSimulator : MonoBehaviour
             motion = direction * MoveSpeed;
         }
 
-        playerVelocity.y += Physics.gravity.y * 2f * Time.deltaTime;
+        playerVelocity.y += Physics.gravity.y * Time.deltaTime;
         if (controller.isGrounded && playerVelocity.y < 0f)
         {
             playerVelocity.y = -1f;
@@ -501,6 +502,18 @@ public class KitchenSimulator : MonoBehaviour
             Mathf.Clamp(player.transform.position.x, -4.25f, 4.25f),
             player.transform.position.y,
             Mathf.Clamp(player.transform.position.z, -3.5f, 3.2f));
+
+        // 安全钳制：防止穿模后无限下坠（地板顶面在 y=0）
+        if (player.transform.position.y < 0f)
+        {
+            Vector3 pos = player.transform.position;
+            pos.y = 0f;
+            player.transform.position = pos;
+            if (playerVelocity.y < 0f)
+            {
+                playerVelocity.y = 0f;
+            }
+        }
 
         AnimateCharacter(moving);
     }
