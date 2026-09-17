@@ -50,7 +50,6 @@ public static class KitchenProjectBuilder
     [MenuItem("Kitchen/Build WebGL")]
     public static void BuildWebGL()
     {
-        Build();
         string outputPath = Path.GetFullPath("docs");
         Directory.CreateDirectory(outputPath);
         BuildPipeline.BuildPlayer(new BuildPlayerOptions
