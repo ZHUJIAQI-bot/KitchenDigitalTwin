@@ -71,15 +71,16 @@ public static class KitchenProjectBuilder
         Debug.Log("Kitchen WebGL built to: " + outputPath);
     }
 
+    // 运行时用 Shader.Find 取用的着色器必须打进包，否则 WebGL 下返回 null
+    private static readonly string[] RequiredShaders =
+    {
+        "Standard",
+        "Transparent/Cutout/Diffuse",
+        "Legacy Shaders/Transparent/Diffuse",
+    };
+
     private static void EnsureStandardShaderIncluded()
     {
-        Shader standard = Shader.Find("Standard");
-        if (standard == null)
-        {
-            Debug.LogError("Standard shader not found in editor");
-            return;
-        }
-
         UnityEngine.Object[] assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset");
         if (assets == null || assets.Length == 0)
         {
@@ -93,19 +94,41 @@ public static class KitchenProjectBuilder
             return;
         }
 
-        for (int i = 0; i < alwaysIncluded.arraySize; i++)
+        bool changed = false;
+        foreach (string shaderName in RequiredShaders)
         {
-            if (alwaysIncluded.GetArrayElementAtIndex(i).objectReferenceValue == standard)
+            Shader shader = Shader.Find(shaderName);
+            if (shader == null)
             {
-                return; // 已包含
+                Debug.LogWarning("Shader not found in editor: " + shaderName);
+                continue;
             }
+
+            bool present = false;
+            for (int i = 0; i < alwaysIncluded.arraySize; i++)
+            {
+                if (alwaysIncluded.GetArrayElementAtIndex(i).objectReferenceValue == shader)
+                {
+                    present = true;
+                    break;
+                }
+            }
+            if (present)
+            {
+                continue;
+            }
+
+            int index = alwaysIncluded.arraySize;
+            alwaysIncluded.InsertArrayElementAtIndex(index);
+            alwaysIncluded.GetArrayElementAtIndex(index).objectReferenceValue = shader;
+            changed = true;
+            Debug.Log("Added to Always Included Shaders: " + shaderName);
         }
 
-        int index = alwaysIncluded.arraySize;
-        alwaysIncluded.InsertArrayElementAtIndex(index);
-        alwaysIncluded.GetArrayElementAtIndex(index).objectReferenceValue = standard;
-        serializedObject.ApplyModifiedProperties();
-        AssetDatabase.SaveAssets();
-        Debug.Log("Standard shader added to Always Included Shaders");
+        if (changed)
+        {
+            serializedObject.ApplyModifiedProperties();
+            AssetDatabase.SaveAssets();
+        }
     }
 }

@@ -282,6 +282,7 @@ public class KitchenSimulator : MonoBehaviour
             BuildMaterials();
             BuildWorld();
             InitializeOrders();
+            ApplyLabelMaterials();
             BuildPlayer();
             BuildNpc();
             BuildIntroDialogue();
@@ -324,7 +325,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         wallMaterial = MakeMaterial(wallColor, 0.02f, 0.4f);
         floorMaterial = MakeMaterial(floorA, 0.02f, 0.35f);
-        glassMaterial = MakeTransparent(new Color(0.72f, 0.88f, 0.95f), 0.42f, 0.92f);
+        glassMaterial = MakeTransparent(new Color(0.78f, 0.9f, 0.96f), 0.16f, 0.94f);
     }
 
     // ── 世界构建 ──────────────────────────────────────────
@@ -589,7 +590,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildSensorDoor(float start, float end, float z)
     {
         Material frame = MakeMaterial(new Color(0.42f, 0.44f, 0.47f), 0.7f, 0.7f);
-        Material glass = MakeTransparent(new Color(0.75f, 0.9f, 0.96f), 0.35f, 0.95f);
+        Material glass = MakeTransparent(new Color(0.78f, 0.9f, 0.96f), 0.18f, 0.95f);
         float center = (start + end) * 0.5f;
         float width = (end - start) * 0.5f - 0.05f;
 
@@ -651,12 +652,86 @@ public class KitchenSimulator : MonoBehaviour
         mesh.alignment = TextAlignment.Center;
         mesh.color = color;
         mesh.lineSpacing = 1.1f;
+
+        Renderer renderer = label.GetComponent<Renderer>();
         if (mesh.font != null)
         {
-            Renderer renderer = label.GetComponent<Renderer>();
             renderer.sharedMaterial = mesh.font.material;
         }
+        pendingLabels.Add(new LabelEntry { renderer = renderer, color = color });
         generatedObjects.Add(label);
+    }
+
+    private class LabelEntry
+    {
+        public Renderer renderer;
+        public Color color;
+    }
+
+    private readonly List<LabelEntry> pendingLabels = new List<LabelEntry>();
+    private static readonly Dictionary<Color, Material> labelMaterials = new Dictionary<Color, Material>();
+
+    // 所有文字建完后统一替换材质：字体自带的材质是双面且不写深度的，会导致穿墙显示与镜像字
+    private void ApplyLabelMaterials()
+    {
+        for (int i = 0; i < pendingLabels.Count; i++)
+        {
+            LabelEntry entry = pendingLabels[i];
+            if (entry.renderer != null)
+            {
+                entry.renderer.sharedMaterial = GetLabelMaterial(entry.color);
+            }
+        }
+    }
+
+    private Material GetLabelMaterial(Color color)
+    {
+        Material material;
+        if (labelMaterials.TryGetValue(color, out material) && material != null)
+        {
+            return material;
+        }
+
+        Font font = UiFont;
+        Texture atlas = font != null && font.material != null ? font.material.mainTexture : null;
+
+        // 优先用 Alpha 裁切的单面着色器：写深度、剔除背面，文字不会穿墙也不会露镜像
+        Shader shader = Shader.Find("Transparent/Cutout/Diffuse");
+        bool standard = false;
+        if (shader == null)
+        {
+            shader = Shader.Find("Standard");
+            standard = true;
+        }
+        if (shader == null)
+        {
+            shader = Shader.Find("Sprites/Default");
+        }
+
+        material = new Material(shader);
+        if (atlas != null)
+        {
+            material.mainTexture = atlas;
+        }
+        material.color = color;
+        if (material.HasProperty("_Cutoff"))
+        {
+            material.SetFloat("_Cutoff", 0.3f);
+        }
+        if (standard)
+        {
+            material.SetFloat("_Mode", 1f);
+            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+            material.SetInt("_ZWrite", 1);
+            material.EnableKeyword("_ALPHATEST_ON");
+            material.DisableKeyword("_ALPHABLEND_ON");
+            material.renderQueue = 2450;
+            material.SetFloat("_Glossiness", 0f);
+            material.SetFloat("_Metallic", 0f);
+        }
+        labelMaterials[color] = material;
+        return material;
     }
 
     private void BuildDeskStation(float x, float z, float yaw, bool withChair)
@@ -2615,25 +2690,34 @@ public class KitchenSimulator : MonoBehaviour
         return material;
     }
 
-    // 半透明材质（玻璃）：Standard 着色器切到 Fade 模式
+    // 半透明材质（玻璃）：完整套用 Unity 官方的 Standard→Transparent 设置
+    // 关键：SetOverrideTag("RenderType","Transparent") 不能漏，否则仍走不透明通道
     private Material MakeTransparent(Color color, float alpha, float smoothness)
     {
         Shader shader = Shader.Find("Standard");
         if (shader == null)
         {
-            shader = Shader.Find("Legacy Shaders/Transparent/Diffuse");
+            shader = Shader.Find("Sprites/Default");
+        }
+        if (shader == null)
+        {
+            shader = Shader.Find("Unlit/Color");
         }
         Material material = new Material(shader);
+
+        // 无条件设置混合状态：这些是材质级别的渲染状态，不依赖着色器属性是否存在
+        material.SetOverrideTag("RenderType", "Transparent");
+        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetInt("_ZWrite", 0);
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+
         if (material.HasProperty("_Mode"))
         {
             material.SetFloat("_Mode", 3f);
-            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            material.SetInt("_ZWrite", 0);
-            material.DisableKeyword("_ALPHATEST_ON");
-            material.EnableKeyword("_ALPHABLEND_ON");
-            material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-            material.renderQueue = 3000;
         }
         if (material.HasProperty("_Metallic"))
         {
