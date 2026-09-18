@@ -159,12 +159,12 @@ def build_oriental_pearl(root):
 
     body = make_material("LJ_Glow_PearlBody", (0.35, 0.37, 0.42), metallic=0.3, roughness=0.35)
     grid = make_material("LJ_Pearl_Grid", (0.38, 0.40, 0.45), metallic=0.35, roughness=0.4)
-    glow_low = make_material("LJ_Glow_PearlLow", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
-                             emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
-    glow_high = make_material("LJ_Glow_PearlHigh", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
-                              emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
-    glow_cap = make_material("LJ_Glow_PearlSmall", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
-                             emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
+    glow_low = make_material("LJ_Glow_PearlLow", (0.62, 0.20, 0.38), metallic=0.0, roughness=0.05,
+                             emissive=(0.95, 0.25, 0.55), emit_strength=3.0)
+    glow_high = make_material("LJ_Glow_PearlHigh", (0.42, 0.26, 0.62), metallic=0.0, roughness=0.05,
+                              emissive=(0.55, 0.30, 0.90), emit_strength=3.0)
+    glow_cap = make_material("LJ_Glow_PearlSmall", (0.70, 0.42, 0.22), metallic=0.0, roughness=0.05,
+                             emissive=(1.0, 0.55, 0.25), emit_strength=3.0)
     ant_white = make_material("LJ_Pearl_AntennaWhite", (0.86, 0.86, 0.87), metallic=0.2, roughness=0.4)
     ant_red = make_material("LJ_Pearl_AntennaRed", (0.72, 0.13, 0.11), metallic=0.2, roughness=0.4)
     tip_light = make_material("LJ_Glow_AntennaTip", (1.0, 0.08, 0.04), metallic=0.0, roughness=0.3,
@@ -175,7 +175,7 @@ def build_oriental_pearl(root):
         th = math.radians(90.0 + k * 120.0)
         x = 20 * S * math.cos(th)
         y = 20 * S * math.sin(th)
-        parent_to(add_cylinder("Pillar_%02d" % (k + 1), (x, y, 250 * S * 0.5), 4.5 * S, 250 * S, body), root)
+        parent_to(add_cylinder("Pillar_%02d" % (k + 1), (x, y, 250 * S * 0.5), 8 * S, 250 * S, body), root)
 
     # 三根斜柱：r=3.5m，底部半径35m Z=0，顶部连下球边缘 Z=68m，30°/150°/270°
     for k in range(3):
@@ -184,7 +184,7 @@ def build_oriental_pearl(root):
         p_top = Vector((25 * S * math.cos(th), 25 * S * math.sin(th), 68 * S))
         d = p_top - p_bot
         mid = (p_bot + p_top) * 0.5
-        leg = add_cylinder("Diagonal_%02d" % (k + 1), tuple(mid), 3.5 * S, d.length, body)
+        leg = add_cylinder("Diagonal_%02d" % (k + 1), tuple(mid), 6 * S, d.length, body)
         leg.rotation_euler = d.normalized().to_track_quat('Z', 'Y').to_euler()
         parent_to(leg, root)
 

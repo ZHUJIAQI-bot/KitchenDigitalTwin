@@ -1911,7 +1911,9 @@ public class KitchenSimulator : MonoBehaviour
         Renderer renderer = label.GetComponent<Renderer>();
         if (mesh.font != null)
         {
-            renderer.sharedMaterial = mesh.font.material;
+            // 直接用 Alpha 裁切材质（写深度、剔除背面），避免文字穿墙从背面可见
+            // （不能依赖 ApplyLabelMaterials：员工宿舍等标签在它之后才构建）
+            renderer.sharedMaterial = GetLabelMaterial(color);
         }
         pendingLabels.Add(new LabelEntry { renderer = renderer, color = color });
         generatedObjects.Add(label);
