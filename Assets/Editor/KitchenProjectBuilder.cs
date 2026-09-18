@@ -104,6 +104,7 @@ public static class KitchenProjectBuilder
     {
         "Standard",
         "Custom/Glass",
+        "Custom/Water",
         "Unlit/Transparent Cutout",
         "Particles/Standard Unlit",
         "Transparent/Cutout/Diffuse",

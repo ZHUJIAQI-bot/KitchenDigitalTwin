@@ -165,6 +165,7 @@ public class KitchenSimulator : MonoBehaviour
     private Material cityWindowMaterial;
     private readonly Color cityWindowDayTone = new Color(0.78f, 0.83f, 0.88f);
     private readonly List<Material> nightLightMaterials = new List<Material>();
+    private Material riverMaterial;
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -1083,8 +1084,19 @@ public class KitchenSimulator : MonoBehaviour
     {
         Vector3 c = new Vector3(30f, 0f, -92f);
 
-        // 江面（黄浦江）——放在地标正前方、略高于草坪，确保醒目可见
-        CreateDecoCube("River", new Vector3(30f, -0.04f, -42f), new Vector3(320f, 0.2f, 26f), NightLight(new Color(0.14f, 0.35f, 0.55f)));
+        // 江面（黄浦江）——自定义水面着色器（透明 + 菲涅尔反光 + 波纹 + 夜间泛光）
+        Shader waterShader = Shader.Find("Custom/Water");
+        if (waterShader != null)
+        {
+            riverMaterial = new Material(waterShader);
+            riverMaterial.SetColor("_DeepColor", new Color(0.04f, 0.16f, 0.30f, 0.82f));
+            riverMaterial.SetColor("_ShallowColor", new Color(0.10f, 0.34f, 0.52f, 0.82f));
+        }
+        else
+        {
+            riverMaterial = MakeMaterial(new Color(0.10f, 0.30f, 0.48f), 0.2f, 0.7f);
+        }
+        CreateWaterSurface("River", new Vector3(30f, 0.02f, -42f), 320f, 26f, riverMaterial);
 
         SpawnLandmark("Models/Lujiazui/OrientalPearl", c + new Vector3(-38f, 0f, 12f));
         SpawnLandmark("Models/Lujiazui/ShanghaiTower", c + new Vector3(-10f, 0f, -4f));
@@ -1132,7 +1144,10 @@ public class KitchenSimulator : MonoBehaviour
             Debug.LogWarning("未找到地标模型: " + path);
             return;
         }
-        GameObject instance = Instantiate(prefab, position, Quaternion.identity, transform);
+        // 注意：FBX 根节点自带 Blender→Unity 的轴转换旋转(270°X)和缩放(100x)，
+        // 必须保留其变换、只改位置；若用 Quaternion.identity 覆盖会导致模型横躺。
+        GameObject instance = Instantiate(prefab, transform);
+        instance.transform.localPosition = position;
         instance.name = path;
         Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
         for (int i = 0; i < renderers.Length; i++)
@@ -1149,6 +1164,53 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
         generatedObjects.Add(instance);
+    }
+
+    // 生成细分水面网格（供水面着色器的顶点波纹使用）
+    private GameObject CreateWaterSurface(string name, Vector3 center, float width, float depth, Material material)
+    {
+        GameObject go = new GameObject(name);
+        go.transform.SetParent(transform, false);
+        go.transform.position = center;
+
+        int segX = 64, segZ = 8;
+        Vector3[] verts = new Vector3[(segX + 1) * (segZ + 1)];
+        Vector2[] uv = new Vector2[verts.Length];
+        for (int z = 0; z <= segZ; z++)
+        {
+            for (int x = 0; x <= segX; x++)
+            {
+                int idx = z * (segX + 1) + x;
+                verts[idx] = new Vector3((x / (float)segX - 0.5f) * width, 0f, (z / (float)segZ - 0.5f) * depth);
+                uv[idx] = new Vector2(x / (float)segX, z / (float)segZ);
+            }
+        }
+        int[] tris = new int[segX * segZ * 6];
+        int t = 0;
+        for (int z = 0; z < segZ; z++)
+        {
+            for (int x = 0; x < segX; x++)
+            {
+                int i0 = z * (segX + 1) + x;
+                int i1 = i0 + 1;
+                int i2 = i0 + segX + 1;
+                int i3 = i2 + 1;
+                tris[t++] = i0; tris[t++] = i2; tris[t++] = i1;
+                tris[t++] = i1; tris[t++] = i2; tris[t++] = i3;
+            }
+        }
+        Mesh mesh = new Mesh();
+        mesh.vertices = verts;
+        mesh.triangles = tris;
+        mesh.uv = uv;
+        mesh.RecalculateNormals();
+
+        MeshFilter mf = go.AddComponent<MeshFilter>();
+        mf.sharedMesh = mesh;
+        MeshRenderer mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = material;
+        generatedObjects.Add(go);
+        return go;
     }
 
     private void BuildStreetLamps()
@@ -1275,6 +1337,11 @@ public class KitchenSimulator : MonoBehaviour
                 {
                     m.DisableKeyword("_EMISSION");
                 }
+            }
+            // 水面夜间泛光
+            if (riverMaterial != null)
+            {
+                riverMaterial.SetFloat("_Glow", lampsOn ? 1f : 0f);
             }
             // 远处城市的窗户亮起（假装屋里开着灯）
             if (cityWindowMaterial != null)
