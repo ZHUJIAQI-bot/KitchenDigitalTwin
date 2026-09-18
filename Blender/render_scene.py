@@ -44,14 +44,14 @@ def setup_world():
     world.use_nodes = True
     bg = world.node_tree.nodes["Background"]
     bg.inputs[0].default_value = (0.30, 0.45, 0.68, 1.0)   # 天蓝
-    bg.inputs[1].default_value = 0.55
+    bg.inputs[1].default_value = 0.44
 
 
 def setup_lights():
     # 主光：暖色斜射，模拟午后
     sun_data = bpy.data.lights.new("Sun", type='SUN')
     sun_data.energy = 2.1
-    sun_data.angle = math.radians(3.0)
+    sun_data.angle = math.radians(1.6)
     sun_data.color = (1.0, 0.95, 0.86)
     sun = bpy.data.objects.new("Sun", sun_data)
     sun.rotation_euler = (math.radians(52), 0, math.radians(-42))
@@ -93,7 +93,18 @@ def setup_render():
         scene.cycles.use_denoising = True
     else:
         try:
-            scene.eevee.taa_render_samples = 64
+            scene.eevee.taa_render_samples = 160
+        except Exception:
+            pass
+        # 开启光追与阴影柔化，提升画面质感
+        for attr, value in (('use_raytracing', True), ('use_shadows', True), ('use_volumetric_shadows', False)):
+            try:
+                setattr(scene.eevee, attr, value)
+            except Exception:
+                pass
+        try:
+            scene.eevee.shadow_ray_count = 4
+            scene.eevee.shadow_step_count = 8
         except Exception:
             pass
     # 用 Standard 保留模型原本的配色（Filmic/AgX 会明显去饱和）
@@ -166,13 +177,19 @@ def main():
         ("03_小区内街", (4, -9, 2.6), (46, -9, 1.8), 38, None),
         # 4. 室内厨房：从入户门看向橱柜台面（补室内灯）
         ("04_室内厨房", (12.9, 6.5, 1.65), (9.8, 1.8, 1.05), 30,
-         [((11.0, 4.0, 2.55), 150, warm), ((9.0, 5.6, 2.45), 85, warm), ((13.2, 2.4, 2.35), 75, cool)]),
+         [((11.0, 4.0, 2.6), 105, warm), ((9.0, 5.6, 2.5), 58, warm), ((13.2, 2.4, 2.4), 52, cool)]),
         # 5. 办公区同事（补室内灯）
         ("05_办公区同事", (-15.2, 3.2, 1.7), (-17.2, -0.6, 1.1), 34,
-         [((-15.5, 1.2, 2.55), 165, warm), ((-18.2, -2.2, 2.45), 90, warm)]),
+         [((-15.5, 1.2, 2.6), 118, warm), ((-18.2, -2.2, 2.5), 62, warm)]),
+        # 7. 客厅布置：沙发正对电视，茶几居中
+        ("07_客厅布置", (7.3, 1.9, 2.25), (3.9, 5.5, 0.9), 28,
+         [((5.6, 5.0, 2.55), 92, warm), ((4.0, 6.2, 2.45), 48, cool)]),
+        # 8. 卧室布置：床头靠墙，床头柜贴床头，衣柜靠墙
+        ("08_卧室布置", (13.6, -0.4, 1.95), (9.6, -3.6, 0.85), 30,
+         [((11.0, -2.0, 2.55), 92, warm), ((12.6, -4.2, 2.45), 48, cool)]),
         # 6. 办公区全景（补室内灯）
         ("06_办公区全景", (-14, 6.6, 3.6), (-14, -6, 1.0), 32,
-         [((-14, 2.0, 2.6), 210, warm), ((-16.8, -3.2, 2.5), 115, cool), ((-11.2, -3.2, 2.5), 115, cool)]),
+         [((-14, 2.0, 2.65), 150, warm), ((-16.8, -3.2, 2.55), 78, cool), ((-11.2, -3.2, 2.55), 78, cool)]),
     ]
 
     for name, loc, target, lens, room_lights in views:

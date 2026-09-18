@@ -1869,25 +1869,31 @@ public class KitchenSimulator : MonoBehaviour
 
     private void BuildBathroom(float cx, float cz)
     {
-        BuildToilet(cx + 1.7f, cz + 1.4f, 180f);
-        BuildWashbasin(cx - 2.1f, cz - 1.6f, 90f);
-        BuildBathtub(cx - 1.2f, cz + 1.8f, 0f);
+        // 洁具靠墙布置：马桶靠东墙、洗手台靠西墙、浴缸沿北墙
+        BuildToilet(cx + 2.45f, cz - 0.9f, 270f);
+        BuildWashbasin(cx - 2.55f, cz - 0.6f, 90f);
+        BuildBathtub(cx - 0.3f, cz + 2.3f, 0f);
     }
 
     private void BuildBedroom(float cx, float cz)
     {
-        BuildBed(cx + 0.6f, cz + 0.4f, 180f);
-        BuildWardrobe(cx + 2.3f, cz + 2.0f, 0f);
-        BuildCabinet(cx - 2.2f, cz - 2.0f, 180f);
+        // 床头靠北墙（南侧是通往客厅的门，避免挡门）
+        BuildBed(cx - 0.5f, cz + 1.85f, 180f);
+        BuildCabinet(cx + 1.1f, cz + 2.45f, 180f);   // 床头柜贴床头东侧
+        BuildWardrobe(cx - 2.6f, cz - 0.8f, 90f);    // 衣柜靠西墙，面朝东
+        BuildPlant(cx + 2.2f, cz - 2.2f);
     }
 
     private void BuildLivingRoom(float cx, float cz)
     {
-        BuildSofa(cx + 1.6f, cz + 1.6f, 180f);
-        BuildTvUnit(cx - 1.8f, cz + 1.7f, 0f);
-        BuildTable(cx - 0.4f, cz - 0.6f, 1.4f, 0.8f, 0f, 0.45f);
-        CreateDecoCube("Rug", new Vector3(cx, 0.02f, cz - 0.3f), new Vector3(3.2f, 0.02f, 2.4f), new Color(0.68f, 0.55f, 0.44f));
-        BuildPlant(cx - 2.3f, cz - 2.2f);
+        // 常规客厅布置：电视靠西墙、沙发在对面正对电视、茶几居中
+        // 客厅南墙是入户门、北墙有通往卫生间的门，因此电视避开这两处开口
+        float axisZ = cz - 1.5f;                 // 坐具轴线
+        BuildTvUnit(cx - 2.5f, axisZ, 90f);      // 电视柜靠西墙，面朝东
+        BuildSofa(cx + 0.9f, axisZ, 270f);       // 沙发正对电视，面朝西
+        BuildTable(cx - 0.75f, axisZ, 1.2f, 0.7f, 0f, 0.45f);   // 茶几在两者之间
+        CreateDecoCube("Rug", new Vector3(cx - 0.75f, 0.02f, axisZ), new Vector3(2.8f, 0.02f, 2.20f), new Color(0.68f, 0.55f, 0.44f));
+        BuildPlant(cx + 2.4f, cz + 2.4f);        // 绿植摆角落
     }
 
     // ── 家具构件 ──────────────────────────────────────────
