@@ -75,6 +75,7 @@ public static class KitchenProjectBuilder
     private static readonly string[] RequiredShaders =
     {
         "Standard",
+        "Custom/Glass",
         "Unlit/Transparent Cutout",
         "Transparent/Cutout/Diffuse",
         "Legacy Shaders/Transparent/Diffuse",

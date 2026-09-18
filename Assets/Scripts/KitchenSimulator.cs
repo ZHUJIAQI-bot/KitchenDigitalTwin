@@ -308,6 +308,7 @@ public class KitchenSimulator : MonoBehaviour
         HandleMovement();
         HandleDialogue();
         UpdateDoors();
+        UpdateHomeowners();
         UpdateOrderSpawning();
         DetectInteraction();
         UpdateRepair();
@@ -1987,7 +1988,8 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
-        if (CountActive() < MaxActiveOrders && TrySpawnOrder())
+        // 不再凭空生成工单：由户主上门告知，玩家听完才接单
+        if (CountActive() + homeowners.Count < MaxActiveOrders && TrySpawnHomeowner())
         {
             orderTimer = Random.Range(OrderIntervalMin, OrderIntervalMax);
         }
@@ -1995,6 +1997,235 @@ public class KitchenSimulator : MonoBehaviour
         {
             orderTimer = 1.5f; // 满单或无可派位置，稍后重试
         }
+    }
+
+    // ── 户主上门告知 ──────────────────────────────────────
+    private class Homeowner
+    {
+        public Transform root;
+        public GameObject bubble;
+        public Room room;
+        public OrderTemplate template;
+        public int phase;      // 0 走向玩家 1 说明情况 2 离开
+        public float timer;
+    }
+
+    private readonly List<Homeowner> homeowners = new List<Homeowner>();
+
+    private bool TrySpawnHomeowner()
+    {
+        // 选一个"位置上还没有活跃工单"的房间×模板组合
+        List<Room> candidateRooms = new List<Room>();
+        List<OrderTemplate> candidateTemplates = new List<OrderTemplate>();
+
+        for (int r = 0; r < rooms.Count; r++)
+        {
+            Room room = rooms[r];
+            if (room.type == "公司")
+            {
+                continue;
+            }
+            for (int t = 0; t < templates.Count; t++)
+            {
+                if (templates[t].roomType != room.type)
+                {
+                    continue;
+                }
+                Vector3 site = room.center + templates[t].offset;
+                site.y = 0f;
+                if (HasActiveOrderAt(site) || HasHomeownerFor(room, templates[t]))
+                {
+                    continue;
+                }
+                candidateRooms.Add(room);
+                candidateTemplates.Add(templates[t]);
+            }
+        }
+
+        if (candidateRooms.Count == 0)
+        {
+            return false;
+        }
+
+        int pick = Random.Range(0, candidateRooms.Count);
+
+        // 从公司大门外走进来
+        Vector3 spawn = new Vector3(-16.4f, GroundLevel, -11f);
+        float yaw = Mathf.Atan2(playerPosition.x - spawn.x, playerPosition.z - spawn.z) * Mathf.Rad2Deg;
+        Color[] coats =
+        {
+            new Color(0.55f, 0.42f, 0.62f),
+            new Color(0.35f, 0.5f, 0.42f),
+            new Color(0.6f, 0.45f, 0.35f),
+            new Color(0.4f, 0.45f, 0.6f),
+        };
+        Transform npc = BuildCharacterModel("户主", spawn, yaw, coats[Random.Range(0, coats.Length)], new Color(0.85f, 0.68f, 0.52f));
+
+        homeowners.Add(new Homeowner
+        {
+            root = npc,
+            room = candidateRooms[pick],
+            template = candidateTemplates[pick],
+            phase = 0
+        });
+        ShowToast("有户主上门了，去听听是什么问题", 4f);
+        return true;
+    }
+
+    private bool HasHomeownerFor(Room room, OrderTemplate template)
+    {
+        for (int i = 0; i < homeowners.Count; i++)
+        {
+            if (homeowners[i].room == room && homeowners[i].template == template)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void UpdateHomeowners()
+    {
+        for (int i = homeowners.Count - 1; i >= 0; i--)
+        {
+            Homeowner owner = homeowners[i];
+            if (owner.root == null)
+            {
+                homeowners.RemoveAt(i);
+                continue;
+            }
+
+            if (owner.phase == 0)
+            {
+                // 走向玩家
+                Vector3 delta = playerPosition - owner.root.position;
+                delta.y = 0f;
+                if (delta.magnitude <= 2.2f)
+                {
+                    owner.phase = 1;
+                    owner.timer = 6f;
+                    FileReport(owner);
+                }
+                else
+                {
+                    Vector3 step = delta.normalized * 2.4f * Time.deltaTime;
+                    owner.root.position += step;
+                    if (delta.sqrMagnitude > 0.01f)
+                    {
+                        owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                    }
+                }
+            }
+            else if (owner.phase == 1)
+            {
+                owner.timer -= Time.deltaTime;
+                FacePlayer(owner, 5f);
+                if (owner.bubble != null)
+                {
+                    Billboard(owner.bubble);
+                }
+                if (owner.timer <= 0f)
+                {
+                    owner.phase = 2;
+                    if (owner.bubble != null)
+                    {
+                        Destroy(owner.bubble);
+                        owner.bubble = null;
+                    }
+                }
+            }
+            else
+            {
+                // 离开
+                Vector3 exit = new Vector3(-16.4f, owner.root.position.y, -13f);
+                Vector3 delta = exit - owner.root.position;
+                delta.y = 0f;
+                owner.root.position += delta.normalized * 2.6f * Time.deltaTime;
+                if (delta.sqrMagnitude > 0.01f)
+                {
+                    owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                }
+                if (delta.magnitude < 1.2f)
+                {
+                    Destroy(owner.root.gameObject);
+                    homeowners.RemoveAt(i);
+                }
+            }
+        }
+    }
+
+    private void FacePlayer(Homeowner owner, float speed)
+    {
+        Vector3 look = playerPosition - owner.root.position;
+        look.y = 0f;
+        if (look.sqrMagnitude > 0.01f)
+        {
+            owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(look), Time.deltaTime * speed);
+        }
+    }
+
+    private void Billboard(GameObject target)
+    {
+        Vector3 look = target.transform.position - viewCamera.transform.position;
+        if (look.sqrMagnitude > 0.01f)
+        {
+            target.transform.rotation = Quaternion.LookRotation(look, Vector3.up);
+        }
+    }
+
+    // 户主说明情况 → 生成工单 + 头顶气泡
+    private void FileReport(Homeowner owner)
+    {
+        Vector3 site = owner.room.center + owner.template.offset;
+        site.y = 0f;
+
+        int cost = Mathf.RoundToInt(Random.Range(owner.template.costMin, owner.template.costMax + 1) / 100f) * 100;
+        Order order = new Order
+        {
+            id = ++orderSerial,
+            title = owner.template.title,
+            room = owner.room.name,
+            cause = owner.template.cause,
+            plan = owner.template.plan,
+            cost = cost,
+            site = site,
+            state = OrderState.Pending
+        };
+        BuildOrderMarker(order);
+        orders.Add(order);
+
+        string complaint = "我家" + owner.room.type + "的" + owner.template.title + "，麻烦你来看看";
+        owner.bubble = BuildBubble(owner.root.position + Vector3.up * 2.35f, complaint);
+        ShowToast("新工单 " + order.Code + " · " + order.room + " · " + owner.template.title, 5f);
+    }
+
+    private GameObject BuildBubble(Vector3 position, string text)
+    {
+        GameObject bubble = new GameObject("Speech Bubble");
+        bubble.transform.SetParent(transform, false);
+        bubble.transform.position = position;
+
+        Material board = MakeMaterial(new Color(0.98f, 0.97f, 0.93f), 0f, 0.4f);
+        DecoPart(PrimitiveType.Cube, "Bubble Board", bubble.transform, Vector3.zero, new Vector3(3.3f, 0.62f, 0.05f), Quaternion.identity, board);
+        DecoPart(PrimitiveType.Cube, "Bubble Tail", bubble.transform, new Vector3(0f, -0.42f, 0f), new Vector3(0.16f, 0.24f, 0.05f), Quaternion.Euler(0f, 0f, 32f), board);
+
+        GameObject labelObject = new GameObject("Bubble Text");
+        labelObject.transform.SetParent(bubble.transform, false);
+        labelObject.transform.localPosition = new Vector3(0f, 0f, -0.05f);
+        TextMesh mesh = labelObject.AddComponent<TextMesh>();
+        mesh.font = UiFont;
+        mesh.text = text;
+        mesh.fontSize = 64;
+        mesh.characterSize = 0.035f;   // 实测：每行世界高度 = characterSize × 64 ÷ 10
+        mesh.anchor = TextAnchor.MiddleCenter;
+        mesh.alignment = TextAlignment.Center;
+        mesh.color = new Color(0.15f, 0.15f, 0.18f);
+        Renderer renderer = labelObject.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            renderer.sharedMaterial = GetLabelMaterial(new Color(0.15f, 0.15f, 0.18f));
+        }
+        return bubble;
     }
 
     private bool TrySpawnOrder()
@@ -2828,18 +3059,19 @@ public class KitchenSimulator : MonoBehaviour
     // 关键：SetOverrideTag("RenderType","Transparent") 不能漏，否则仍走不透明通道
     private Material MakeTransparent(Color color, float alpha, float smoothness)
     {
-        Shader shader = Shader.Find("Standard");
+        // 优先用自带的极简透明着色器：混合状态写死在 shader 里，不依赖变体，绝不会退化成白色
+        Shader shader = Shader.Find("Custom/Glass");
+        if (shader == null)
+        {
+            shader = Shader.Find("Standard");
+        }
         if (shader == null)
         {
             shader = Shader.Find("Sprites/Default");
         }
-        if (shader == null)
-        {
-            shader = Shader.Find("Unlit/Color");
-        }
         Material material = new Material(shader);
 
-        // 无条件设置混合状态：这些是材质级别的渲染状态，不依赖着色器属性是否存在
+        // 同时把 Standard 路径需要的混合状态也设上（若回退到 Standard 依然透明）
         material.SetOverrideTag("RenderType", "Transparent");
         material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
         material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
