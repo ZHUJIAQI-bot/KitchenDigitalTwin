@@ -49,6 +49,7 @@ public class KitchenSimulator : MonoBehaviour
         public Vector3 site;
         public OrderState state;
         public GameObject marker;
+        public TextMesh tag;
         public Renderer[] renderers;
         public float repairProgress;
         public bool needsRebuild;
@@ -3837,20 +3838,41 @@ public class KitchenSimulator : MonoBehaviour
         marker.transform.SetParent(transform, false);
         marker.transform.position = new Vector3(order.site.x, MarkerHeight, order.site.z);
 
-        GameObject bar = MakePrimitive(PrimitiveType.Cube, "Bar", marker.transform, new Vector3(0f, 0.2f, 0f), new Vector3(0.055f, 0.18f, 0.055f), Quaternion.identity, stateMaterials[0]);
-        GameObject dot = MakePrimitive(PrimitiveType.Sphere, "Dot", marker.transform, new Vector3(0f, 0.04f, 0f), Vector3.one * 0.09f, Quaternion.identity, stateMaterials[0]);
+        // 数据牌：深色底板 + 状态色描边（替代原来的感叹号，直接体现"数字孪生"）
+        Material boardMat = MakeMaterial(new Color(0.05f, 0.09f, 0.12f), 0.1f, 0.4f);
+        GameObject board = MakePrimitive(PrimitiveType.Cube, "Tag Board", marker.transform, new Vector3(0f, 0f, 0.03f), new Vector3(2.5f, 0.8f, 0.05f), Quaternion.identity, boardMat);
+        GameObject edge = MakePrimitive(PrimitiveType.Cube, "Tag Edge", marker.transform, new Vector3(0f, 0f, 0.06f), new Vector3(2.58f, 0.88f, 0.02f), Quaternion.identity, stateMaterials[0]);
+
+        GameObject labelObject = new GameObject("Tag Text");
+        labelObject.transform.SetParent(marker.transform, false);
+        labelObject.transform.localPosition = new Vector3(0f, 0f, 0f);
+        TextMesh mesh = labelObject.AddComponent<TextMesh>();
+        mesh.font = UiFont;
+        mesh.fontSize = 64;
+        mesh.characterSize = 0.075f;
+        mesh.anchor = TextAnchor.MiddleCenter;
+        mesh.alignment = TextAlignment.Center;
+        mesh.lineSpacing = 1.0f;
+        mesh.color = stateColors[0];
+        Renderer labelRenderer = labelObject.GetComponent<Renderer>();
+        if (labelRenderer != null)
+        {
+            labelRenderer.sharedMaterial = GetLabelMaterial(new Color(0.92f, 0.96f, 1f));
+        }
+
         GameObject ring = CreateCylinder("Ring", new Vector3(order.site.x, 0.02f, order.site.z), 0.17f, 0.012f, Quaternion.identity, stateMaterials[0]);
         GameObject beam = CreateCylinder("Beam", new Vector3(order.site.x, MarkerHeight * 0.5f, order.site.z), 0.009f, MarkerHeight, Quaternion.identity, stateMaterials[0]);
         ring.transform.SetParent(marker.transform, true);
         beam.transform.SetParent(marker.transform, true);
 
         order.marker = marker;
+        order.tag = mesh;
         order.renderers = new[]
         {
-            bar.GetComponent<Renderer>(),
-            dot.GetComponent<Renderer>(),
+            edge.GetComponent<Renderer>(),
             ring.GetComponent<Renderer>(),
-            beam.GetComponent<Renderer>()
+            beam.GetComponent<Renderer>(),
+            board.GetComponent<Renderer>()
         };
     }
 
@@ -4010,6 +4032,15 @@ public class KitchenSimulator : MonoBehaviour
                 {
                     order.renderers[r].sharedMaterial = material;
                 }
+            }
+
+            // 数据牌实时文字：传感器名 / 当前读数 / 状态
+            if (order.tag != null)
+            {
+                bool over = order.state != OrderState.Fixed && order.sensorValue >= order.sensorAlarm;
+                string mark = order.state == OrderState.Fixed ? "OK" : (over ? "超标" : "预警");
+                order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark;
+                order.tag.color = stateColors[(int)order.state];
             }
 
             float speed = order.state == OrderState.Repairing ? 6f : 3f;
