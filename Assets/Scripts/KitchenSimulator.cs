@@ -307,6 +307,7 @@ public class KitchenSimulator : MonoBehaviour
     private int Cash { get { return StartCash + income - expenses; } }
 
     private string startError;
+    private bool dialogueJustEnded;
 
     private static Font uiFont;
     private static bool uiFontLoaded;
@@ -363,6 +364,9 @@ public class KitchenSimulator : MonoBehaviour
 
     private void Update()
     {
+        // 每帧复位：防止"按下 E 结束对话"这一帧又被别的交互重新开一场对话（会变成死循环）
+        dialogueJustEnded = false;
+
         UpdateDayNight();
         HandleLook();
         HandleMovement();
@@ -2217,6 +2221,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         dialogueIndex = -1;
         dialogue.Clear();
+        dialogueJustEnded = true;   // 本帧不再接受新的对话触发
 
         if (talkTarget != null)
         {
@@ -2857,7 +2862,7 @@ public class KitchenSimulator : MonoBehaviour
                     FileReport(owner);
                     // 玩家恰好在前台旁边的话可以聊两句，否则登记完就回家
                     bool playerNearby = Distance2D(playerPosition, owner.rig.root.position) < 3.5f;
-                    if (playerNearby && dialogueIndex < 0 && talkTarget == null)
+                    if (playerNearby && dialogueIndex < 0 && talkTarget == null && !dialogueJustEnded)
                     {
                         owner.phase = 3;
                         owner.timer = 90f;
@@ -3110,9 +3115,10 @@ public class KitchenSimulator : MonoBehaviour
     // ── 交互与维修 ────────────────────────────────────────
     private void DetectInteraction()
     {
-        if (repairingOrder != null || dialogueIndex >= 0)
+        if (repairingOrder != null || dialogueIndex >= 0 || dialogueJustEnded)
         {
             activeOrder = null;
+            activeColleague = null;
             return;
         }
 
