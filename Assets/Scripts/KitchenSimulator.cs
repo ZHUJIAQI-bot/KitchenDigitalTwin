@@ -596,7 +596,7 @@ public class KitchenSimulator : MonoBehaviour
     // ── 静态几何合批：把上千个装饰物按材质合并，draw call 从 1600+ 降到几十 ──
     private void CombineStaticGeometry()
     {
-        // 同事的骨架会被逻辑引用，不能合并（合并会销毁原对象）
+        // 会被逻辑移动的对象不能合并（合并会烘焙变换并销毁原对象，导致门/同事卡死不动）
         HashSet<Transform> protectedRoots = new HashSet<Transform>();
         for (int i = 0; i < colleagues.Count; i++)
         {
@@ -604,6 +604,21 @@ public class KitchenSimulator : MonoBehaviour
             {
                 protectedRoots.Add(colleagues[i].root);
             }
+        }
+        for (int i = 0; i < houseDoors.Count; i++)
+        {
+            if (houseDoors[i].pivot != null)
+            {
+                protectedRoots.Add(houseDoors[i].pivot);
+            }
+        }
+        if (sensorDoorLeft != null)
+        {
+            protectedRoots.Add(sensorDoorLeft);
+        }
+        if (sensorDoorRight != null)
+        {
+            protectedRoots.Add(sensorDoorRight);
         }
 
         MeshFilter[] all = GetComponentsInChildren<MeshFilter>();
