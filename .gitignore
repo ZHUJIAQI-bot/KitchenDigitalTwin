@@ -31,3 +31,7 @@ compile_check.log
 codex-batch-build.log
 sysinfo.txt
 *.stackdump
+
+# ── Blender 渲染中间产物（可用 Unity 菜单重新导出）──
+/Export/
+export.log

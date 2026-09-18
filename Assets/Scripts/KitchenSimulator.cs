@@ -891,8 +891,8 @@ public class KitchenSimulator : MonoBehaviour
         rig.rightLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
         rig.leftKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
         rig.rightKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
-        rig.leftArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
-        rig.rightArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
+        rig.leftArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
+        rig.rightArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
         colleagues.Add(new Colleague { name = name, root = rig.root, lines = lines });
     }
 
@@ -3192,14 +3192,14 @@ public class KitchenSimulator : MonoBehaviour
         Transform leftArm = new GameObject("Left Arm Pivot").transform;
         leftArm.SetParent(root.transform, false);
         leftArm.localPosition = new Vector3(-0.34f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.62f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         Transform rightArm = new GameObject("Right Arm Pivot").transform;
         rightArm.SetParent(root.transform, false);
         rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.62f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
         Transform leftLeg = new GameObject("Left Leg Pivot").transform;
