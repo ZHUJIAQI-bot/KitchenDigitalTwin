@@ -157,14 +157,14 @@ def build_antenna(root, z0, z1, r_bot, r_top, white_mat, red_mat, tip_mat):
 def build_oriental_pearl(root):
     S = 0.15  # 真实米 → 游戏单位
 
-    body = make_material("LJ_Glow_PearlBody", (0.50, 0.53, 0.58), metallic=0.3, roughness=0.35)
+    body = make_material("LJ_Glow_PearlBody", (0.60, 0.63, 0.68), metallic=0.3, roughness=0.35)
     grid = make_material("LJ_Pearl_Grid", (0.38, 0.40, 0.45), metallic=0.35, roughness=0.4)
-    glow_low = make_material("LJ_Glow_PearlLow", (0.62, 0.20, 0.38), metallic=0.0, roughness=0.05,
-                             emissive=(0.95, 0.25, 0.55), emit_strength=3.0)
-    glow_high = make_material("LJ_Glow_PearlHigh", (0.42, 0.26, 0.62), metallic=0.0, roughness=0.05,
-                              emissive=(0.55, 0.30, 0.90), emit_strength=3.0)
-    glow_cap = make_material("LJ_Glow_PearlSmall", (0.70, 0.42, 0.22), metallic=0.0, roughness=0.05,
-                             emissive=(1.0, 0.55, 0.25), emit_strength=3.0)
+    glow_low = make_material("LJ_Glow_PearlLow", (0.85, 0.35, 0.55), metallic=0.0, roughness=0.05,
+                             emissive=(0.95, 0.30, 0.60), emit_strength=3.0)
+    glow_high = make_material("LJ_Glow_PearlHigh", (0.62, 0.42, 0.85), metallic=0.0, roughness=0.05,
+                              emissive=(0.55, 0.35, 0.90), emit_strength=3.0)
+    glow_cap = make_material("LJ_Glow_PearlSmall", (0.92, 0.62, 0.40), metallic=0.0, roughness=0.05,
+                             emissive=(1.0, 0.65, 0.35), emit_strength=3.0)
     ant_white = make_material("LJ_Pearl_AntennaWhite", (0.86, 0.86, 0.87), metallic=0.2, roughness=0.4)
     ant_red = make_material("LJ_Pearl_AntennaRed", (0.72, 0.13, 0.11), metallic=0.2, roughness=0.4)
     tip_light = make_material("LJ_Glow_AntennaTip", (1.0, 0.08, 0.04), metallic=0.0, roughness=0.3,
@@ -192,6 +192,9 @@ def build_oriental_pearl(root):
     parent_to(add_sphere("Sphere_Lower", (0, 0, 68 * S), 25 * S, glow_low), root)
     parent_to(add_sphere("Sphere_Upper", (0, 0, 250 * S), 22.5 * S, glow_high), root)
     parent_to(add_sphere("Capsule", (0, 0, 350 * S), 8 * S, glow_cap), root)
+
+    # 上球到太空舱之间的连接颈柱（真实东方明珠有这段，之前漏了）
+    parent_to(add_cylinder("Pearl_Neck", (0, 0, 46), 0.8, 10.4, body), root)
 
     # 球面窗格（下球/上球各 24 经线 × 8 纬线）
     build_sphere_grid(root, "WindowGrid_Lower", 68 * S, 25 * S, grid)

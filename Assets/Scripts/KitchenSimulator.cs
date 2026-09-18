@@ -1325,7 +1325,7 @@ public class KitchenSimulator : MonoBehaviour
                 if (lampsOn)
                 {
                     m.EnableKeyword("_EMISSION");
-                    m.SetColor("_EmissionColor", m.color * 3.2f);
+                    m.SetColor("_EmissionColor", m.color * 2.0f);
                 }
                 else
                 {
