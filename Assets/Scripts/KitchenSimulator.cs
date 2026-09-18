@@ -261,7 +261,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool minimapLarge;
     private bool shopOpen;
     private bool almanacOpen;
-    private bool twinPanelOpen = true;   // 数字孪生监测面板（默认打开，体现工程系统）
+    private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
 
     // 门
     private class HouseDoor
@@ -4679,12 +4679,44 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 数字孪生监测平台（T 键）──────────────────────────
-    private Rect TwinRect { get { return new Rect(Screen.width * 0.5f - 390f, 70f, 780f, 500f); } }
+    private Rect TwinRect { get { return new Rect(Screen.width * 0.5f - 370f, 66f, 740f, 488f); } }
+    // 收起时的紧凑状态条（顶部居中，不挡视野）
+    private Rect TwinBarRect { get { return new Rect(Screen.width * 0.5f - 200f, 16f, 400f, 42f); } }
+
+    private int AlarmCount()
+    {
+        int count = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state != OrderState.Fixed && orders[i].sensorValue >= orders[i].sensorAlarm)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
 
     private void DrawTwinPanel()
     {
+        // 收起状态：只显示一条紧凑状态条，不遮挡视野
         if (!twinPanelOpen)
         {
+            Rect bar = TwinBarRect;
+            DrawPanel(bar, new Color(0.04f, 0.07f, 0.1f, 0.92f), new Color(0.45f, 0.75f, 0.9f, 0.3f));
+
+            int alarms = AlarmCount();
+            Fill(new Rect(bar.x + 12f, bar.y + 11f, 4f, 20f), alarms > 0 ? pendingColor : fixedColor);
+            GUI.Label(new Rect(bar.x + 24f, bar.y + 10f, 250f, 22f),
+                "数字孪生监测　·　报警 " + alarms + " 个　·　已消除 " + CountFixed() + "/" + orders.Count, smallStyle);
+
+            Rect expand = new Rect(bar.x + bar.width - 84f, bar.y + 8f, 72f, 26f);
+            bool hoverExpand = expand.Contains(Event.current.mousePosition);
+            Fill(expand, hoverExpand ? Color.Lerp(btnBlue, Color.white, 0.18f) : btnBlue);
+            if (GUI.Button(expand, GUIContent.none, GUIStyle.none))
+            {
+                twinPanelOpen = true;
+            }
+            GUI.Label(expand, "展开 T", cardButtonStyle);
             return;
         }
 
@@ -4692,7 +4724,16 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, new Color(0.04f, 0.07f, 0.1f, 0.96f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
 
         GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 420f, 28f), "数字孪生监测平台　·　厨房改造工程", titleStyle);
-        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 420f, 18f), ClockText + "　·　监测点位 " + orders.Count + " 个　·　T 收起", smallStyle);
+        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 420f, 18f), ClockText + "　·　监测点位 " + orders.Count + " 个", smallStyle);
+
+        Rect collapse = new Rect(rect.x + rect.width - 96f, rect.y + 16f, 76f, 30f);
+        bool hoverCollapse = collapse.Contains(Event.current.mousePosition);
+        Fill(collapse, hoverCollapse ? Color.Lerp(btnBlue, Color.white, 0.18f) : btnBlue);
+        if (GUI.Button(collapse, GUIContent.none, GUIStyle.none))
+        {
+            twinPanelOpen = false;
+        }
+        GUI.Label(collapse, "收起 T", cardButtonStyle);
 
         // ── 实时数据表 ──
         float top = rect.y + 70f;
@@ -5098,7 +5139,7 @@ public class KitchenSimulator : MonoBehaviour
             || PromptRect.Contains(point) || ToolChipRect.Contains(point)
             || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
             || (almanacOpen && AlmanacRect.Contains(point))
-            || (twinPanelOpen && TwinRect.Contains(point)) || (!loggedIn);
+            || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point)) || (!loggedIn);
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
