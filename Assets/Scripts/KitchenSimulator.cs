@@ -166,6 +166,7 @@ public class KitchenSimulator : MonoBehaviour
     private readonly Color cityWindowDayTone = new Color(0.78f, 0.83f, 0.88f);
     private readonly List<Material> nightLightMaterials = new List<Material>();
     private Material riverMaterial;
+    private Material buildingWindowMaterial;
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -1103,12 +1104,11 @@ public class KitchenSimulator : MonoBehaviour
         SpawnLandmark("Models/Lujiazui/SWFC", c + new Vector3(10f, 0f, 3f));
         SpawnLandmark("Models/Lujiazui/JinMao", c + new Vector3(28f, 0f, -6f));
 
-        // 周边高层群，形成密集的现代化天际线（置于地标之后）
-        Color[] bodyTones =
-        {
-            new Color(0.34f, 0.4f, 0.5f), new Color(0.28f, 0.34f, 0.44f),
-            new Color(0.4f, 0.44f, 0.52f), new Color(0.24f, 0.3f, 0.4f),
-        };
+        // 周边高层群——发光窗格楼体，形成密集的现代化夜城天际线（置于地标之后）
+        Shader winShader = Shader.Find("Custom/BuildingWindows");
+        buildingWindowMaterial = winShader != null
+            ? new Material(winShader)
+            : MakeMaterial(new Color(0.28f, 0.32f, 0.4f), 0.1f, 0.5f);
         Color[] lightTones =
         {
             new Color(0.35f, 0.75f, 1f), new Color(0.75f, 0.45f, 1f),
@@ -1122,15 +1122,9 @@ public class KitchenSimulator : MonoBehaviour
             float z = c.z - 24f - (float)rng.NextDouble() * 38f;
             float h = 24f + (float)rng.NextDouble() * 28f;
             float w = 7f + (float)rng.NextDouble() * 6f;
-            Color body = bodyTones[rng.Next(bodyTones.Length)];
-            CreateDecoCube("LJ Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * 0.85f), body);
-            // 每层亮带
-            Material light = NightLight(lightTones[rng.Next(lightTones.Length)]);
-            for (float y = 8f; y < h; y += 7f)
-            {
-                CreateDecoCube("LJ Band", new Vector3(x, y, z - w * 0.44f), new Vector3(w * 0.86f, 0.5f, 0.12f), light);
-            }
+            CreateDecoCube("LJ Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * 0.85f), buildingWindowMaterial);
             // 顶部灯冠
+            Material light = NightLight(lightTones[rng.Next(lightTones.Length)]);
             CreateDecoCube("LJ Crown", new Vector3(x, h + 0.6f, z), new Vector3(w * 1.05f, 1.2f, w * 0.9f), light);
         }
     }
@@ -1331,7 +1325,7 @@ public class KitchenSimulator : MonoBehaviour
                 if (lampsOn)
                 {
                     m.EnableKeyword("_EMISSION");
-                    m.SetColor("_EmissionColor", m.color * 2.2f);
+                    m.SetColor("_EmissionColor", m.color * 3.2f);
                 }
                 else
                 {
@@ -1342,6 +1336,11 @@ public class KitchenSimulator : MonoBehaviour
             if (riverMaterial != null)
             {
                 riverMaterial.SetFloat("_Glow", lampsOn ? 1f : 0f);
+            }
+            // 楼体窗格夜间亮灯
+            if (buildingWindowMaterial != null)
+            {
+                buildingWindowMaterial.SetFloat("_Glow", lampsOn ? 1f : 0f);
             }
             // 远处城市的窗户亮起（假装屋里开着灯）
             if (cityWindowMaterial != null)
