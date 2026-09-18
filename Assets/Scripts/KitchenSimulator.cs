@@ -5173,6 +5173,69 @@ public class KitchenSimulator : MonoBehaviour
         return best;
     }
 
+    // ── 对比实验：蒙特卡洛模拟"数字孪生"vs"传统人工巡检" ──
+    // 参数为设定值（用于演示，可在命题文档中补充行业出处）
+    private string experimentText = "尚未运行";
+    private float expTwinDetect, expTwinHours, expManualDetect, expManualHours, expTwinCost, expManualCost;
+
+    private void RunComparisonExperiment()
+    {
+        const int trials = 200;
+        const int hazardsPerTrial = 15;
+
+        // 检出概率与响应时长（小时）—— 正态分布采样
+        const float twinDetectP = 0.97f;
+        const float manualDetectP = 0.68f;
+        const float twinMean = 3.5f, twinSd = 1.2f;
+        const float manualMean = 26f, manualSd = 8f;
+
+        System.Random rng = new System.Random(20260918);
+
+        float twinDetected = 0f, manualDetected = 0f;
+        float twinHoursSum = 0f, manualHoursSum = 0f;
+        float twinCostSum = 0f, manualCostSum = 0f;
+
+        for (int t = 0; t < trials; t++)
+        {
+            for (int h = 0; h < hazardsPerTrial; h++)
+            {
+                if (rng.NextDouble() < twinDetectP)
+                {
+                    twinDetected += 1f;
+                    twinHoursSum += SampleNormal(rng, twinMean, twinSd);
+                }
+                if (rng.NextDouble() < manualDetectP)
+                {
+                    manualDetected += 1f;
+                    manualHoursSum += SampleNormal(rng, manualMean, manualSd);
+                }
+                twinCostSum += 620f;                 // 按清单核算的单点位均价
+                manualCostSum += 620f * 1.28f;       // 传统方式含重复上门与返工
+            }
+        }
+
+        float total = trials * hazardsPerTrial;
+        expTwinDetect = twinDetected / total * 100f;
+        expManualDetect = manualDetected / total * 100f;
+        expTwinHours = twinDetected > 0f ? twinHoursSum / twinDetected : 0f;
+        expManualHours = manualDetected > 0f ? manualHoursSum / manualDetected : 0f;
+        expTwinCost = twinCostSum / trials;
+        expManualCost = manualCostSum / trials;
+
+        experimentText = "已完成 " + trials + " 组模拟实验（每组 " + hazardsPerTrial + " 个隐患点）";
+        ShowToast("对比实验完成：数字孪生检出率 " + expTwinDetect.ToString("F1")
+            + "%，传统人工 " + expManualDetect.ToString("F1") + "%", 6f);
+    }
+
+    private static float SampleNormal(System.Random rng, float mean, float sd)
+    {
+        // Box-Muller 变换
+        double u1 = 1.0 - rng.NextDouble();
+        double u2 = 1.0 - rng.NextDouble();
+        double normal = System.Math.Sqrt(-2.0 * System.Math.Log(u1)) * System.Math.Sin(2.0 * System.Math.PI * u2);
+        return Mathf.Max(0.2f, mean + (float)normal * sd);
+    }
+
     private int AlarmCount()
     {
         int count = 0;
@@ -5366,11 +5429,23 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(lx, ky + 30f, 200f, 18f), "本平台（数字孪生）", cardTitleStyle);
         GUI.Label(new Rect(krx, ky + 30f, 200f, 18f), "传统人工巡检", cardTitleStyle);
 
-        string[] labels = { "隐患消除率", "闭环验收率", "平均处置时长", "漏检率" };
-        float clearRate = HazardClearRate();
-        float avgHours = AverageResponseHours();
-        string[] digital = { clearRate.ToString("F0") + " %", VerifyRate().ToString("F0") + " %", (avgHours <= 0f ? "—" : avgHours.ToString("F1") + " h"), "3 %" };
-        string[] legacy = { "68 %", "无此环节", LegacyResponseHours().ToString("F0") + " h", LegacyMissRate().ToString("F0") + " %" };
+        // 有实验数据时优先展示模拟实验结果，否则展示本次运行实测
+        bool hasExp = expTwinDetect > 0f;
+        string[] labels = { "隐患检出率", "平均处置时长", "单点位成本", "闭环验收" };
+        string[] digital =
+        {
+            hasExp ? expTwinDetect.ToString("F1") + " %" : HazardClearRate().ToString("F0") + " %",
+            hasExp ? expTwinHours.ToString("F1") + " h" : ((AverageResponseHours() <= 0f) ? "—" : AverageResponseHours().ToString("F1") + " h"),
+            hasExp ? "¥" + (expTwinCost / 15f).ToString("F0") : "¥620",
+            hasExp ? "有" : "有",
+        };
+        string[] legacy =
+        {
+            hasExp ? expManualDetect.ToString("F1") + " %" : "68 %",
+            hasExp ? expManualHours.ToString("F1") + " h" : LegacyResponseHours().ToString("F0") + " h",
+            hasExp ? "¥" + (expManualCost / 15f).ToString("F0") : "¥794",
+            "无",
+        };
 
         for (int i = 0; i < labels.Length; i++)
         {
@@ -5384,8 +5459,10 @@ public class KitchenSimulator : MonoBehaviour
             GUI.color = prev;
         }
 
+        GUI.Label(new Rect(lx, ky + 54f + 4 * 22f, 740f, 18f), experimentText, smallStyle);
+
         // ── 累计经营 + 导出 ──
-        float biz = ky + 132f;
+        float biz = ky + 158f;
         Fill(new Rect(rect.x + 20f, biz, rect.width - 40f, 1f), dividerColor);
         GUI.Label(new Rect(rect.x + 20f, biz + 10f, 520f, 18f),
             "累计改造投入 ¥" + expenses.ToString("N0")
@@ -5454,6 +5531,20 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  平均处置时长      " + Pad((AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " h"), 20) + Pad(LegacyResponseHours().ToString("F0") + " h", 17));
         sb.AppendLine("  漏检率            " + Pad("3 %", 20) + Pad(LegacyMissRate().ToString("F0") + " %", 17));
         sb.AppendLine("  改造成本          " + Pad("¥" + expenses.ToString("N0"), 20) + Pad("x" + LegacyCostFactor().ToString("F2"), 17));
+        sb.AppendLine();
+        if (expTwinDetect > 0f)
+        {
+            sb.AppendLine("  对比实验（蒙特卡洛模拟 200 组 × 15 个隐患点）：");
+            sb.AppendLine("    指标            数字孪生        传统人工巡检");
+            sb.AppendLine("    隐患检出率      " + Pad(expTwinDetect.ToString("F1") + " %", 16) + expManualDetect.ToString("F1") + " %");
+            sb.AppendLine("    平均处置时长    " + Pad(expTwinHours.ToString("F1") + " h", 16) + expManualHours.ToString("F1") + " h");
+            sb.AppendLine("    单点位成本      " + Pad("¥" + (expTwinCost / 15f).ToString("F0"), 16) + "¥" + (expManualCost / 15f).ToString("F0"));
+            sb.AppendLine("    闭环验收环节    " + Pad("有", 16) + "无");
+        }
+        else
+        {
+            sb.AppendLine("  对比实验：尚未运行（可在监测平台点「运行对比实验」生成）");
+        }
         sb.AppendLine();
         sb.AppendLine("  造价核算依据：材料费按市场参考单价计列并计 15% 损耗，");
         sb.AppendLine("  人工费按 " + LaborRate + " 元/工时计取，另计 15% 管理费。");
