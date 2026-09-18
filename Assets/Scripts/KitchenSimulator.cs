@@ -266,6 +266,8 @@ public class KitchenSimulator : MonoBehaviour
     private bool shopOpen;
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
+    private int guideStep;               // 新手引导步骤
+    private float panelFade;             // 面板展开动效
 
     // 门
     private class HouseDoor
@@ -467,6 +469,7 @@ public class KitchenSimulator : MonoBehaviour
         HandleMovement();
         HandleDialogue();
         UpdateSensors();
+        UpdateGuide();
         HandleShopInput();
         UpdateDoors();
         UpdateHomeowners();
@@ -1170,6 +1173,55 @@ public class KitchenSimulator : MonoBehaviour
     private float LegacyMissRate() { return 32f; }      // 漏检率
     private float LegacyResponseHours() { return 26f; } // 平均处置时长
     private float LegacyCostFactor() { return 1.28f; }  // 成本系数
+
+    // ── 新手引导：按步骤提示，评审可快速理解系统逻辑 ──
+    private void UpdateGuide()
+    {
+        if (!loggedIn)
+        {
+            return;
+        }
+        switch (guideStep)
+        {
+            case 0:
+                if (twinPanelOpen) guideStep = 1;
+                break;
+            case 1:
+                if (CountFixed() > 0) guideStep = 2;
+                break;
+            case 2:
+                if (CountVerified() > 0) guideStep = 3;
+                break;
+            case 3:
+                break;
+        }
+
+        // 面板展开动效
+        float target = twinPanelOpen ? 1f : 0f;
+        panelFade = Mathf.MoveTowards(panelFade, target, Time.deltaTime * 5f);
+    }
+
+    private void DrawGuide()
+    {
+        if (!loggedIn || guideStep > 3)
+        {
+            return;
+        }
+
+        string[] steps =
+        {
+            "① 按 T 打开「数字孪生监测平台」，查看现场传感器实时数据",
+            "② 走到报警点位（场景中的数据牌），连点左键完成处置",
+            "③ 改造后读数回落，保持正常 1 小时即通过闭环验收",
+            "④ 在监测平台点「导出验收报告」，生成 KPI 对比报告",
+        };
+
+        float width = 520f;
+        Rect rect = new Rect(16f, Screen.height - 236f, width, 38f);
+        DrawPanel(rect, new Color(0.05f, 0.09f, 0.13f, 0.94f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
+        Fill(new Rect(rect.x + 12f, rect.y + 9f, 4f, 20f), btnBlue);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 9f, width - 40f, 22f), steps[Mathf.Clamp(guideStep, 0, 3)], smallStyle);
+    }
 
     private void UpdateFade()
     {
@@ -4406,6 +4458,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawShop();
         DrawAlmanac();
         DrawTwinPanel();
+        DrawGuide();
         DrawToolChip();
         DrawPromptPanel();
         DrawDialogue();
@@ -5006,6 +5059,13 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         Rect rect = TwinRect;
+        // 展开动效：从略小尺寸淡入
+        float ease = Mathf.Clamp01(panelFade);
+        float inset = (1f - ease) * 14f;
+        rect = new Rect(rect.x + inset, rect.y + inset * 0.6f, rect.width - inset * 2f, rect.height - inset * 1.2f);
+
+        Color prevGui = GUI.color;
+        GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(0.35f + ease * 0.65f));
         DrawPanel(rect, new Color(0.04f, 0.07f, 0.1f, 0.96f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
 
         GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 420f, 28f), "数字孪生监测平台　·　厨房改造工程", titleStyle);
