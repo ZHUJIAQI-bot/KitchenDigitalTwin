@@ -906,7 +906,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildHouseDoor("Home Door", doorA, doorB, z0);
 
         CreateDecoCube("Home Plate", new Vector3(-24.3f, 1.75f, z0 - 0.19f), new Vector3(1.7f, 0.6f, 0.08f), new Color(0.3f, 0.22f, 0.16f));
-        CreateWorldLabel("员工宿舍", new Vector3(-24.3f, 1.75f, z0 - 0.26f), 0.055f, Color.white);
+        CreateWorldLabel("员工宿舍", new Vector3(-24.3f, 1.75f, z0 - 0.34f), 0.055f, Color.white);
 
         sleepPoint = new Vector3(-28.4f, GroundLevel, z1 - 3.1f);
         AddRoom("员工宿舍", "宿舍", x0, x1, z0, z1, new Vector3((doorA + doorB) * 0.5f, GroundLevel, z0 + 1.6f));
@@ -1642,12 +1642,12 @@ public class KitchenSimulator : MonoBehaviour
         // 招牌 + 标价牌（前墙外侧）
         // 实测公式：每行世界高度 = characterSize × 64 ÷ 10，再乘 lineSpacing(1.1)，留足余量防外溢
         CreateDecoCube("Sign Board", new Vector3(-16.4f, 2.35f, z0 - 0.25f), new Vector3(5f, 0.78f, 0.12f), new Color(0.13f, 0.32f, 0.5f));
-        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.35f, z0 - 0.34f), 0.08f, Color.white);   // 3.07 × 0.56
+        CreateWorldLabel("焕新维修公司", new Vector3(-16.4f, 2.35f, z0 - 0.40f), 0.08f, Color.white);   // 3.07 × 0.56
 
         CreateDecoCube("Price Board", new Vector3(-12.6f, 1.45f, z0 - 0.25f), new Vector3(3.4f, 2.2f, 0.1f), new Color(0.93f, 0.92f, 0.88f));
         CreateDecoCube("Price Board Frame", new Vector3(-12.6f, 1.45f, z0 - 0.19f), new Vector3(3.7f, 2.5f, 0.08f), new Color(0.35f, 0.28f, 0.2f));
         CreateWorldLabel("维 修 价 目 表\n────────\n水路渗漏 ¥3200\n电路检修 ¥2600\n燃气管道 ¥4600\n墙面翻新 ¥2800",
-            new Vector3(-12.6f, 1.45f, z0 - 0.33f), 0.040f, new Color(0.15f, 0.15f, 0.18f));           // 2.05 × 1.24
+            new Vector3(-12.6f, 1.45f, z0 - 0.40f), 0.040f, new Color(0.15f, 0.15f, 0.18f));           // 2.05 × 1.24
 
         // 室内陈设
         // 桌子 yaw 0：椅子在桌子北侧，人面朝南（正对大门）
@@ -1890,18 +1890,20 @@ public class KitchenSimulator : MonoBehaviour
     {
         public float width;      // 开间
         public float depth;      // 进深
-        public float splitX;     // 竖向隔墙（距左侧外墙）
+        public float splitX;     // 前排竖向隔墙（距左侧外墙）
+        public float splitX2;    // 后排竖向隔墙（可与前排不同，用于让卫生间更小）
         public float splitZ;     // 横向隔墙（距前墙）
         public string frontRight;
         public string backLeft;
         public string backRight;
 
-        public HouseLayout(float width, float depth, float splitX, float splitZ,
+        public HouseLayout(float width, float depth, float splitX, float splitX2, float splitZ,
             string frontRight, string backLeft, string backRight)
         {
             this.width = width;
             this.depth = depth;
             this.splitX = splitX;
+            this.splitX2 = splitX2;
             this.splitZ = splitZ;
             this.frontRight = frontRight;
             this.backLeft = backLeft;
@@ -1912,13 +1914,13 @@ public class KitchenSimulator : MonoBehaviour
     // 前左固定为客厅（入户所在）；厨房、卫生间靠近入口，卧室靠里
     private static readonly HouseLayout[] HouseLayouts =
     {
-        new HouseLayout(12f, 12f, 6.0f, 6.0f, "厨房", "卫生间", "卧室"),
-        new HouseLayout(11f, 13f, 5.0f, 7.4f, "厨房", "卫生间", "卧室"),
-        new HouseLayout(13f, 11f, 7.2f, 5.2f, "厨房", "卧室", "卫生间"),
-        new HouseLayout(12f, 11f, 5.6f, 5.4f, "厨房", "卫生间", "卧室"),
-        new HouseLayout(10f, 12f, 4.8f, 6.8f, "卫生间", "厨房", "卧室"),
-        new HouseLayout(13f, 12f, 6.8f, 6.4f, "厨房", "卧室", "卫生间"),
-        new HouseLayout(11f, 11f, 5.4f, 5.6f, "卧室", "卫生间", "厨房"),
+        new HouseLayout(12f, 12f, 8.6f, 6.0f, 6.0f, "卫生间", "厨房", "卧室"),
+        new HouseLayout(11f, 13f, 8.0f, 3.2f, 7.0f, "厨房", "卫生间", "卧室"),
+        new HouseLayout(13f, 11f, 9.4f, 6.6f, 5.4f, "卫生间", "厨房", "卧室"),
+        new HouseLayout(12f, 11f, 8.4f, 5.6f, 5.6f, "卫生间", "厨房", "卧室"),
+        new HouseLayout(10f, 12f, 6.8f, 5.0f, 7.0f, "卫生间", "厨房", "卧室"),
+        new HouseLayout(13f, 12f, 9.6f, 3.4f, 6.4f, "厨房", "卫生间", "卧室"),
+        new HouseLayout(11f, 11f, 7.8f, 5.4f, 5.8f, "卫生间", "厨房", "卧室"),
     };
 
     private static Color FloorColorOf(string type)
@@ -1949,7 +1951,8 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildResidence(int index, float x0, float z0, Color roofColor)
     {
         HouseLayout L = HouseLayouts[(index - 1) % HouseLayouts.Length];
-        float x1 = x0 + L.splitX;
+        float x1 = x0 + L.splitX;         // 前排竖向隔墙
+        float x3 = x0 + L.splitX2;        // 后排竖向隔墙（让卫生间更窄）
         float x2 = x0 + L.width;
         float zMid = z0 + L.splitZ;
         float z1 = z0 + L.depth;
@@ -1962,8 +1965,8 @@ public class KitchenSimulator : MonoBehaviour
         {
             { x0, x1, z0, zMid },
             { x1, x2, z0, zMid },
-            { x0, x1, zMid, z1 },
-            { x1, x2, zMid, z1 },
+            { x0, x3, zMid, z1 },
+            { x3, x2, zMid, z1 },
         };
 
         for (int i = 0; i < 4; i++)
@@ -2018,15 +2021,20 @@ public class KitchenSimulator : MonoBehaviour
         BuildWallWithOpenings("Res Right Wall", false, x2, z0, z1, 0.24f, wall, right.ToArray());
 
         // ── 内墙：门洞开在相邻两房间正中，随隔墙位置自动变化 ──
-        float dDoor = Mathf.Min(1.8f, L.depth * 0.18f);
-        BuildWallWithOpenings("Res Wall Vertical", false, x1, z0, z1, 0.22f, inner,
-            (z0 + zMid) * 0.5f - dDoor, (z0 + zMid) * 0.5f + dDoor, 0f, DoorHeight,
+        float dDoor = Mathf.Min(1.6f, (zMid - z0) * 0.28f);
+        BuildWallWithOpenings("Res Wall Front Vertical", false, x1, z0, zMid, 0.22f, inner,
+            (z0 + zMid) * 0.5f - dDoor, (z0 + zMid) * 0.5f + dDoor, 0f, DoorHeight);
+        BuildWallWithOpenings("Res Wall Back Vertical", false, x3, zMid, z1, 0.22f, inner,
             (zMid + z1) * 0.5f - dDoor, (zMid + z1) * 0.5f + dDoor, 0f, DoorHeight);
 
-        float hDoor = Mathf.Min(1.8f, L.width * 0.16f);
+        float leftOverlap1 = Mathf.Min(x1, x3);
+        float rightOverlap0 = Mathf.Max(x1, x3);
+        float hDoor = Mathf.Min(1.6f, (x2 - x0) * 0.14f);
+        float dl = (x0 + leftOverlap1) * 0.5f;
+        float dr = (rightOverlap0 + x2) * 0.5f;
         BuildWallWithOpenings("Res Wall Horizontal", true, zMid, x0, x2, 0.22f, inner,
-            (x0 + x1) * 0.5f - hDoor, (x0 + x1) * 0.5f + hDoor, 0f, DoorHeight,
-            (x1 + x2) * 0.5f - hDoor, (x1 + x2) * 0.5f + hDoor, 0f, DoorHeight);
+            dl - hDoor, dl + hDoor, 0f, DoorHeight,
+            dr - hDoor, dr + hDoor, 0f, DoorHeight);
 
         BuildRoof(tag + " Roof", x0 + L.width * 0.5f, z0 + L.depth * 0.5f, L.width, L.depth, roofColor);
 
@@ -2060,7 +2068,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildHouseDoor(tag + " Door", doorC - doorW * 0.5f, doorC + doorW * 0.5f, z0);
 
         CreateDecoCube(tag + " Plate", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.19f), new Vector3(1.5f, 0.6f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
-        CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.26f), 0.05f, Color.white);
+        CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.32f), 0.05f, Color.white);
     }
 
     private void AddRoom(string name, string type, float xMin, float xMax, float zMin, float zMax, Vector3 doorPoint)
@@ -2210,10 +2218,56 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildTvUnit(tvX, axisZ, 90f);                       // 电视靠西墙，面朝东
         BuildSofa(sofaX, axisZ, 270f);                      // 沙发正对电视，面朝西
-        BuildTable(cx, axisZ, Mathf.Min(1.2f, w * 0.24f), 0.7f, 0f, 0.45f);
+        BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.35f, w * 0.42f), 0f, 0.45f);   // 长边沿 Z，与沙发视线垂直
         CreateDecoCube("Rug", new Vector3(cx, 0.02f, axisZ),
             new Vector3(Mathf.Max(1.6f, w - 1.5f), 0.02f, 2.0f), new Color(0.68f, 0.55f, 0.44f));
         BuildPlant(left + 0.55f, back - 0.65f);             // 绿植摆后角，不挡门
+
+        // 装饰：电视墙挂画、茶几摆件、吊灯、窗帘
+        BuildWallArt(tvX + 0.14f, axisZ + 1.35f, new Color(0.62f, 0.48f, 0.4f));
+        BuildWallArt(tvX + 0.14f, axisZ - 1.35f, new Color(0.44f, 0.52f, 0.48f));
+        BuildTableDecor(cx, axisZ);
+        BuildPendantLamp(cx, axisZ);
+        BuildCurtains();
+    }
+
+    // 电视墙挂画（画框 + 画心）
+    private void BuildWallArt(float wallX, float z, Color artColor)
+    {
+        Material frame = MakeMaterial(new Color(0.28f, 0.22f, 0.17f), 0.02f, 0.4f);
+        Material art = MakeMaterial(artColor, 0.02f, 0.3f);
+        CreateDecoCube("Art Frame", new Vector3(wallX, 1.72f, z), new Vector3(0.06f, 0.72f, 0.95f), frame);
+        CreateDecoCube("Art", new Vector3(wallX + 0.05f, 1.72f, z), new Vector3(0.03f, 0.58f, 0.8f), art);
+    }
+
+    // 茶几摆件：托盘 + 果盘 + 花瓶
+    private void BuildTableDecor(float cx, float cz)
+    {
+        Material tray = MakeMaterial(new Color(0.35f, 0.3f, 0.26f), 0.05f, 0.4f);
+        Material bowl = MakeMaterial(new Color(0.86f, 0.84f, 0.78f), 0.05f, 0.5f);
+        Material vase = MakeMaterial(new Color(0.55f, 0.62f, 0.6f), 0.05f, 0.5f);
+        CreateDecoCube("Tray", new Vector3(cx + 0.02f, 0.5f, cz), new Vector3(0.34f, 0.025f, 0.44f), tray);
+        CreateDecoCylinder("Fruit Bowl", new Vector3(cx + 0.02f, 0.55f, cz + 0.12f), 0.1f, 0.07f, Quaternion.identity, bowl);
+        CreateDecoCylinder("Vase", new Vector3(cx + 0.02f, 0.6f, cz - 0.42f), 0.055f, 0.2f, Quaternion.identity, vase);
+        CreateDecoSphere("Flower", new Vector3(cx + 0.02f, 0.76f, cz - 0.42f), 0.07f, MakeMaterial(new Color(0.78f, 0.42f, 0.45f), 0.02f, 0.35f));
+    }
+
+    // 客厅吊灯
+    private void BuildPendantLamp(float cx, float cz)
+    {
+        Material shell = MakeMaterial(new Color(0.92f, 0.9f, 0.84f), 0.05f, 0.5f);
+        Material cord = MakeMaterial(new Color(0.18f, 0.18f, 0.2f), 0.05f, 0.4f);
+        CreateDecoCylinder("Lamp Cord", new Vector3(cx, 2.3f, cz), 0.008f, 0.7f, Quaternion.identity, cord);
+        CreateDecoCylinder("Lamp Shade", new Vector3(cx, 1.95f, cz), 0.23f, 0.17f, Quaternion.identity, shell);
+        CreateDecoSphere("Lamp Bulb", new Vector3(cx, 1.88f, cz), 0.085f, MakeGlow(new Color(1f, 0.94f, 0.78f), 1.2f));
+    }
+
+    // 窗帘（挂在客厅东西两侧窗洞旁）
+    private void BuildCurtains()
+    {
+        Material cloth = MakeMaterial(new Color(0.72f, 0.66f, 0.6f), 0.02f, 0.35f);
+        CreateDecoCube("Curtain W", new Vector3(-27.6f, 1.55f, -1.6f), new Vector3(0.08f, 1.3f, 0.5f), cloth);
+        CreateDecoCube("Curtain E", new Vector3(-23.4f, 1.55f, -1.6f), new Vector3(0.08f, 1.3f, 0.5f), cloth);
     }
 
     private void BuildKitchenRoom(float cx, float cz, float w, float d)
@@ -4379,7 +4433,8 @@ public class KitchenSimulator : MonoBehaviour
         public GameObject bubble;
         public Room room;
         public OrderTemplate template;
-        public int phase;      // 0 走向玩家 1 说明情况 2 离开
+        public int phase;      // 0 走向前台 1 登记 2 离开 3 找玩家对话 4 找同事沟通
+        public Colleague target;   // 要找的同事
         public float timer;
         public float stuck;    // 被墙挡住累计时长
         public bool moving;
@@ -4630,9 +4685,9 @@ public class KitchenSimulator : MonoBehaviour
                 if (owner.timer <= 0f)
                 {
                     FileReport(owner);
-                    // 玩家恰好在前台旁边的话可以聊两句，否则登记完就回家
-                    bool playerNearby = Distance2D(playerPosition, owner.rig.root.position) < 3.5f;
-                    if (playerNearby && dialogueIndex < 0 && talkTarget == null && !dialogueJustEnded)
+                    // 登记后主动找人沟通：玩家在公司内就找玩家，否则找在场的同事
+                    bool playerInside = Distance2D(playerPosition, owner.rig.root.position) < 12f;
+                    if (playerInside && dialogueIndex < 0 && talkTarget == null && !dialogueJustEnded)
                     {
                         owner.phase = 3;
                         owner.timer = 90f;
@@ -4640,7 +4695,18 @@ public class KitchenSimulator : MonoBehaviour
                     }
                     else
                     {
-                        owner.phase = 2;
+                        Colleague mate = NearestColleague(owner.rig.root.position);
+                        if (mate != null)
+                        {
+                            owner.phase = 4;
+                            owner.timer = 6f;
+                            owner.target = mate;
+                            ShowToast("业主正在向 " + mate.name + " 说明情况", 3.5f);
+                        }
+                        else
+                        {
+                            owner.phase = 2;
+                        }
                     }
                 }
             }
@@ -4653,6 +4719,74 @@ public class KitchenSimulator : MonoBehaviour
                 if (owner.timer <= 0f)
                 {
                     owner.phase = 2;
+                }
+            }
+            else if (owner.phase == 4)
+            {
+                // 走到同事工位旁沟通，谈完再离开
+                if (owner.target == null || owner.target.rig == null)
+                {
+                    owner.phase = 2;
+                    owner.moving = false;
+                }
+                else
+                {
+                    Vector3 target = owner.target.rig.root.position;
+                    Vector3 delta = target - owner.rig.root.position;
+                    delta.y = 0f;
+
+                    if (delta.magnitude <= 1.7f)
+                    {
+                        owner.moving = false;
+                        owner.timer -= Time.deltaTime;
+                        // 面朝同事
+                        Vector3 look = target - owner.rig.root.position;
+                        look.y = 0f;
+                        if (look.sqrMagnitude > 0.01f)
+                        {
+                            owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation,
+                                Quaternion.LookRotation(look), Time.deltaTime * 5f);
+                        }
+                        if (owner.timer <= 0f)
+                        {
+                            owner.phase = 2;
+                        }
+                    }
+                    else
+                    {
+                        owner.moving = true;
+                        Vector3 next = owner.rig.root.position + delta.normalized * 2.4f * Time.deltaTime;
+                        if (!Collides(next, true))
+                        {
+                            owner.rig.root.position = next;
+                        }
+                        else
+                        {
+                            Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
+                            if (!Collides(xOnly, true))
+                            {
+                                owner.rig.root.position = xOnly;
+                            }
+                            else
+                            {
+                                Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
+                                if (!Collides(zOnly, true))
+                                {
+                                    owner.rig.root.position = zOnly;
+                                }
+                                else
+                                {
+                                    owner.stuck += Time.deltaTime;
+                                }
+                            }
+                        }
+                        owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation,
+                            Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                        if (owner.stuck > 6f)
+                        {
+                            owner.phase = 2;   // 兜底：走不过去就直接离开，避免原地打转
+                        }
+                    }
                 }
             }
             else
@@ -4714,6 +4848,28 @@ public class KitchenSimulator : MonoBehaviour
 
             AnimateRig(owner.rig, owner.moving, 1f);
         }
+    }
+
+    // 找距离某点最近的在场同事
+    private Colleague NearestColleague(Vector3 from)
+    {
+        Colleague best = null;
+        float nearest = float.MaxValue;
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            Colleague c = colleagues[i];
+            if (c.rig == null || c.rig.root == null || !c.rig.root.gameObject.activeSelf)
+            {
+                continue;
+            }
+            float d = Distance2D(from, c.rig.root.position);
+            if (d < nearest)
+            {
+                nearest = d;
+                best = c;
+            }
+        }
+        return best;
     }
 
     private void FacePlayer(Homeowner owner, float speed)

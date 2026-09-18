@@ -192,8 +192,8 @@ def main():
         ("05_办公区同事", (-15.2, 3.2, 1.7), (-17.2, -0.6, 1.1), 34,
          [((-15.5, 1.2, 2.6), 118, warm), ((-18.2, -2.2, 2.5), 62, warm)]),
         # 7. 客厅布置：沙发正对电视，茶几居中
-        ("07_客厅布置", (7.72, 1.42, 2.15), (3.9, 3.05, 0.8), 19,
-         [((5.0, 2.4, 2.6), 92, warm), ((3.6, 4.6, 2.5), 48, cool)]),
+        ("07_客厅布置", (3.15, 1.62, 2.05), (8.7, 3.2, 0.85), 21,
+         [((5.6, 3.2, 2.6), 92, warm), ((8.6, 3.4, 2.5), 62, cool)]),
         # 8. 卧室布置：床头靠墙，床头柜贴床头，衣柜靠墙
         ("08_卧室布置", (13.6, -0.4, 1.95), (9.6, -3.6, 0.85), 30,
          [((11.0, -2.0, 2.55), 92, warm), ((12.6, -4.2, 2.45), 48, cool)]),
@@ -205,7 +205,14 @@ def main():
          [((-14, 2.0, 2.65), 150, warm), ((-16.8, -3.2, 2.55), 78, cool), ((-11.2, -3.2, 2.55), 78, cool)]),
     ]
 
+    # 支持只渲染指定镜头：blender ... --python render_scene.py -- 07
+    ARG_FILTER = []
+    if '--' in sys.argv:
+        ARG_FILTER = sys.argv[sys.argv.index('--') + 1:]
+
     for name, loc, target, lens, room_lights in views:
+        if ARG_FILTER and not any(f in name for f in ARG_FILTER):
+            continue
         if room_lights:
             add_room_lights(room_lights)
         cam = make_camera(name, loc, target, lens)
