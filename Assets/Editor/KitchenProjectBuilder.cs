@@ -68,7 +68,35 @@ public static class KitchenProjectBuilder
             target = BuildTarget.WebGL,
             options = BuildOptions.None
         });
+        PruneOldBuilds(outputPath, 3);
         Debug.Log("Kitchen WebGL built to: " + outputPath);
+    }
+
+    // 只保留最近 keepGenerations 代构建产物
+    // 原因：GitHub Pages 给 index.html 加了 max-age=600 缓存，浏览器可能仍在用旧的 index.html
+    // 若旧文件已被删除就会 404（Unable to load file Build/xxx.framework.js）
+    private static void PruneOldBuilds(string outputPath, int keepGenerations)
+    {
+        string buildDir = Path.Combine(outputPath, "Build");
+        if (!Directory.Exists(buildDir))
+        {
+            return;
+        }
+
+        string[] patterns = { "*.wasm", "*.data", "*.loader.js", "*.framework.js" };
+        foreach (string pattern in patterns)
+        {
+            string[] files = Directory.GetFiles(buildDir, pattern);
+            System.Array.Sort(files, (a, b) => File.GetLastWriteTime(b).CompareTo(File.GetLastWriteTime(a)));
+            for (int i = keepGenerations; i < files.Length; i++)
+            {
+                File.Delete(files[i]);
+            }
+            if (files.Length > keepGenerations)
+            {
+                Debug.Log("Pruned " + (files.Length - keepGenerations) + " old " + pattern + " file(s)");
+            }
+        }
     }
 
     // 运行时用 Shader.Find 取用的着色器必须打进包，否则 WebGL 下返回 null
