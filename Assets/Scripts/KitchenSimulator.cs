@@ -54,6 +54,7 @@ public class KitchenSimulator : MonoBehaviour
         public bool needsRebuild;
         public int schedDay;      // 预约：第几天
         public int schedHour;     // 预约：几点
+        public ToolKind requiredTool;
 
         public string Code { get { return "#" + id.ToString("D3"); } }
         public string ScheduleText { get { return "第" + schedDay + "天 " + schedHour.ToString("D2") + ":00"; } }
@@ -69,9 +70,11 @@ public class KitchenSimulator : MonoBehaviour
         public int costMin;
         public int costMax;
         public Vector3 offset;
+        public ToolKind tool;      // 修这个问题必须使用的工具
 
-        public OrderTemplate(string roomType, string title, string cause, string plan, int costMin, int costMax, float dx, float dz)
+        public OrderTemplate(string roomType, string title, string cause, string plan, int costMin, int costMax, float dx, float dz, ToolKind tool)
         {
+            this.tool = tool;
             this.roomType = roomType;
             this.title = title;
             this.cause = cause;
@@ -2092,7 +2095,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         // 开局只有电动起子，其余需在道具商店购买
         tools.Add(new ToolInfo("电动起子", ToolKind.Drill, new Color(0.85f, 0.35f, 0.12f), 0, true));
-        tools.Add(new ToolInfo("螺丝刀", ToolKind.Screwdriver, new Color(0.85f, 0.72f, 0.1f), 180, false));
+        tools.Add(new ToolInfo("螺丝刀", ToolKind.Screwdriver, new Color(0.85f, 0.72f, 0.1f), 180, true));
         tools.Add(new ToolInfo("活动扳手", ToolKind.Wrench, new Color(0.6f, 0.62f, 0.66f), 320, false));
         tools.Add(new ToolInfo("羊角锤", ToolKind.Hammer, new Color(0.45f, 0.47f, 0.5f), 260, false));
         tools.Add(new ToolInfo("剪刀", ToolKind.Scissors, new Color(0.75f, 0.76f, 0.8f), 120, false));
@@ -2152,6 +2155,31 @@ public class KitchenSimulator : MonoBehaviour
         currentTool = index;
         BuildToolModel();
         ShowToast("已购入 " + tool.name + "（¥" + tool.price.ToString("N0") + "）", 4f);
+    }
+
+    // 按枚举取工具名，用于提示"该用哪把工具"
+    private string ToolName(ToolKind kind)
+    {
+        for (int i = 0; i < tools.Count; i++)
+        {
+            if (tools[i].kind == kind)
+            {
+                return tools[i].name;
+            }
+        }
+        return "合适工具";
+    }
+
+    private bool HasTool(ToolKind kind)
+    {
+        for (int i = 0; i < tools.Count; i++)
+        {
+            if (tools[i].kind == kind)
+            {
+                return tools[i].unlocked;
+            }
+        }
+        return false;
     }
 
     private int UnlockedToolCount()
@@ -2866,29 +2894,29 @@ public class KitchenSimulator : MonoBehaviour
     // ── 工单模板与派单 ────────────────────────────────────
     private void InitializeOrders()
     {
-        // 偏移量相对房间中心，房间为 6×6
+        // 偏移量相对房间中心（房间 6×6）；工具按常识匹配：管件用扳手、电气用测电笔、拆砖用锤子……
         // 厨房
-        templates.Add(new OrderTemplate("厨房", "水槽下方渗漏", "水槽柜内给水角阀老化，柜底板见渗水痕迹", "更换角阀与存水弯，柜底增设防水托盘", 3200, 4200, -1.5f, 1.7f));
-        templates.Add(new OrderTemplate("厨房", "灶台燃气管老化", "燃气软管超期服役，接口处有轻微泄漏", "更换不锈钢波纹管并做气密性检测", 2800, 3800, 1.4f, 1.7f));
-        templates.Add(new OrderTemplate("厨房", "橱柜门板变形", "地柜门板受潮变形，开合卡顿异响", "更换门板并调整铰链，柜体做防潮处理", 1200, 2000, 0f, 1.1f));
-        templates.Add(new OrderTemplate("厨房", "冰箱插座接触不良", "冰箱专用插座松动，插头发热变色", "更换 16A 插座面板并紧固线路", 900, 1600, 1.9f, -1.6f));
+        templates.Add(new OrderTemplate("厨房", "水槽下方渗漏", "水槽柜内给水角阀老化，柜底板见渗水痕迹", "更换角阀与存水弯，柜底增设防水托盘", 3200, 4200, -1.5f, 1.7f, ToolKind.Wrench));
+        templates.Add(new OrderTemplate("厨房", "灶台燃气管老化", "燃气软管超期服役，接口处有轻微泄漏", "更换不锈钢波纹管并做气密性检测", 2800, 3800, 1.4f, 1.7f, ToolKind.Wrench));
+        templates.Add(new OrderTemplate("厨房", "橱柜门板变形", "地柜门板受潮变形，开合卡顿异响", "更换门板并调整铰链，柜体做防潮处理", 1200, 2000, 0f, 1.1f, ToolKind.Drill));
+        templates.Add(new OrderTemplate("厨房", "冰箱插座接触不良", "冰箱专用插座松动，插头发热变色", "更换 16A 插座面板并紧固线路", 900, 1600, 1.9f, -1.6f, ToolKind.Tester));
 
         // 客厅
-        templates.Add(new OrderTemplate("客厅", "地面瓷砖空鼓", "地面瓷砖局部空鼓脱层，踩踏有松动异响", "空鼓砖拆除重铺，基层找平做界面处理", 1800, 2800, 0f, -0.6f));
-        templates.Add(new OrderTemplate("客厅", "沙发背景墙开裂", "背景墙基层开裂，饰面起皮脱落", "铲除空鼓层，挂网后重新批刮饰面", 2200, 3200, 1.9f, 1.5f));
-        templates.Add(new OrderTemplate("客厅", "电视线缆外露", "电视墙线缆杂乱外露，存在安全隐患", "加装线槽归拢线缆并做隐蔽处理", 700, 1300, -1.9f, 1.5f));
-        templates.Add(new OrderTemplate("客厅", "吊顶灯带脱落", "吊顶灯带卡扣老化脱落，线路外露", "更换卡扣并整理线路，加装线槽", 1000, 1800, 0f, -2.0f));
+        templates.Add(new OrderTemplate("客厅", "地面瓷砖空鼓", "地面瓷砖局部空鼓脱层，踩踏有松动异响", "空鼓砖拆除重铺，基层找平做界面处理", 1800, 2800, 0f, -0.6f, ToolKind.Hammer));
+        templates.Add(new OrderTemplate("客厅", "沙发背景墙开裂", "背景墙基层开裂，饰面起皮脱落", "铲除空鼓层，挂网后重新批刮饰面", 2200, 3200, 1.9f, 1.5f, ToolKind.Hammer));
+        templates.Add(new OrderTemplate("客厅", "电视线缆外露", "电视墙线缆杂乱外露，存在安全隐患", "剪除多余扎带，重新归拢线缆并加装线槽", 700, 1300, -1.9f, 1.5f, ToolKind.Scissors));
+        templates.Add(new OrderTemplate("客厅", "吊顶灯带脱落", "吊顶灯带卡扣老化脱落，线路外露", "更换卡扣并重新固定灯带", 1000, 1800, 0f, -2.0f, ToolKind.Drill));
 
         // 卧室
-        templates.Add(new OrderTemplate("卧室", "木门变形关不严", "木门受潮膨胀变形，闭合困难漏风", "刨修门边并调整铰链，门扇做防潮封边", 1200, 2000, -1.9f, 1.7f));
-        templates.Add(new OrderTemplate("卧室", "墙面返潮发霉", "外墙渗水导致内墙返潮霉变", "外墙迎水面重做防水，内墙铲除后批耐水腻子", 2800, 3800, 1.9f, 0.5f));
-        templates.Add(new OrderTemplate("卧室", "衣柜滑轨卡顿", "衣柜推拉门滑轨变形积尘，推拉困难", "更换滑轨并调整门扇垂直度", 600, 1200, 1.9f, 1.7f));
-        templates.Add(new OrderTemplate("卧室", "床头插座松动", "床头插座面板松动，插拔打火", "更换面板并加固暗盒", 800, 1400, 0f, -1.7f));
+        templates.Add(new OrderTemplate("卧室", "木门变形关不严", "木门受潮膨胀变形，闭合困难漏风", "刨修门边并调整铰链，门扇做防潮封边", 1200, 2000, -1.9f, 1.7f, ToolKind.Screwdriver));
+        templates.Add(new OrderTemplate("卧室", "墙面返潮发霉", "外墙渗水导致内墙返潮霉变", "外墙迎水面重做防水，铲除霉变层后批耐水腻子", 2800, 3800, 1.9f, 0.5f, ToolKind.Hammer));
+        templates.Add(new OrderTemplate("卧室", "衣柜滑轨卡顿", "衣柜推拉门滑轨变形积尘，推拉困难", "拆下滑轨清理并重新固定，调整门扇垂直度", 600, 1200, 1.9f, 1.7f, ToolKind.Screwdriver));
+        templates.Add(new OrderTemplate("卧室", "床头插座松动", "床头插座面板松动，插拔打火", "更换面板并加固暗盒", 800, 1400, 0f, -1.7f, ToolKind.Tester));
 
         // 卫生间
-        templates.Add(new OrderTemplate("卫生间", "地漏返味", "地漏存水弯干涸失效，下水道异味返涌", "更换防臭地漏芯，补做存水弯", 800, 1400, 0f, -1.6f));
-        templates.Add(new OrderTemplate("卫生间", "墙面瓷砖空鼓", "淋浴区瓷砖空鼓脱层，存在脱落风险", "空鼓砖拆除重贴，基层做防水处理", 2200, 3200, -1.9f, 0.4f));
-        templates.Add(new OrderTemplate("卫生间", "马桶底座渗水", "马桶法兰密封圈老化，底座渗水返碱", "更换法兰密封圈并重新打胶固定", 1500, 2400, 1.7f, 1.4f));
+        templates.Add(new OrderTemplate("卫生间", "地漏返味", "地漏存水弯干涸失效，下水道异味返涌", "拆换防臭地漏芯，补做存水弯", 800, 1400, 0f, -1.6f, ToolKind.Wrench));
+        templates.Add(new OrderTemplate("卫生间", "墙面瓷砖空鼓", "淋浴区瓷砖空鼓脱层，存在脱落风险", "空鼓砖拆除重贴，基层做防水处理", 2200, 3200, -1.9f, 0.4f, ToolKind.Hammer));
+        templates.Add(new OrderTemplate("卫生间", "马桶底座渗水", "马桶法兰密封圈老化，底座渗水返碱", "更换法兰密封圈并打胶密封固化", 1500, 2400, 1.7f, 1.4f, ToolKind.Tape));
 
         orderTimer = 2f;
     }
@@ -2985,12 +3013,34 @@ public class KitchenSimulator : MonoBehaviour
             return false;
         }
 
-        int pick = Random.Range(0, candidateRooms.Count);
+        // 65% 优先派当前工具能修的活，避免玩家接不到单也没钱买工具
+        List<Room> pickRooms = candidateRooms;
+        List<OrderTemplate> pickTemplates = candidateTemplates;
+        if (Random.value < 0.65f)
+        {
+            List<Room> ownedRooms = new List<Room>();
+            List<OrderTemplate> ownedTemplates = new List<OrderTemplate>();
+            for (int i = 0; i < candidateTemplates.Count; i++)
+            {
+                if (HasTool(candidateTemplates[i].tool))
+                {
+                    ownedRooms.Add(candidateRooms[i]);
+                    ownedTemplates.Add(candidateTemplates[i]);
+                }
+            }
+            if (ownedRooms.Count > 0)
+            {
+                pickRooms = ownedRooms;
+                pickTemplates = ownedTemplates;
+            }
+        }
+
+        int pick = Random.Range(0, pickRooms.Count);
 
         // 40% 直接打电话预约，不出现 NPC
         if (Random.value < 0.4f)
         {
-            RegisterOrder(candidateRooms[pick], candidateTemplates[pick], "电话预约");
+            RegisterOrder(pickRooms[pick], pickTemplates[pick], "电话预约");
             return true;
         }
 
@@ -3009,8 +3059,8 @@ public class KitchenSimulator : MonoBehaviour
         homeowners.Add(new Homeowner
         {
             rig = rig,
-            room = candidateRooms[pick],
-            template = candidateTemplates[pick],
+            room = pickRooms[pick],
+            template = pickTemplates[pick],
             phase = 0
         });
         ShowToast("有户主上门了，去听听是什么问题", 4f);
@@ -3049,6 +3099,7 @@ public class KitchenSimulator : MonoBehaviour
             cost = cost,
             site = site,
             state = OrderState.Pending,
+            requiredTool = template.tool,
             schedDay = DayIndex + (Random.value < 0.5f ? 0 : 1),
             schedHour = Random.Range(9, 18)
         };
@@ -3460,6 +3511,22 @@ public class KitchenSimulator : MonoBehaviour
                 ShowToast("天黑了，收工吧 —— 按 R 回驻地休息，明天再干", 4f);
                 return;
             }
+
+            // 必须用对工具才能动手
+            ToolKind need = activeOrder.requiredTool;
+            if (tools[currentTool].kind != need)
+            {
+                if (!HasTool(need))
+                {
+                    ShowToast("修「" + activeOrder.title + "」需要【" + ToolName(need) + "】，你还没这件工具，先去商店买", 5f);
+                }
+                else
+                {
+                    ShowToast("修「" + activeOrder.title + "」得用【" + ToolName(need) + "】，按 Q / 滚轮 换工具", 4f);
+                }
+                return;
+            }
+
             StartRepair(activeOrder);
             AdvanceRepair();
         }
@@ -3634,7 +3701,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
-            float height = taskListExpanded ? (104f + BuildDisplayList().Count * 52f) : 60f;
+            float height = taskListExpanded ? (104f + BuildDisplayList().Count * 66f) : 60f;
             return new Rect(Screen.width - 348f, 16f, 332f, height);
         }
     }
@@ -3860,7 +3927,7 @@ public class KitchenSimulator : MonoBehaviour
 
         for (int i = 0; i < display.Count; i++)
         {
-            DrawOrderCard(new Rect(rect.x + 12f, y + i * 52f, rect.width - 24f, 44f), display[i]);
+            DrawOrderCard(new Rect(rect.x + 12f, y + i * 66f, rect.width - 24f, 58f), display[i]);
         }
     }
 
@@ -3877,6 +3944,16 @@ public class KitchenSimulator : MonoBehaviour
         GUI.color = StateTextColor(order);
         GUI.Label(new Rect(card.x + 22f, card.y + 23f, card.width - 32f, 18f),
             StateText(order) + "　预约 " + order.ScheduleText + "　¥" + order.cost.ToString("N0"), smallStyle);
+
+        // 所需工具：没这件工具时标红，提醒去商店买
+        bool hasTool = HasTool(order.requiredTool);
+        Color toolColor = order.state == OrderState.Fixed ? fixedColor
+            : (hasTool ? new Color(0.62f, 0.86f, 0.72f) : new Color(1f, 0.55f, 0.42f));
+        Color prevTool = GUI.color;
+        GUI.color = toolColor;
+        GUI.Label(new Rect(card.x + 22f, card.y + 40f, card.width - 32f, 18f),
+            (hasTool ? "工具：" : "缺工具：") + ToolName(order.requiredTool), smallStyle);
+        GUI.color = prevTool;
         GUI.color = previous;
     }
 
@@ -4211,9 +4288,19 @@ public class KitchenSimulator : MonoBehaviour
             GUI.Label(new Rect(rect.x + 28f, rect.y + 40f, rect.width - 56f, 20f), "成因：" + activeOrder.cause, bodyStyle);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 62f, 240f, 20f), "核定经费 ¥" + activeOrder.cost.ToString("N0"), smallStyle);
 
+            // 工具是否匹配
+            bool toolOk = tools[currentTool].kind == activeOrder.requiredTool;
+            bool ownsTool = HasTool(activeOrder.requiredTool);
+            Color prevC = GUI.color;
+            GUI.color = toolOk ? new Color(0.6f, 0.88f, 0.72f) : new Color(1f, 0.6f, 0.45f);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 84f, rect.width - 200f, 20f),
+                (toolOk ? "工具就绪：" : "需用工具：") + ToolName(activeOrder.requiredTool)
+                + (ownsTool ? "" : "（尚未拥有，去商店购买）"), smallStyle);
+            GUI.color = prevC;
+
             Rect button = new Rect(rect.x + rect.width - 150f, rect.y + 66f, 132f, 34f);
-            DrawPanel(button, btnBlue, Color.clear);
-            GUI.Label(button, "点击左键 维修", cardButtonStyle);
+            DrawPanel(button, toolOk ? btnBlue : new Color(0.32f, 0.3f, 0.3f, 0.95f), Color.clear);
+            GUI.Label(button, toolOk ? "点击左键 维修" : "工具不对", cardButtonStyle);
             return;
         }
 
