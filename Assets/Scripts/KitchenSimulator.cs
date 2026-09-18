@@ -202,6 +202,7 @@ public class KitchenSimulator : MonoBehaviour
     private AudioClip footstepClip;
     private AudioClip[] voiceBlips;
     private float voiceTimer;
+    private float voiceBurst;   // 当前这句还剩多久发声，到 0 就安静下来
     private float stepTimer;
 
     private readonly Vector3 spawnPosition = new Vector3(-15f, GroundLevel, -3f);
@@ -216,7 +217,7 @@ public class KitchenSimulator : MonoBehaviour
     private int dialogueIndex = -1;
     private bool introDone;
     private float introDelay = 1.2f;
-    private Transform npcTransform;
+    private CharacterRig bossRig;
 
     // 小地图
     private const float WorldMinX = -22f;
@@ -1660,11 +1661,19 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildNpc()
     {
         // 工头站在工位旁，面朝玩家
-        npcTransform = BuildCharacterModel("Boss", new Vector3(-14.5f, 0f, -1.2f), 196f,
+        bossRig = BuildCharacterModel("Boss", new Vector3(-14.5f, 0f, -1.2f), 196f,
             new Color(0.62f, 0.3f, 0.22f), new Color(0.83f, 0.66f, 0.5f));
     }
 
-    private Transform BuildCharacterModel(string name, Vector3 position, float yaw, Color cloth, Color skin)
+    // 角色骨架：四肢挂在枢轴下，才能摆臂迈腿（否则移动时像"飘"）
+    private class CharacterRig
+    {
+        public Transform root;
+        public Transform body;
+        public Transform leftArm, rightArm, leftLeg, rightLeg;
+    }
+
+    private CharacterRig BuildCharacterModel(string name, Vector3 position, float yaw, Color cloth, Color skin)
     {
         GameObject root = new GameObject(name);
         root.transform.SetParent(transform, false);
@@ -1676,20 +1685,72 @@ public class KitchenSimulator : MonoBehaviour
         Material trouserMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
         Material helmetMaterial = MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f);
 
-        MakePrimitive(PrimitiveType.Cube, "Torso", root.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Head", root.transform, new Vector3(0f, 1.37f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Helmet", root.transform, new Vector3(0f, 1.57f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Left Arm", root.transform, new Vector3(-0.34f, 0.8f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Right Arm", root.transform, new Vector3(0.34f, 0.8f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Left Leg", root.transform, new Vector3(-0.13f, 0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Right Leg", root.transform, new Vector3(0.13f, 0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+        Transform body = MakePrimitive(PrimitiveType.Cube, "Torso", root.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, clothMaterial).transform;
+        MakePrimitive(PrimitiveType.Cube, "Head", body, new Vector3(0f, 0.52f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Helmet", body, new Vector3(0f, 0.72f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
+
+        Transform leftArm = new GameObject("Left Arm Pivot").transform;
+        leftArm.SetParent(root.transform, false);
+        leftArm.localPosition = new Vector3(-0.34f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+
+        Transform rightArm = new GameObject("Right Arm Pivot").transform;
+        rightArm.SetParent(root.transform, false);
+        rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+
+        Transform leftLeg = new GameObject("Left Leg Pivot").transform;
+        leftLeg.SetParent(root.transform, false);
+        leftLeg.localPosition = new Vector3(-0.13f, 0.62f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Leg", leftLeg, new Vector3(0f, -0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+
+        Transform rightLeg = new GameObject("Right Leg Pivot").transform;
+        rightLeg.SetParent(root.transform, false);
+        rightLeg.localPosition = new Vector3(0.13f, 0.62f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Leg", rightLeg, new Vector3(0f, -0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
 
         Collider[] colliders = root.GetComponentsInChildren<Collider>();
         for (int i = 0; i < colliders.Length; i++)
         {
             colliders[i].enabled = false;
         }
-        return root.transform;
+
+        return new CharacterRig
+        {
+            root = root.transform,
+            body = body,
+            leftArm = leftArm,
+            rightArm = rightArm,
+            leftLeg = leftLeg,
+            rightLeg = rightLeg
+        };
+    }
+
+    // 行走摆臂迈腿；moving 为 false 时回到站立姿态
+    private void AnimateRig(CharacterRig rig, bool moving, float swingScale)
+    {
+        if (rig == null || rig.body == null)
+        {
+            return;
+        }
+        float t = Time.time * 8.5f;
+        if (moving)
+        {
+            float swing = Mathf.Sin(t) * 28f * swingScale;
+            rig.leftArm.localRotation = Quaternion.Euler(swing, 0f, 0f);
+            rig.rightArm.localRotation = Quaternion.Euler(-swing, 0f, 0f);
+            rig.leftLeg.localRotation = Quaternion.Euler(-swing, 0f, 0f);
+            rig.rightLeg.localRotation = Quaternion.Euler(swing, 0f, 0f);
+            rig.body.localPosition = new Vector3(0f, 0.85f + Mathf.Abs(Mathf.Sin(t)) * 0.04f, 0f);
+        }
+        else
+        {
+            rig.leftArm.localRotation = Quaternion.identity;
+            rig.rightArm.localRotation = Quaternion.identity;
+            rig.leftLeg.localRotation = Quaternion.identity;
+            rig.rightLeg.localRotation = Quaternion.identity;
+            rig.body.localPosition = new Vector3(0f, 0.85f, 0f);
+        }
     }
 
     private void BuildIntroDialogue()
@@ -1713,21 +1774,27 @@ public class KitchenSimulator : MonoBehaviour
             if (introDelay <= 0f)
             {
                 dialogueIndex = 0;
+                voiceBurst = 1.4f;
                 SpeakBlip();
             }
             return;
         }
 
-        // 说话时按节奏"嘟嘟"（模仿戴夫那类卡通配音）
-        voiceTimer -= Time.deltaTime;
-        if (voiceTimer <= 0f)
+        // 每句只"嘟"一小段（约 1.4 秒）就安静下来，等玩家按键进入下一句再响
+        if (voiceBurst > 0f)
         {
-            SpeakBlip();
+            voiceBurst -= Time.deltaTime;
+            voiceTimer -= Time.deltaTime;
+            if (voiceTimer <= 0f)
+            {
+                SpeakBlip();
+            }
         }
 
         if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Space))
         {
             dialogueIndex++;
+            voiceBurst = 1.4f;
             SpeakBlip();
             if (dialogueIndex >= dialogue.Count)
             {
@@ -2002,13 +2069,14 @@ public class KitchenSimulator : MonoBehaviour
     // ── 户主上门告知 ──────────────────────────────────────
     private class Homeowner
     {
-        public Transform root;
+        public CharacterRig rig;
         public GameObject bubble;
         public Room room;
         public OrderTemplate template;
         public int phase;      // 0 走向玩家 1 说明情况 2 离开
         public float timer;
         public float stuck;    // 被墙挡住累计时长
+        public bool moving;
     }
 
     private readonly List<Homeowner> homeowners = new List<Homeowner>();
@@ -2060,11 +2128,11 @@ public class KitchenSimulator : MonoBehaviour
             new Color(0.6f, 0.45f, 0.35f),
             new Color(0.4f, 0.45f, 0.6f),
         };
-        Transform npc = BuildCharacterModel("户主", spawn, yaw, coats[Random.Range(0, coats.Length)], new Color(0.85f, 0.68f, 0.52f));
+        CharacterRig rig = BuildCharacterModel("户主", spawn, yaw, coats[Random.Range(0, coats.Length)], new Color(0.85f, 0.68f, 0.52f));
 
         homeowners.Add(new Homeowner
         {
-            root = npc,
+            rig = rig,
             room = candidateRooms[pick],
             template = candidateTemplates[pick],
             phase = 0
@@ -2090,7 +2158,7 @@ public class KitchenSimulator : MonoBehaviour
         for (int i = homeowners.Count - 1; i >= 0; i--)
         {
             Homeowner owner = homeowners[i];
-            if (owner.root == null)
+            if (owner.rig.root == null)
             {
                 homeowners.RemoveAt(i);
                 continue;
@@ -2099,11 +2167,11 @@ public class KitchenSimulator : MonoBehaviour
             if (owner.phase == 0)
             {
                 // 走向玩家（带碰撞，不会穿墙）
-                Vector3 delta = playerPosition - owner.root.position;
+                Vector3 delta = playerPosition - owner.rig.root.position;
                 delta.y = 0f;
 
                 // 靠得够近，或被墙挡住太久（例如玩家关着门躲在屋里），就地说明情况
-                if (delta.magnitude <= 2.2f || owner.stuck > 1.5f)
+                if (delta.magnitude <= 2.2f || owner.stuck > 3f)
                 {
                     owner.phase = 1;
                     owner.timer = 6f;
@@ -2112,44 +2180,46 @@ public class KitchenSimulator : MonoBehaviour
                 else
                 {
                     Vector3 step = delta.normalized * 2.4f * Time.deltaTime;
-                    Vector3 next = owner.root.position + step;
+                    Vector3 next = owner.rig.root.position + step;
 
                     bool moved = false;
                     if (!Collides(next))
                     {
-                        owner.root.position = next;
+                        owner.rig.root.position = next;
                         moved = true;
                     }
                     else
                     {
                         // 分离轴滑动，让他贴着墙找路
-                        Vector3 xOnly = new Vector3(next.x, owner.root.position.y, owner.root.position.z);
+                        Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
                         if (!Collides(xOnly))
                         {
-                            owner.root.position = xOnly;
+                            owner.rig.root.position = xOnly;
                             moved = true;
                         }
                         else
                         {
-                            Vector3 zOnly = new Vector3(owner.root.position.x, owner.root.position.y, next.z);
+                            Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
                             if (!Collides(zOnly))
                             {
-                                owner.root.position = zOnly;
+                                owner.rig.root.position = zOnly;
                                 moved = true;
                             }
                         }
                     }
                     owner.stuck = moved ? 0f : owner.stuck + Time.deltaTime;
+                    owner.moving = moved;
 
                     if (delta.sqrMagnitude > 0.01f)
                     {
-                        owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                        owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
                     }
                 }
             }
             else if (owner.phase == 1)
             {
                 owner.timer -= Time.deltaTime;
+                owner.moving = false;
                 FacePlayer(owner, 5f);
                 if (owner.bubble != null)
                 {
@@ -2168,12 +2238,13 @@ public class KitchenSimulator : MonoBehaviour
             else
             {
                 // 离开：先走回公司大门，再走出门外；同样带碰撞
-                bool inside = owner.root.position.z > -6.6f;
+                owner.moving = true;
+                bool inside = owner.rig.root.position.z > -6.6f;
                 Vector3 exit = inside
-                    ? new Vector3(-16.4f, owner.root.position.y, -7.5f)
-                    : new Vector3(-16.4f, owner.root.position.y, -13f);
+                    ? new Vector3(-16.4f, owner.rig.root.position.y, -7.5f)
+                    : new Vector3(-16.4f, owner.rig.root.position.y, -21f);
 
-                Vector3 delta = exit - owner.root.position;
+                Vector3 delta = exit - owner.rig.root.position;
                 delta.y = 0f;
                 if (delta.sqrMagnitude < 0.01f)
                 {
@@ -2181,24 +2252,24 @@ public class KitchenSimulator : MonoBehaviour
                 }
 
                 Vector3 step = delta.normalized * 2.6f * Time.deltaTime;
-                Vector3 next = owner.root.position + step;
+                Vector3 next = owner.rig.root.position + step;
                 if (!Collides(next))
                 {
-                    owner.root.position = next;
+                    owner.rig.root.position = next;
                 }
                 else
                 {
-                    Vector3 xOnly = new Vector3(next.x, owner.root.position.y, owner.root.position.z);
+                    Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
                     if (!Collides(xOnly))
                     {
-                        owner.root.position = xOnly;
+                        owner.rig.root.position = xOnly;
                     }
                     else
                     {
-                        Vector3 zOnly = new Vector3(owner.root.position.x, owner.root.position.y, next.z);
+                        Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
                         if (!Collides(zOnly))
                         {
-                            owner.root.position = zOnly;
+                            owner.rig.root.position = zOnly;
                         }
                         else
                         {
@@ -2207,25 +2278,27 @@ public class KitchenSimulator : MonoBehaviour
                     }
                 }
 
-                owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
 
                 // 走到门外，或长时间无法脱身，就消失
                 if ((!inside && delta.magnitude < 1.2f) || owner.stuck > 8f)
                 {
-                    Destroy(owner.root.gameObject);
+                    Destroy(owner.rig.root.gameObject);
                     homeowners.RemoveAt(i);
                 }
             }
+
+            AnimateRig(owner.rig, owner.moving, 1f);
         }
     }
 
     private void FacePlayer(Homeowner owner, float speed)
     {
-        Vector3 look = playerPosition - owner.root.position;
+        Vector3 look = playerPosition - owner.rig.root.position;
         look.y = 0f;
         if (look.sqrMagnitude > 0.01f)
         {
-            owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(look), Time.deltaTime * speed);
+            owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation, Quaternion.LookRotation(look), Time.deltaTime * speed);
         }
     }
 
@@ -2260,7 +2333,7 @@ public class KitchenSimulator : MonoBehaviour
         orders.Add(order);
 
         string complaint = "我家" + owner.room.type + "的" + owner.template.title + "，麻烦你来看看";
-        owner.bubble = BuildBubble(owner.root.position + Vector3.up * 2.35f, complaint);
+        owner.bubble = BuildBubble(owner.rig.root.position + Vector3.up * 2.35f, complaint);
         ShowToast("新工单 " + order.Code + " · " + order.room + " · " + owner.template.title, 5f);
     }
 
@@ -2271,8 +2344,8 @@ public class KitchenSimulator : MonoBehaviour
         bubble.transform.position = position;
 
         Material board = MakeMaterial(new Color(0.98f, 0.97f, 0.93f), 0f, 0.4f);
-        DecoPart(PrimitiveType.Cube, "Bubble Board", bubble.transform, Vector3.zero, new Vector3(3.3f, 0.62f, 0.05f), Quaternion.identity, board);
-        DecoPart(PrimitiveType.Cube, "Bubble Tail", bubble.transform, new Vector3(0f, -0.42f, 0f), new Vector3(0.16f, 0.24f, 0.05f), Quaternion.Euler(0f, 0f, 32f), board);
+        DecoPart(PrimitiveType.Cube, "Bubble Board", bubble.transform, Vector3.zero, new Vector3(4.9f, 0.74f, 0.05f), Quaternion.identity, board);
+        DecoPart(PrimitiveType.Cube, "Bubble Tail", bubble.transform, new Vector3(0f, -0.48f, 0f), new Vector3(0.16f, 0.26f, 0.05f), Quaternion.Euler(0f, 0f, 32f), board);
 
         GameObject labelObject = new GameObject("Bubble Text");
         labelObject.transform.SetParent(bubble.transform, false);
@@ -2281,7 +2354,9 @@ public class KitchenSimulator : MonoBehaviour
         mesh.font = UiFont;
         mesh.text = text;
         mesh.fontSize = 64;
-        mesh.characterSize = 0.035f;   // 实测：每行世界高度 = characterSize × 64 ÷ 10
+        // 实测公式：每字宽度 ≈ characterSize × 6.4。按字数自适应，保证文字始终放得进气泡
+        float perChar = 4.3f / Mathf.Max(1, text.Length);
+        mesh.characterSize = Mathf.Clamp(perChar / 6.4f, 0.016f, 0.04f);
         mesh.anchor = TextAnchor.MiddleCenter;
         mesh.alignment = TextAlignment.Center;
         mesh.color = new Color(0.15f, 0.15f, 0.18f);
