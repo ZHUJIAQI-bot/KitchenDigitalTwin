@@ -793,9 +793,11 @@ public class KitchenSimulator : MonoBehaviour
                 continue;
             }
             string objectName = filter.gameObject.name;
-            if (objectName.StartsWith("Globe") || objectName.StartsWith("Label"))
+            if (objectName.StartsWith("Globe") || objectName.StartsWith("Label")
+                || objectName == "Head" || objectName == "Neck" || objectName == "Helmet"
+                || objectName == "Hand" || objectName == "Foot")
             {
-                continue;   // 灯罩要换材质、文字稍后要改材质，保持独立
+                continue;   // 灯罩/文字要换材质；角色部件保持独立（双保险）
             }
 
             bool isProtected = false;
@@ -3180,11 +3182,12 @@ public class KitchenSimulator : MonoBehaviour
         // 躯干分胸/腰两段，比例更像人
         Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.48f, 0.44f, 0.3f), Quaternion.identity, clothMaterial).transform;
         MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Neck", body, new Vector3(0f, 0.24f, 0f), new Vector3(0.13f, 0.1f, 0.13f), Quaternion.identity, skinMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Head", body, new Vector3(0f, 0.4f, 0f), new Vector3(0.3f, 0.3f, 0.3f), Quaternion.identity, skinMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Helmet", body, new Vector3(0f, 0.58f, 0f), new Vector3(0.38f, 0.09f, 0.38f), Quaternion.identity, helmetMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Neck", root.transform, new Vector3(0f, 1.26f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
+        // 头/安全帽挂在根节点上（绝对高度），不受身体动画影响，保证始终可见
+        MakePrimitive(PrimitiveType.Cube, "Head", root.transform, new Vector3(0f, 1.44f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Helmet", root.transform, new Vector3(0f, 1.63f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
 
         Transform leftArm = new GameObject("Left Arm Pivot").transform;
         leftArm.SetParent(root.transform, false);
