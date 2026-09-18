@@ -226,10 +226,10 @@ public class KitchenSimulator : MonoBehaviour
     private CharacterRig bossRig;
 
     // 小地图
-    private const float WorldMinX = -22f;
-    private const float WorldMaxX = 64f;
+    private const float WorldMinX = -24f;
+    private const float WorldMaxX = 66f;
     private const float WorldMinZ = -20f;
-    private const float WorldMaxZ = 10f;
+    private const float WorldMaxZ = 28f;
 
     private Order activeOrder;
     private Order repairingOrder;
@@ -300,7 +300,7 @@ public class KitchenSimulator : MonoBehaviour
             ApplyLabelMaterials();
             BuildPlayer();
             BuildNpc();
-            BuildIntroDialogue();
+            // 注意：开场台词在 HandleDialogue 里按延迟构建，不要在这里再建一次，否则会重复两遍
             BuildTools();
             BuildAudio();
         }
@@ -370,7 +370,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildOutdoor()
     {
         // 各层顶面高度严格错开，避免共面导致的 z-fighting 闪烁
-        CreateDecoCube("Lawn", new Vector3(20f, -0.27f, 0f), new Vector3(200f, 0.5f, 140f), new Color(0.38f, 0.6f, 0.3f));
+        CreateDecoCube("Lawn", new Vector3(20f, -0.27f, 0f), new Vector3(360f, 0.5f, 340f), new Color(0.38f, 0.6f, 0.3f));
 
         Color asphalt = new Color(0.29f, 0.3f, 0.31f);
         Color pavement = new Color(0.68f, 0.68f, 0.66f);
@@ -388,6 +388,16 @@ public class KitchenSimulator : MonoBehaviour
         {
             CreateDecoCube("Path", new Vector3(doorX[i], -0.06f, -8.3f), new Vector3(2.8f, 0.12f, 2.2f), pavement);
         }
+        // 第二排住宅门前小路
+        float[] doorX2 = { 13f, 29f, 45f };
+        for (int i = 0; i < doorX2.Length; i++)
+        {
+            CreateDecoCube("Path", new Vector3(doorX2[i], -0.06f, 11.2f), new Vector3(2.8f, 0.12f, 2.2f), pavement);
+        }
+        // 小区内街（两排楼之间的横向步道）
+        CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), pavement);
+
+        BuildCitySkyline();
 
         // 绿化：只放在建筑范围之外
         float[] tx = { -14f, -2f, 10f, 26f, 42f, 58f, 68f, -26f, -34f, 16f, 32f, 48f, 64f,
@@ -426,11 +436,14 @@ public class KitchenSimulator : MonoBehaviour
     // 全部建筑的外扩范围，用于避免绿化穿模进屋
     private static readonly float[,] buildingRects =
     {
-        { -20f, -8f, -7f, 5f },   // 公司
-        { 2f, 14f, -7f, 5f },     // 1号楼
-        { 18f, 30f, -7f, 5f },    // 2号楼
-        { 34f, 46f, -7f, 5f },    // 3号楼
-        { 50f, 62f, -7f, 5f },    // 4号楼
+        { -20f, -8f, -7f, 5f },     // 公司
+        { 2f, 14f, -7f, 5f },       // 1号楼
+        { 18f, 30f, -7f, 5f },      // 2号楼
+        { 34f, 46f, -7f, 5f },      // 3号楼
+        { 50f, 62f, -7f, 5f },      // 4号楼
+        { 10f, 22f, 13f, 25f },     // 5号楼（第二排）
+        { 26f, 38f, 13f, 25f },     // 6号楼（第二排）
+        { 42f, 54f, 13f, 25f },     // 7号楼（第二排）
     };
 
     private static bool InsideBuilding(float x, float z)
@@ -507,6 +520,57 @@ public class KitchenSimulator : MonoBehaviour
         // 窗棂
         Vector3 bar = alongX ? new Vector3(0.05f, height, 0.07f) : new Vector3(0.07f, height, 0.05f);
         CreateDecoCube("Window Mullion", position, bar, new Color(0.55f, 0.53f, 0.5f));
+    }
+
+    // 远处城市天际线：纯装饰，无碰撞
+    private void BuildCitySkyline()
+    {
+        Color[] tones =
+        {
+            new Color(0.56f, 0.61f, 0.69f),
+            new Color(0.47f, 0.53f, 0.62f),
+            new Color(0.63f, 0.66f, 0.71f),
+            new Color(0.41f, 0.47f, 0.56f),
+            new Color(0.52f, 0.55f, 0.6f),
+        };
+        Color windowTone = new Color(0.75f, 0.8f, 0.86f);
+
+        // 南面（马路那侧）的远景楼群
+        for (int i = 0; i < 16; i++)
+        {
+            float x = -95f + i * 13f + Random.Range(-3.5f, 3.5f);
+            float z = -58f - Random.Range(0f, 26f);
+            float h = Random.Range(11f, 36f);
+            float w = Random.Range(8f, 15f);
+            float d = w * Random.Range(0.8f, 1.25f);
+            CreateDecoCube("City Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, d), tones[Random.Range(0, tones.Length)]);
+            // 楼层带
+            int bands = Mathf.FloorToInt(h / 4.5f);
+            for (int b = 1; b < bands; b++)
+            {
+                CreateDecoCube("City Windows", new Vector3(x, b * 4.5f - 0.2f, z - d * 0.5f - 0.06f), new Vector3(w * 0.82f, 1.1f, 0.1f), windowTone);
+            }
+        }
+
+        // 北面远景
+        for (int i = 0; i < 13; i++)
+        {
+            float x = -80f + i * 14f + Random.Range(-3f, 3f);
+            float z = 62f + Random.Range(0f, 24f);
+            float h = Random.Range(10f, 30f);
+            float w = Random.Range(8f, 14f);
+            CreateDecoCube("City Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * Random.Range(0.85f, 1.2f)), tones[Random.Range(0, tones.Length)]);
+        }
+
+        // 东西两侧远景
+        for (int i = 0; i < 8; i++)
+        {
+            float z = -40f + i * 16f;
+            float h = Random.Range(10f, 28f);
+            CreateDecoCube("City Tower", new Vector3(-105f - Random.Range(0f, 20f), h * 0.5f - 0.2f, z), new Vector3(11f, h, 11f), tones[Random.Range(0, tones.Length)]);
+            h = Random.Range(10f, 28f);
+            CreateDecoCube("City Tower", new Vector3(140f + Random.Range(0f, 20f), h * 0.5f - 0.2f, z), new Vector3(11f, h, 11f), tones[Random.Range(0, tones.Length)]);
+        }
     }
 
     private void BuildTree(float x, float z)
@@ -786,28 +850,34 @@ public class KitchenSimulator : MonoBehaviour
     // ── 住宅（4 栋单层，每栋 4 个房间）────────────────────
     private void BuildHouse()
     {
-        float[] origins = { 2f, 18f, 34f, 50f };
         Color[] roofColors =
         {
             new Color(0.55f, 0.33f, 0.27f),
             new Color(0.36f, 0.44f, 0.42f),
             new Color(0.5f, 0.4f, 0.28f),
             new Color(0.42f, 0.38f, 0.48f),
+            new Color(0.5f, 0.46f, 0.36f),
+            new Color(0.34f, 0.4f, 0.5f),
+            new Color(0.48f, 0.34f, 0.4f),
         };
-        for (int i = 0; i < origins.Length; i++)
-        {
-            BuildResidence(i + 1, origins[i], roofColors[i]);
-        }
+        // 第一排（临街）
+        BuildResidence(1, 2f, -7f, roofColors[0]);
+        BuildResidence(2, 18f, -7f, roofColors[1]);
+        BuildResidence(3, 34f, -7f, roofColors[2]);
+        BuildResidence(4, 50f, -7f, roofColors[3]);
+        // 第二排（错开半格，形成小区内街）
+        BuildResidence(5, 10f, 13f, roofColors[4]);
+        BuildResidence(6, 26f, 13f, roofColors[5]);
+        BuildResidence(7, 42f, 13f, roofColors[6]);
     }
 
     // 单层住宅：12×12，四个 6×6 房间
     //   前左 客厅（入户）/ 前右 厨房
     //   后左 卫生间       / 后右 卧室
-    private void BuildResidence(int index, float x0, Color roofColor)
+    private void BuildResidence(int index, float x0, float z0, Color roofColor)
     {
-        const float depth = 12f;
         float x1 = x0 + 6f, x2 = x0 + 12f;
-        float z0 = -7f, zMid = -1f, z1 = 5f;
+        float zMid = z0 + 6f, z1 = z0 + 12f;
         Color wall = new Color(0.88f, 0.86f, 0.81f);
         Color inner = new Color(0.84f, 0.82f, 0.77f);
         string tag = index + "号楼";
@@ -1817,16 +1887,72 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    // 户主上门对话（原神式多句对话）
+    // 户主说话风格：每次随机组合，避免所有人都一个腔调
+    private static readonly string[] Greetings =
+    {
+        "师傅，打扰一下，方便说两句吗？",
+        "哎，师傅！可算找着人了。",
+        "师傅，忙着呢？耽误您两分钟。",
+        "请问是陈师傅吗？我找您有点事。",
+        "师傅！总算等到您了。",
+        "您好您好，我是咱这片的住户。",
+        "师傅，您这活儿接不接？",
+        "不好意思打扰了，家里有点麻烦事。",
+    };
+
+    private static readonly string[] Complaints =
+    {
+        "我家{ROOM}有点毛病 —— {TITLE}。",
+        "跟您说个事儿，我家{ROOM}的{TITLE}，看着不太对劲。",
+        "我家{ROOM}出问题了，好像是{TITLE}。",
+        "麻烦您给看看，我家{ROOM}{TITLE}，我瞅着挺严重的。",
+        "师傅，我家{ROOM}那个{TITLE}，您有空给瞧瞧呗？",
+        "我家{ROOM}的{TITLE}，一直拖着没弄，您看还能修不？",
+        "是这样，我家{ROOM}的{TITLE}，我自己弄不明白。",
+        "师傅您给掌掌眼，我家{ROOM}是不是{TITLE}了？",
+    };
+
+    private static readonly string[] Details =
+    {
+        "{CAUSE}。您受累给看看，多少钱我出。",
+        "我瞧着是{CAUSE}。该修就修，价钱好说。",
+        "具体我也不太懂，反正就是{CAUSE}。您拿个主意。",
+        "{CAUSE}。这事儿拖挺久了，您给想想办法。",
+        "应该是{CAUSE}吧？您比我懂，听您的。",
+        "{CAUSE}。您方便的时候过去看看就成。",
+    };
+
+    private static readonly string[] Replies =
+    {
+        "行，我记下了，这就带上工具过去。",
+        "好嘞，我收拾下工具马上到。",
+        "明白，包在我身上。",
+        "没问题，我这就过去瞧瞧。",
+        "成，您放心，交给我了。",
+    };
+
+    private static string Pick(string[] options)
+    {
+        return options[Random.Range(0, options.Length)];
+    }
+
+    // 户主上门对话（原神式多句对话，台词随机组合）
     private void StartConversation(Homeowner owner)
     {
         talkTarget = owner;
         dialogue.Clear();
+
         string who = owner.room.name + " 户主";
-        dialogue.Add(new DialogueLine { speaker = who, text = "师傅，打扰一下，方便说两句吗？" });
-        dialogue.Add(new DialogueLine { speaker = who, text = "我家" + owner.room.type + "有点毛病 —— " + owner.template.title + "。" });
-        dialogue.Add(new DialogueLine { speaker = who, text = owner.template.cause + "。您受累给看看，多少钱我出。" });
-        dialogue.Add(new DialogueLine { speaker = "陈师傅", text = "行，我记下了，这就带上工具过去。" });
+        string complaint = Pick(Complaints)
+            .Replace("{ROOM}", owner.room.type)
+            .Replace("{TITLE}", owner.template.title);
+        string detail = Pick(Details).Replace("{CAUSE}", owner.template.cause);
+
+        dialogue.Add(new DialogueLine { speaker = who, text = Pick(Greetings) });
+        dialogue.Add(new DialogueLine { speaker = who, text = complaint });
+        dialogue.Add(new DialogueLine { speaker = who, text = detail });
+        dialogue.Add(new DialogueLine { speaker = "陈师傅", text = Pick(Replies) });
+
         dialogueIndex = 0;
         BeginLine();
     }
@@ -2354,7 +2480,7 @@ public class KitchenSimulator : MonoBehaviour
                 bool alignedWithDoor = Mathf.Abs(owner.rig.root.position.x - home.x) < 1.0f;
                 Vector3 target = alignedWithDoor
                     ? home
-                    : new Vector3(home.x, y, -8.8f);   // 门外落客点，先横向对齐
+                    : new Vector3(home.x, y, home.z - 4.6f);   // 自家门外落客点，先横向对齐
 
                 Vector3 delta = target - owner.rig.root.position;
                 delta.y = 0f;
