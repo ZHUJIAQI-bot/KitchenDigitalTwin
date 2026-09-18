@@ -13,7 +13,7 @@ public class KitchenSimulator : MonoBehaviour
     private const int StartCash = 600;
 
     // ── 时间系统：1 游戏小时 = 2.5 秒真实时间；7 天为一个月 ──
-    private const float RealSecondsPerGameHour = 2.5f;
+    private const float RealSecondsPerGameHour = 7f;
     private const int HoursPerDay = 24;
     private const int MonthDays = 7;
     private const int MonthSalary = 2200;
@@ -375,6 +375,7 @@ public class KitchenSimulator : MonoBehaviour
         UpdateHomeowners();
         UpdateOrderSpawning();
         DetectInteraction();
+        HandleRepairInput();
         UpdateRepair();
         UpdateAnimate();
         UpdateMarkers();
@@ -582,20 +583,25 @@ public class KitchenSimulator : MonoBehaviour
     // ── 办公室同事 ────────────────────────────────────────
     private void BuildColleagues()
     {
-        BuildColleague(-15.9f, -1.5f, 200f, "老王", new Color(0.5f, 0.45f, 0.28f),
+        BuildDeskStation(-17.4f, -4.2f, 180f, true);
+        BuildDeskStation(-14.4f, -1.2f, 180f, true);
+        BuildColleague(-17.4f, -5.15f, 0f, "老王", new Color(0.5f, 0.45f, 0.28f),
             new[] { "这户的水路我看过，八成是角阀老化。", "记账别忘了，月底要对账的。", "累了就歇会儿，活儿是干不完的。" });
-        BuildColleague(-12.7f, -1.5f, 160f, "小李", new Color(0.28f, 0.42f, 0.4f),
+        BuildColleague(-11.8f, -5.15f, 0f, "小李", new Color(0.28f, 0.42f, 0.4f),
             new[] { "陈哥，新来那批工具箱在仓库左边。", "客户催得紧的话，先打个电话说一声。", "我刚学了个补墙的新做法，回头教你。" });
-        BuildColleague(-16.4f, -4.8f, 20f, "老赵", new Color(0.42f, 0.3f, 0.42f),
+        BuildColleague(-14.4f, -2.15f, 0f, "老赵", new Color(0.42f, 0.3f, 0.42f),
             new[] { "天黑路灯就亮，夜班注意脚下。", "工资发了？去服装店看看新工装。", "工具买齐了干活快，别舍不得花钱。" });
     }
 
     private void BuildColleague(float x, float z, float yaw, string name, Color coat, string[] lines)
     {
-        CharacterRig rig = BuildCharacterModel(name, new Vector3(x, 0.44f, z), yaw, coat, new Color(0.85f, 0.68f, 0.52f));
-        // 坐姿：大腿前伸、小臂搭在桌上
-        rig.leftLeg.localRotation = Quaternion.Euler(80f, 0f, 0f);
-        rig.rightLeg.localRotation = Quaternion.Euler(80f, 0f, 0f);
+        // 坐姿：髋部下沉到椅面高度（椅面 0.47m - 髋部局部 0.62m = 根节点 -0.15）
+        // 大腿前伸 -55°、小腿回正 +55°，脚正好落地
+        CharacterRig rig = BuildCharacterModel(name, new Vector3(x, -0.15f, z), yaw, coat, new Color(0.85f, 0.68f, 0.52f));
+        rig.leftLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
+        rig.rightLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
+        rig.leftKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
+        rig.rightKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
         rig.leftArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
         rig.rightArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
         colleagues.Add(new Colleague { name = name, root = rig.root, lines = lines });
@@ -735,6 +741,21 @@ public class KitchenSimulator : MonoBehaviour
     {
         expenses += amount;
         Today().expense += amount;
+    }
+
+    // 天黑后可以休息，直接跳到次日清晨 6:00
+    private void RestUntilMorning()
+    {
+        if (GameHour >= 6 && GameHour < 19)
+        {
+            ShowToast("现在还是白天，先干活吧（天黑后按 R 休息）", 3f);
+            return;
+        }
+        float hoursNow = gameTime / RealSecondsPerGameHour;
+        float nextMorning = (Mathf.Floor(hoursNow / HoursPerDay) + 1f) * HoursPerDay + 6f;
+        gameTime = nextMorning * RealSecondsPerGameHour;
+        lastDay = DayIndex;
+        ShowToast("好好睡了一觉，天亮了", 4f);
     }
 
     private void PaySalary()
@@ -1722,6 +1743,10 @@ public class KitchenSimulator : MonoBehaviour
         {
             almanacOpen = !almanacOpen;
         }
+        if (Input.GetKeyDown(KeyCode.R) && dialogueIndex < 0)
+        {
+            RestUntilMorning();
+        }
 
         // 按住 Tab 唤出鼠标（松开自动收回），Esc 也可释放
         bool wantMouse = Input.GetKey(KeyCode.Tab);
@@ -2102,6 +2127,7 @@ public class KitchenSimulator : MonoBehaviour
         public Transform root;
         public Transform body;
         public Transform leftArm, rightArm, leftLeg, rightLeg;
+        public Transform leftKnee, rightKnee;   // 膝关节，用于坐姿
     }
 
     private CharacterRig BuildCharacterModel(string name, Vector3 position, float yaw, Color cloth, Color skin)
@@ -2130,15 +2156,24 @@ public class KitchenSimulator : MonoBehaviour
         rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
 
+        // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
         Transform leftLeg = new GameObject("Left Leg Pivot").transform;
         leftLeg.SetParent(root.transform, false);
         leftLeg.localPosition = new Vector3(-0.13f, 0.62f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Leg", leftLeg, new Vector3(0f, -0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Thigh", leftLeg, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
+        Transform leftKnee = new GameObject("Left Knee").transform;
+        leftKnee.SetParent(leftLeg, false);
+        leftKnee.localPosition = new Vector3(0f, -0.3f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Shin", leftKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
 
         Transform rightLeg = new GameObject("Right Leg Pivot").transform;
         rightLeg.SetParent(root.transform, false);
         rightLeg.localPosition = new Vector3(0.13f, 0.62f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Leg", rightLeg, new Vector3(0f, -0.3f, 0f), new Vector3(0.16f, 0.6f, 0.16f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Thigh", rightLeg, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
+        Transform rightKnee = new GameObject("Right Knee").transform;
+        rightKnee.SetParent(rightLeg, false);
+        rightKnee.localPosition = new Vector3(0f, -0.3f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Shin", rightKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
 
         Collider[] colliders = root.GetComponentsInChildren<Collider>();
         for (int i = 0; i < colliders.Length; i++)
@@ -2153,7 +2188,9 @@ public class KitchenSimulator : MonoBehaviour
             leftArm = leftArm,
             rightArm = rightArm,
             leftLeg = leftLeg,
-            rightLeg = rightLeg
+            rightLeg = rightLeg,
+            leftKnee = leftKnee,
+            rightKnee = rightKnee
         };
     }
 
@@ -3157,28 +3194,35 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
-        // 维修改为「多次点击左键」：第一次点击开工，之后每点一次推进一格
-        if (activeOrder != null && Input.GetMouseButtonDown(0) && cursorLocked)
+    }
+
+    // 左键点击施工：独立处理，不能放在 DetectInteraction 里（那里维修中会整体提前返回）
+    private void HandleRepairInput()
+    {
+        if (!cursorLocked || dialogueIndex >= 0 || dialogueJustEnded)
         {
-            HandleRepairClick();
+            return;
+        }
+        if (!Input.GetMouseButtonDown(0))
+        {
+            return;
+        }
+        if (repairingOrder != null)
+        {
+            AdvanceRepair();
+        }
+        else if (activeOrder != null)
+        {
+            StartRepair(activeOrder);
+            AdvanceRepair();
         }
     }
 
-    private void HandleRepairClick()
+    private void AdvanceRepair()
     {
-        if (repairingOrder == null)
-        {
-            StartRepair(activeOrder);
-            toolStrike = 1f;
-            repairClicks = 1;
-            activeOrder.repairProgress = (float)repairClicks / RepairClicks;
-            return;
-        }
-
         repairClicks++;
         toolStrike = 1f;
         repairingOrder.repairProgress = Mathf.Clamp01((float)repairClicks / RepairClicks);
-
         if (repairClicks >= RepairClicks)
         {
             CompleteRepair();
@@ -3909,7 +3953,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　G 商店　·　N 日历账目　·　B 工具包　·　Q/滚轮 换工具　·　E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　G 商店　·　N 日历账目　·　R 夜间休息　·　B 工具包　·　Q/滚轮 换工具　·　E 维修", centerStyle);
     }
 
     private void DrawToast()
