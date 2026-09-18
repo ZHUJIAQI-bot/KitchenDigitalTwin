@@ -2093,13 +2093,14 @@ public class KitchenSimulator : MonoBehaviour
     // ── 工具背包 ──────────────────────────────────────────
     private void BuildTools()
     {
-        // 开局只有电动起子，其余需在道具商店购买
-        tools.Add(new ToolInfo("电动起子", ToolKind.Drill, new Color(0.85f, 0.35f, 0.12f), 0, true));
-        tools.Add(new ToolInfo("螺丝刀", ToolKind.Screwdriver, new Color(0.85f, 0.72f, 0.1f), 180, true));
-        tools.Add(new ToolInfo("活动扳手", ToolKind.Wrench, new Color(0.6f, 0.62f, 0.66f), 320, false));
-        tools.Add(new ToolInfo("羊角锤", ToolKind.Hammer, new Color(0.45f, 0.47f, 0.5f), 260, false));
-        tools.Add(new ToolInfo("剪刀", ToolKind.Scissors, new Color(0.75f, 0.76f, 0.8f), 120, false));
+        // 开局只有一把活动扳手，只能做"管件"类的头三单（水槽渗漏 / 燃气管 / 地漏）
+        // 其余的活需要先赚钱再买工具，业务逐步拓展
+        tools.Add(new ToolInfo("活动扳手", ToolKind.Wrench, new Color(0.6f, 0.62f, 0.66f), 0, true));
         tools.Add(new ToolInfo("防水胶布", ToolKind.Tape, new Color(0.15f, 0.15f, 0.16f), 90, false));
+        tools.Add(new ToolInfo("剪刀", ToolKind.Scissors, new Color(0.75f, 0.76f, 0.8f), 120, false));
+        tools.Add(new ToolInfo("螺丝刀", ToolKind.Screwdriver, new Color(0.85f, 0.72f, 0.1f), 180, false));
+        tools.Add(new ToolInfo("羊角锤", ToolKind.Hammer, new Color(0.45f, 0.47f, 0.5f), 260, false));
+        tools.Add(new ToolInfo("电动起子", ToolKind.Drill, new Color(0.85f, 0.35f, 0.12f), 300, false));
         tools.Add(new ToolInfo("测电笔", ToolKind.Tester, new Color(0.9f, 0.25f, 0.2f), 420, false));
         currentTool = 0;
         BuildToolModel();
@@ -2467,7 +2468,8 @@ public class KitchenSimulator : MonoBehaviour
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那片老小区，问题一堆，业主催得紧。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "各家的户主会自己到前台来登记，或者打电话预约，单子就记下了。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前，连点几下左键就能开工，干完活记得收费。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙。去吧！" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "先给你配了把活动扳手，管件那几单够你练手了。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙，能接的活才多。去吧！" });
     }
 
     private void BeginLine()
@@ -3013,10 +3015,10 @@ public class KitchenSimulator : MonoBehaviour
             return false;
         }
 
-        // 65% 优先派当前工具能修的活，避免玩家接不到单也没钱买工具
+        // 优先派当前工具能修的活，避免玩家接不到单也没钱买工具
         List<Room> pickRooms = candidateRooms;
         List<OrderTemplate> pickTemplates = candidateTemplates;
-        if (Random.value < 0.65f)
+        if (Random.value < 0.78f)
         {
             List<Room> ownedRooms = new List<Room>();
             List<OrderTemplate> ownedTemplates = new List<OrderTemplate>();
