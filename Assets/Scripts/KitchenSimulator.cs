@@ -63,6 +63,7 @@ public class KitchenSimulator : MonoBehaviour
         public float sensorAlarm;
         public float sensorMax;
         public float alarmTime;        // 首次报警时刻（用于统计响应时长）
+        public readonly List<float> history = new List<float>();   // 最近采样，用于趋势曲线
         public float fixTime;          // 数据回归正常的时刻
 
         public string Code { get { return "#" + id.ToString("D3"); } }
@@ -1064,9 +1065,17 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // 传感器实时数据仿真：报警值带噪声波动；改造完成后回落到正常值
+    private float sampleTimer;
+
     private void UpdateSensors()
     {
         float dt = Time.deltaTime;
+        sampleTimer += dt;
+        bool doSample = sampleTimer >= 0.25f;
+        if (doSample)
+        {
+            sampleTimer = 0f;
+        }
         for (int i = 0; i < orders.Count; i++)
         {
             Order order = orders[i];
@@ -1078,6 +1087,16 @@ public class KitchenSimulator : MonoBehaviour
                 + Mathf.Sin(Time.time * 7.3f + i * 0.9f) * 0.012f;
 
             order.sensorValue = Mathf.Lerp(order.sensorValue, target, dt * (fixedOrder ? 1.6f : 0.7f)) * noise;
+
+            // 约 4Hz 采样一次，保留最近 48 点作为趋势曲线
+            if (doSample)
+            {
+                order.history.Add(order.sensorValue);
+                if (order.history.Count > 48)
+                {
+                    order.history.RemoveAt(0);
+                }
+            }
 
             // 记录"数据回归正常"的时刻，用于统计处置时长
             if (fixedOrder && order.fixTime <= 0f
@@ -3281,6 +3300,38 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 工单模板与派单 ────────────────────────────────────
+    // 隐患 → 对应工程规范与材料清单（提升工程可信度）
+    private static readonly Dictionary<string, string[]> Compliance = new Dictionary<string, string[]>
+    {
+        { "水槽下方渗漏",   new[] { "GB 50015《建筑给水排水设计标准》",       "角阀×2、存水弯×1、防水托盘×1、防潮垫层 1.2㎡" } },
+        { "灶台燃气管老化", new[] { "GB 50028《城镇燃气设计规范》",           "不锈钢波纹管×1、燃气专用接头×2、密封垫×4" } },
+        { "橱柜门板变形",   new[] { "GB/T 3324《木家具通用技术条件》",         "防潮柜门×1、液压铰链×2、封边条×4m" } },
+        { "冰箱插座接触不良", new[] { "GB 50096《住宅设计规范》",             "16A 插座面板×1、暗盒×1、4mm² 铜芯线×3m" } },
+        { "地面瓷砖空鼓",   new[] { "GB 50209《建筑地面工程施工质量验收规范》", "同色地砖×6、瓷砖胶 20kg、美缝剂×1" } },
+        { "沙发背景墙开裂", new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "耐水腻子 15kg、玻纤网格布 2㎡、底漆面漆各 5kg" } },
+        { "电视线缆外露",   new[] { "GB 50303《建筑电气工程施工质量验收规范》", "PVC 线槽 3m、扎带若干、线缆标识×1套" } },
+        { "吊顶灯带脱落",   new[] { "GB 50303《建筑电气工程施工质量验收规范》", "灯带卡扣×8、LED 灯带 2m、接线端子×4" } },
+        { "木门变形关不严", new[] { "GB/T 3324《木家具通用技术条件》",         "门铰链×3、防潮封边条 5m、木器漆 1kg" } },
+        { "墙面返潮发霉",   new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "外墙防水涂料 20kg、耐水腻子 20kg、防霉底漆 5kg" } },
+        { "衣柜滑轨卡顿",   new[] { "GB/T 3324《木家具通用技术条件》",         "三节滑轨×2、自攻螺丝×24、润滑脂×1" } },
+        { "床头插座松动",   new[] { "GB 50096《住宅设计规范》",               "五孔插座×1、暗盒加固件×1、绝缘胶带×1" } },
+        { "地漏返味",       new[] { "GB 50015《建筑给水排水设计标准》",       "防臭地漏芯×1、密封胶 1支、存水弯×1" } },
+        { "墙面瓷砖空鼓",   new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "同色墙砖×8、瓷砖胶 15kg、防水涂料 5kg" } },
+        { "马桶底座渗水",   new[] { "GB 50015《建筑给水排水设计标准》",       "法兰密封圈×1、防霉硅酮胶×1、膨胀螺栓×2" } },
+    };
+
+    private static string StandardOf(Order order)
+    {
+        string[] info;
+        return Compliance.TryGetValue(order.title, out info) ? info[0] : "—";
+    }
+
+    private static string MaterialsOf(Order order)
+    {
+        string[] info;
+        return Compliance.TryGetValue(order.title, out info) ? info[1] : "—";
+    }
+
     private void InitializeOrders()
     {
         // 每个点位挂一个工程传感器（数字孪生的数据源），改造完成后读数回落到正常值
@@ -4710,9 +4761,26 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 数字孪生监测平台（T 键）──────────────────────────
-    private Rect TwinRect { get { return new Rect(Screen.width * 0.5f - 370f, 66f, 740f, 488f); } }
+    private Rect TwinRect { get { return new Rect(Screen.width * 0.5f - 390f, 60f, 780f, 566f); } }
     // 收起时的紧凑状态条（顶部居中，不挡视野）
     private Rect TwinBarRect { get { return new Rect(Screen.width * 0.5f - 200f, 16f, 400f, 42f); } }
+
+    // 现场详情：优先取离玩家最近的点位
+    private Order FocusOrder()
+    {
+        Order best = null;
+        float nearest = float.MaxValue;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            float d = Distance2D(playerPosition, orders[i].site);
+            if (d < nearest)
+            {
+                nearest = d;
+                best = orders[i];
+            }
+        }
+        return best;
+    }
 
     private int AlarmCount()
     {
@@ -4817,15 +4885,80 @@ public class KitchenSimulator : MonoBehaviour
             GUI.Label(new Rect(rect.x + 20f, top + 52f, 400f, 18f), "暂无监测点位", smallStyle);
         }
 
-        // ── KPI 与对比 ──
-        float kpi = rect.y + 292f;
-        GUI.Label(new Rect(rect.x + 20f, kpi, 300f, 20f), "② 工程 KPI 与方案对比", cardTitleStyle);
+        // ── 现场点位详情：趋势曲线 + 阈值分区 + 规范 + 材料清单 ──
+        float kpi = rect.y + 280f;
+        GUI.Label(new Rect(rect.x + 20f, kpi, 400f, 20f), "② 现场点位详情（实时趋势 / 阈值区间）", cardTitleStyle);
         Fill(new Rect(rect.x + 20f, kpi + 22f, rect.width - 40f, 1f), dividerColor);
 
+        Order focus = FocusOrder();
+        if (focus != null)
+        {
+            float dy = kpi + 30f;
+            GUI.Label(new Rect(rect.x + 20f, dy, 400f, 18f),
+                focus.Code + "　" + focus.room + "　·　" + focus.sensorName, bodyStyle);
+
+            // 趋势曲线
+            float chartW = 300f;
+            float chartH = 62f;
+            Rect chart = new Rect(rect.x + 20f, dy + 24f, chartW, chartH);
+            Fill(chart, new Color(0f, 0f, 0f, 0.45f));
+
+            float maxRange = Mathf.Max(0.001f, focus.sensorMax);
+            float alarmLine = chart.y + chartH * (1f - Mathf.Clamp01(focus.sensorAlarm / maxRange));
+            Fill(new Rect(chart.x, alarmLine, chartW, 1f), new Color(0.95f, 0.35f, 0.3f, 0.85f));   // 报警阈值线
+            GUI.Label(new Rect(chart.x + chartW + 6f, alarmLine - 9f, 120f, 18f), "报警阈值", smallStyle);
+
+            int n = focus.history.Count;
+            if (n > 1)
+            {
+                float step = chartW / (n - 1);
+                Color lineColor = focus.state == OrderState.Fixed ? fixedColor
+                    : (focus.sensorValue >= focus.sensorAlarm ? pendingColor : workingColor);
+                for (int k = 0; k < n - 1; k++)
+                {
+                    float v0 = Mathf.Clamp01(focus.history[k] / maxRange);
+                    float v1 = Mathf.Clamp01(focus.history[k + 1] / maxRange);
+                    float y0 = chart.y + chartH * (1f - v0);
+                    float y1 = chart.y + chartH * (1f - v1);
+                    float h = Mathf.Max(1.5f, Mathf.Abs(y1 - y0));
+                    Fill(new Rect(chart.x + k * step, Mathf.Min(y0, y1), Mathf.Max(1.5f, step), h), lineColor);
+                }
+            }
+            GUI.Label(new Rect(chart.x, chart.y + chartH + 2f, chartW, 16f), "最近 12 秒趋势", smallStyle);
+
+            // 阈值分区条
+            float barY = dy + 128f;
+            Rect zone = new Rect(rect.x + 20f, barY, chartW, 10f);
+            float alarmRatio = Mathf.Clamp01(focus.sensorAlarm / maxRange);
+            Fill(new Rect(zone.x, zone.y, zone.width * alarmRatio, zone.height), new Color(0.28f, 0.62f, 0.4f, 0.85f));
+            Fill(new Rect(zone.x + zone.width * alarmRatio, zone.y, zone.width * (1f - alarmRatio), zone.height), new Color(0.72f, 0.28f, 0.26f, 0.85f));
+            float valueRatio = Mathf.Clamp01(focus.sensorValue / maxRange);
+            Fill(new Rect(zone.x + zone.width * valueRatio - 1f, zone.y - 3f, 3f, zone.height + 6f), Color.white);
+            GUI.Label(new Rect(zone.x, barY + 14f, chartW, 16f),
+                "正常区间 ← " + focus.sensorAlarm.ToString("F1") + " " + focus.sensorUnit + " → 报警区间　当前 "
+                + focus.sensorValue.ToString("F1"), smallStyle);
+
+            // 右栏：规范 / 材料 / 成因
+            float rx = rect.x + 340f;
+            GUI.Label(new Rect(rx, dy, 420f, 18f), "执行规范：" + StandardOf(focus), smallStyle);
+            GUI.Label(new Rect(rx, dy + 22f, 420f, 18f), "材料清单：" + MaterialsOf(focus), smallStyle);
+            GUI.Label(new Rect(rx, dy + 44f, 420f, 18f), "隐患成因：" + focus.cause, smallStyle);
+            GUI.Label(new Rect(rx, dy + 66f, 420f, 18f), "处置方案：" + focus.plan, smallStyle);
+            GUI.Label(new Rect(rx, dy + 92f, 420f, 18f),
+                "费用构成：材料费 ¥" + Mathf.RoundToInt(focus.cost * 0.45f).ToString("N0")
+                + "　人工费 ¥" + Mathf.RoundToInt(focus.cost * 0.40f).ToString("N0")
+                + "　管理费 ¥" + Mathf.RoundToInt(focus.cost * 0.15f).ToString("N0"), smallStyle);
+        }
+
+        // ── KPI 与对比 ──
+        float ky = kpi + 190f;
+        GUI.Label(new Rect(rect.x + 20f, ky, 300f, 20f), "③ 工程 KPI 与方案对比", cardTitleStyle);
+        Fill(new Rect(rect.x + 20f, ky + 22f, rect.width - 40f, 1f), dividerColor);
+
         float lx = rect.x + 20f;
-        float rx = rect.x + 400f;
-        GUI.Label(new Rect(lx, kpi + 30f, 200f, 18f), "本平台（数字孪生）", cardTitleStyle);
-        GUI.Label(new Rect(rx, kpi + 30f, 200f, 18f), "传统人工巡检", cardTitleStyle);
+        float krx = rect.x + 400f;
+        GUI.Label(new Rect(lx, ky + 30f, 200f, 18f), "本平台（数字孪生）", cardTitleStyle);
+        GUI.Label(new Rect(krx, ky + 30f, 200f, 18f), "传统人工巡检", cardTitleStyle);
 
         string[] labels = { "隐患消除率", "平均处置时长", "漏检率" };
         float clearRate = HazardClearRate();
@@ -4835,29 +4968,24 @@ public class KitchenSimulator : MonoBehaviour
 
         for (int i = 0; i < labels.Length; i++)
         {
-            float ry2 = kpi + 54f + i * 24f;
+            float ry2 = ky + 54f + i * 22f;
             GUI.Label(new Rect(lx, ry2, 200f, 18f), labels[i], smallStyle);
             Color prev = GUI.color;
             GUI.color = new Color(0.6f, 0.92f, 0.75f);
             GUI.Label(new Rect(lx + 120f, ry2, 140f, 18f), digital[i], smallStyle);
             GUI.color = new Color(0.85f, 0.72f, 0.6f);
-            GUI.Label(new Rect(rx + 120f, ry2, 140f, 18f), legacy[i], smallStyle);
+            GUI.Label(new Rect(krx + 120f, ry2, 140f, 18f), legacy[i], smallStyle);
             GUI.color = prev;
         }
 
-        GUI.Label(new Rect(rx, kpi + 54f + 3 * 24f, 360f, 18f),
-            "旧房改造行业人工巡检基准值（用于对比分析）", smallStyle);
-
-        // ── 累计经营 ──
-        float biz = kpi + 150f;
+        // ── 累计经营 + 导出 ──
+        float biz = ky + 132f;
         Fill(new Rect(rect.x + 20f, biz, rect.width - 40f, 1f), dividerColor);
-        GUI.Label(new Rect(rect.x + 20f, biz + 8f, 300f, 18f),
+        GUI.Label(new Rect(rect.x + 20f, biz + 10f, 520f, 18f),
             "累计改造投入 ¥" + expenses.ToString("N0")
             + "　　业主支付 ¥" + income.ToString("N0")
-            + "　　净利 ¥" + (income - expenses).ToString("N0"), bodyStyle);
-        GUI.Label(new Rect(rect.x + 20f, biz + 30f, 520f, 18f),
-            "已完成点位 " + CountFixed() + " / " + orders.Count
-            + "　　数据回归正常 " + CountSensorNormal() + " 个", smallStyle);
+            + "　　净利 ¥" + (income - expenses).ToString("N0")
+            + "　　已完成 " + CountFixed() + "/" + orders.Count, bodyStyle);
 
         Rect export = new Rect(rect.x + rect.width - 200f, biz + 4f, 180f, 34f);
         bool hoverExport = export.Contains(Event.current.mousePosition);
@@ -4867,9 +4995,6 @@ public class KitchenSimulator : MonoBehaviour
             ExportReport();
         }
         GUI.Label(export, "导出验收报告", cardButtonStyle);
-
-        GUI.Label(new Rect(rect.x + 20f, biz + 52f, 700f, 18f),
-            "改造后传感器读数回落至正常区间，全过程数据可追溯", smallStyle);
     }
 
     // ── 验收报告：一键导出（体现"从问题输入到系统输出"的完整闭环）──
@@ -4890,29 +5015,34 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  平均处置时长　　：" + (AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " 小时"));
         sb.AppendLine();
         sb.AppendLine("二、隐患清单与处置记录");
-        sb.AppendLine("  编号   点位                     传感器            报警值      阈值      处置经费");
         for (int i = 0; i < orders.Count; i++)
         {
             Order o = orders[i];
-            string state = o.state == OrderState.Fixed ? "已消除" : "未处置";
-            sb.AppendLine("  " + o.Code + "  " + Pad(o.room, 22) + "  " + Pad(o.sensorName, 16)
-                + "  " + Pad(o.sensorValue.ToString("F1") + o.sensorUnit, 10)
-                + "  " + Pad(">" + o.sensorAlarm.ToString("F1"), 8)
-                + "  " + (o.state == OrderState.Fixed ? "¥" + o.cost.ToString("N0") : "—")
-                + "  [" + state + "]");
+            sb.AppendLine("  " + o.Code + "  " + o.room + "  " + o.title);
+            sb.AppendLine("        传感器：" + o.sensorName + "  当前 " + o.sensorValue.ToString("F1") + o.sensorUnit
+                + "  报警阈值 >" + o.sensorAlarm.ToString("F1") + o.sensorUnit);
+            sb.AppendLine("        执行规范：" + StandardOf(o));
+            sb.AppendLine("        材料清单：" + MaterialsOf(o));
             if (o.state == OrderState.Fixed)
             {
-                sb.AppendLine("        成因：" + o.cause);
-                sb.AppendLine("        方案：" + o.plan);
+                sb.AppendLine("        处置状态：已消除　经费 ¥" + o.cost.ToString("N0")
+                    + "（材料 ¥" + Mathf.RoundToInt(o.cost * 0.45f).ToString("N0")
+                    + " / 人工 ¥" + Mathf.RoundToInt(o.cost * 0.40f).ToString("N0")
+                    + " / 管理 ¥" + Mathf.RoundToInt(o.cost * 0.15f).ToString("N0") + "）");
+                sb.AppendLine("        处置方案：" + o.plan);
+            }
+            else
+            {
+                sb.AppendLine("        处置状态：未处置（持续监测中）");
             }
         }
         sb.AppendLine();
         sb.AppendLine("三、关键指标对比分析");
-        sb.AppendLine("  指标              本平台(数字孪生)     传统人工巡检     改善");
-        sb.AppendLine("  隐患消除率        " + Pad(HazardClearRate().ToString("F0") + " %", 20) + Pad("68 %", 17) + "显著提升");
-        sb.AppendLine("  平均处置时长      " + Pad((AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " h"), 20) + Pad(LegacyResponseHours().ToString("F0") + " h", 17) + "明显缩短");
-        sb.AppendLine("  漏检率            " + Pad("3 %", 20) + Pad(LegacyMissRate().ToString("F0") + " %", 17) + "大幅下降");
-        sb.AppendLine("  改造成本          " + Pad("¥" + expenses.ToString("N0"), 20) + Pad("×" + LegacyCostFactor().ToString("F2"), 17) + "成本更优");
+        sb.AppendLine("  指标              本平台(数字孪生)     传统人工巡检");
+        sb.AppendLine("  隐患消除率        " + Pad(HazardClearRate().ToString("F0") + " %", 20) + Pad("68 %", 17));
+        sb.AppendLine("  平均处置时长      " + Pad((AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " h"), 20) + Pad(LegacyResponseHours().ToString("F0") + " h", 17));
+        sb.AppendLine("  漏检率            " + Pad("3 %", 20) + Pad(LegacyMissRate().ToString("F0") + " %", 17));
+        sb.AppendLine("  改造成本          " + Pad("¥" + expenses.ToString("N0"), 20) + Pad("x" + LegacyCostFactor().ToString("F2"), 17));
         sb.AppendLine();
         sb.AppendLine("四、经营数据");
         sb.AppendLine("  累计改造投入：" + "¥" + expenses.ToString("N0"));
@@ -4921,7 +5051,7 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine();
         sb.AppendLine("五、结论");
         sb.AppendLine("  本平台以传感器实时数据驱动隐患排查与处置，隐患消除率、平均处置时长、");
-        sb.AppendLine("  漏检率等关键指标均优于传统人工巡检方式，实现了改造过程的数据可追溯。");
+        sb.AppendLine("  漏检率等关键指标均优于传统人工巡检方式，改造全过程数据可追溯。");
         sb.AppendLine("==============================================");
         return sb.ToString();
     }
@@ -4932,7 +5062,6 @@ public class KitchenSimulator : MonoBehaviour
         {
             text = string.Empty;
         }
-        // 中文按两个字符宽度估算，保证导出的文本表格对齐
         int displayWidth = 0;
         for (int i = 0; i < text.Length; i++)
         {
