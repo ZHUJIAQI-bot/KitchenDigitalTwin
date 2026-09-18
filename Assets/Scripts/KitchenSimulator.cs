@@ -426,6 +426,7 @@ public class KitchenSimulator : MonoBehaviour
         sun.intensity = sunBaseIntensity;
         sun.color = new Color(1f, 0.96f, 0.86f);
         sun.shadows = LightShadows.Soft;
+        sun.shadowStrength = 0.5f;
         sunObject.transform.rotation = Quaternion.Euler(46f, -38f, 0f);
         sunLight = sun;
         generatedObjects.Add(sunObject);
@@ -797,8 +798,10 @@ public class KitchenSimulator : MonoBehaviour
             sunLight.intensity = Mathf.Lerp(0.1f, sunBaseIntensity, dayFactor);
             Color sunTone = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
             sunLight.color = Color.Lerp(sunTone, new Color(1f, 0.58f, 0.3f), duskWarmth * 0.8f);
-            // 太阳随时间转动
-            sunLight.transform.rotation = Quaternion.Euler(Mathf.Lerp(10f, 150f, 1f - dayFactor), -38f, 0f);
+            // 太阳高度角：正午最高约 62°，晨昏接近地平线约 12°
+            // （Unity 平行光 forward 为 +Z，rotation.x = 90° 才是垂直向下）
+            float sunPitch = Mathf.Lerp(12f, 62f, dayFactor);
+            sunLight.transform.rotation = Quaternion.Euler(sunPitch, -38f, 0f);
         }
         RenderSettings.ambientLight = Color.Lerp(new Color(0.16f, 0.19f, 0.28f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
         RenderSettings.ambientIntensity = Mathf.Lerp(0.55f, 1.1f, dayFactor);
@@ -2374,8 +2377,8 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildIntroDialogue()
     {
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那片老小区，问题一堆，业主催得紧。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "各家的户主会自己上门找你，你听他们说完，单子就记下了。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前按 E 就能开工，干完活记得收费。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "各家的户主会自己到前台来登记，或者打电话预约，单子就记下了。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前，连点几下左键就能开工，干完活记得收费。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙。去吧！" });
     }
 
