@@ -386,6 +386,7 @@ public class KitchenSimulator : MonoBehaviour
         HandleLook();
         HandleMovement();
         HandleDialogue();
+        HandleShopInput();
         UpdateDoors();
         UpdateHomeowners();
         UpdateOrderSpawning();
@@ -2076,7 +2077,8 @@ public class KitchenSimulator : MonoBehaviour
         Outfit outfit = outfits[index];
         if (Cash < outfit.price)
         {
-            ShowToast("现金不足，还差 ¥" + (outfit.price - Cash).ToString("N0"), 3f);
+            ShowToast("现金不足：「" + outfit.name + "」需 ¥" + outfit.price.ToString("N0")
+                + "，当前 ¥" + Cash.ToString("N0") + "，还差 ¥" + (outfit.price - Cash).ToString("N0"), 4f);
             return;
         }
         AddExpense(outfit.price);
@@ -2129,14 +2131,20 @@ public class KitchenSimulator : MonoBehaviour
 
     private void BuyTool(int index)
     {
-        if (index < 0 || index >= tools.Count || tools[index].unlocked)
+        if (index < 0 || index >= tools.Count)
         {
+            return;
+        }
+        if (tools[index].unlocked)
+        {
+            ShowToast("已经拥有「" + tools[index].name + "」了", 2f);
             return;
         }
         ToolInfo tool = tools[index];
         if (Cash < tool.price)
         {
-            ShowToast("现金不足，还差 ¥" + (tool.price - Cash).ToString("N0"), 3f);
+            ShowToast("现金不足：「" + tool.name + "」需 ¥" + tool.price.ToString("N0")
+                + "，当前 ¥" + Cash.ToString("N0") + "，还差 ¥" + (tool.price - Cash).ToString("N0"), 4f);
             return;
         }
         AddExpense(tool.price);
@@ -2635,7 +2643,18 @@ public class KitchenSimulator : MonoBehaviour
             grounded = true;
         }
 
-        Vector3 input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));
+        Vector3 input;
+        if (shopOpen)
+        {
+            // 商店占用方向键，此时移动只认 WASD，避免同一按键既切换商品又移动角色
+            float h = (Input.GetKey(KeyCode.D) ? 1f : 0f) - (Input.GetKey(KeyCode.A) ? 1f : 0f);
+            float v = (Input.GetKey(KeyCode.W) ? 1f : 0f) - (Input.GetKey(KeyCode.S) ? 1f : 0f);
+            input = new Vector3(h, 0f, v);
+        }
+        else
+        {
+            input = new Vector3(Input.GetAxisRaw("Horizontal"), 0f, Input.GetAxisRaw("Vertical"));
+        }
         input = Vector3.ClampMagnitude(input, 1f);
         bool moving = input.sqrMagnitude > 0.01f && !blocked;
 
@@ -3979,25 +3998,6 @@ public class KitchenSimulator : MonoBehaviour
         }
         GUI.Label(new Rect(rect.x + 12f, rect.y + rect.height - 22f, rect.width - 24f, 18f), "←/→ 切分类　↑/↓ 选择　Enter 购买", smallStyle);
 
-        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
-        {
-            shopTab = 1 - shopTab;
-            shopCursor = 0;
-            itemCount = shopTab == 0 ? tools.Count : outfits.Count;
-        }
-        if (Input.GetKeyDown(KeyCode.UpArrow))
-        {
-            shopCursor = (shopCursor - 1 + Mathf.Max(1, itemCount)) % Mathf.Max(1, itemCount);
-        }
-        if (Input.GetKeyDown(KeyCode.DownArrow))
-        {
-            shopCursor = (shopCursor + 1) % Mathf.Max(1, itemCount);
-        }
-        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
-        {
-            ActivateShopItem(shopCursor);
-        }
-
         for (int i = 0; i < itemCount; i++)
         {
             Rect row = new Rect(rect.x + 10f, rect.y + 98f + i * 32f, rect.width - 20f, 28f);
@@ -4055,6 +4055,43 @@ public class KitchenSimulator : MonoBehaviour
                 }
                 GUI.Label(buyOutfit, "购买", cardButtonStyle);
             }
+        }
+    }
+
+    // 商店键盘操作放在 Update 里：OnGUI 每帧会执行多次，从这里读输入会被重复触发
+    private void HandleShopInput()
+    {
+        if (!shopOpen)
+        {
+            return;
+        }
+
+        int itemCount = shopTab == 0 ? tools.Count : outfits.Count;
+
+        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
+        {
+            shopTab = 1 - shopTab;
+            shopCursor = 0;
+            itemCount = shopTab == 0 ? tools.Count : outfits.Count;
+            ShowToast(shopTab == 0 ? "工具店" : "服装店", 1.5f);
+        }
+
+        if (itemCount > 0)
+        {
+            if (Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                shopCursor = (shopCursor - 1 + itemCount) % itemCount;
+            }
+            if (Input.GetKeyDown(KeyCode.DownArrow))
+            {
+                shopCursor = (shopCursor + 1) % itemCount;
+            }
+            shopCursor = Mathf.Clamp(shopCursor, 0, itemCount - 1);
+        }
+
+        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            ActivateShopItem(shopCursor);
         }
     }
 
