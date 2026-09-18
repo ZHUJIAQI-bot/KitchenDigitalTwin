@@ -130,7 +130,7 @@ def build_twisted_tower(name, base_r, top_r, height, twist_deg, sides, mat):
 # ── 东方明珠（按真实参数缩放，S=0.15：468m → 70.2 游戏单位） ──
 def build_sphere_grid(root, name, center_z, radius, grid_mat):
     """球面几何窗格：24 条经线 + 8 条纬线（线框，非贴图）"""
-    fr = 0.2  # 窗框线径（游戏单位，略夸张保证远景可见）
+    fr = 0.32  # 窗框线径（游戏单位，略夸张保证远景可见）
     for i in range(1, 8):
         lat = math.radians(-70.0 + i * 20.0)
         r = radius * math.cos(lat)
@@ -157,8 +157,8 @@ def build_antenna(root, z0, z1, r_bot, r_top, white_mat, red_mat, tip_mat):
 def build_oriental_pearl(root):
     S = 0.15  # 真实米 → 游戏单位
 
-    body = make_material("LJ_Pearl_Body", (0.42, 0.44, 0.47), metallic=0.9, roughness=0.25)
-    grid = make_material("LJ_Pearl_Grid", (0.16, 0.18, 0.19), metallic=0.8, roughness=0.35)
+    body = make_material("LJ_Glow_PearlBody", (0.35, 0.37, 0.42), metallic=0.3, roughness=0.35)
+    grid = make_material("LJ_Pearl_Grid", (0.38, 0.40, 0.45), metallic=0.35, roughness=0.4)
     glow_low = make_material("LJ_Glow_PearlLow", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
                              emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
     glow_high = make_material("LJ_Glow_PearlHigh", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
