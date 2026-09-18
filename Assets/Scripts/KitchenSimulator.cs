@@ -1927,6 +1927,10 @@ public class KitchenSimulator : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.B))
         {
             bagOpen = !bagOpen;
+            if (bagOpen)
+            {
+                shopOpen = false;
+            }
         }
         if (Input.GetKeyDown(KeyCode.M))
         {
@@ -1935,6 +1939,10 @@ public class KitchenSimulator : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.G))
         {
             shopOpen = !shopOpen;
+            if (shopOpen)
+            {
+                bagOpen = false;   // 两个面板同位置，互斥
+            }
         }
         if (Input.GetKeyDown(KeyCode.N))
         {
@@ -3613,13 +3621,14 @@ public class KitchenSimulator : MonoBehaviour
     }
     private Rect PromptRect { get { return new Rect(16f, Screen.height - 152f, 430f, 112f); } }
     private Rect ToolChipRect { get { return new Rect(16f, Screen.height - 196f, 340f, 36f); } }
-    private Rect BagRect { get { return new Rect(16f, 146f, 288f, 56f + tools.Count * 32f); } }
+    private Rect BagRect { get { return new Rect(16f, 146f, 300f, 56f + tools.Count * 32f); } }
     private Rect ShopRect
     {
         get
         {
             int rows = Mathf.Max(tools.Count, outfits.Count);
-            return new Rect(316f, 146f, 322f, shopOpen ? (122f + rows * 32f) : 60f);
+            // 与工具包同一列、固定在屏幕最左侧，收起后完全隐藏（参考日历浮层）
+            return new Rect(16f, 146f, 330f, 122f + rows * 32f);
         }
     }
     private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
@@ -3933,6 +3942,11 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        if (!shopOpen)
+        {
+            return;   // 收起后完全不出现，不占屏幕
+        }
+
         Rect rect = ShopRect;
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), fixedColor);
@@ -3944,14 +3958,9 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(toggle, hoverToggle ? Color.Lerp(btnBlue, Color.white, 0.15f) : btnBlue, Color.clear);
         if (GUI.Button(toggle, GUIContent.none, GUIStyle.none))
         {
-            shopOpen = !shopOpen;
+            shopOpen = false;
         }
-        GUI.Label(toggle, shopOpen ? "收起" : "展开", cardButtonStyle);
-
-        if (!shopOpen)
-        {
-            return;
-        }
+        GUI.Label(toggle, "收起", cardButtonStyle);
 
         string[] tabs = { "工具店", "服装店" };
         int itemCount = shopTab == 0 ? tools.Count : outfits.Count;
@@ -4320,7 +4329,7 @@ public class KitchenSimulator : MonoBehaviour
         Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
         return BudgetRect.Contains(point) || TaskListRect.Contains(point) || MinimapRect.Contains(point)
             || PromptRect.Contains(point) || ToolChipRect.Contains(point)
-            || (bagOpen && BagRect.Contains(point)) || ShopRect.Contains(point)
+            || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
             || (almanacOpen && AlmanacRect.Contains(point));
     }
 
