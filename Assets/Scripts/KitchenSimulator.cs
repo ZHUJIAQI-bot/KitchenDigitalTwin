@@ -267,6 +267,11 @@ public class KitchenSimulator : MonoBehaviour
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
     private int guideStep;               // 新手引导步骤
+    private bool thirdPerson;            // 第三人称视角
+    private Transform playerHead;
+    private Renderer[] playerHeadRenderers;
+    private bool headVisible = true;
+    private const float ThirdPersonDistance = 3.8f;
     private float panelFade;             // 面板展开动效
 
     // 门
@@ -294,6 +299,9 @@ public class KitchenSimulator : MonoBehaviour
     private float voiceTimer;
     private float voiceBurst;
     private ParticleSystem dustEffect;
+    private AudioSource ambientSource;
+    private AudioSource musicSource;
+    private bool audioMuted;
     private AudioSource workSource;
     private AudioClip workClip;   // 当前这句还剩多久发声，到 0 就安静下来
     private float stepTimer;
@@ -2260,6 +2268,16 @@ public class KitchenSimulator : MonoBehaviour
         {
             twinPanelOpen = !twinPanelOpen;
         }
+        if (Input.GetKeyDown(KeyCode.P))
+        {
+            ToggleMute();
+        }
+        if (Input.GetKeyDown(KeyCode.V))
+        {
+            thirdPerson = !thirdPerson;
+            SetHeadVisible(thirdPerson);
+            ShowToast(thirdPerson ? "第三人称视角（V 切回第一人称）" : "第一人称视角", 2.5f);
+        }
         if (Input.GetKeyDown(KeyCode.R) && dialogueIndex < 0)
         {
             RestUntilMorning();
@@ -2291,8 +2309,44 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         player.transform.rotation = Quaternion.Euler(0f, lookYaw, 0f);
-        viewCamera.transform.position = playerPosition + Vector3.up * EyeHeight;
         viewCamera.transform.rotation = Quaternion.Euler(lookPitch, lookYaw, 0f);
+
+        if (thirdPerson)
+        {
+            // 第三人称：相机在角色身后，遇到墙自动拉近
+            Vector3 dir = Quaternion.Euler(lookPitch, lookYaw, 0f) * Vector3.forward;
+            Vector3 pivot = playerPosition + Vector3.up * 1.45f;
+            float distance = ThirdPersonDistance;
+            for (float d = 0.6f; d <= ThirdPersonDistance; d += 0.3f)
+            {
+                if (Collides(pivot - dir * d, true))
+                {
+                    distance = Mathf.Max(0.8f, d - 0.4f);
+                    break;
+                }
+            }
+            viewCamera.transform.position = pivot - dir * distance;
+        }
+        else
+        {
+            viewCamera.transform.position = playerPosition + Vector3.up * EyeHeight;
+        }
+    }
+
+    private void SetHeadVisible(bool visible)
+    {
+        if (headVisible == visible || playerHeadRenderers == null)
+        {
+            return;
+        }
+        headVisible = visible;
+        for (int i = 0; i < playerHeadRenderers.Length - 1; i++)
+        {
+            if (playerHeadRenderers[i] != null)
+            {
+                playerHeadRenderers[i].enabled = visible;   // 头部/安全帽/反光背心
+            }
+        }
     }
 
     private void SetCursorLock(bool locked)
@@ -2583,6 +2637,27 @@ public class KitchenSimulator : MonoBehaviour
         rightLegPivot.localPosition = new Vector3(0.13f, 0.68f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Right Leg", rightLegPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.16f, 0.56f, 0.16f), Quaternion.identity, legMaterial);
 
+        // 头部（第一人称隐藏、第三人称显示）
+        GameObject head = MakePrimitive(PrimitiveType.Cube, "Player Head", player.transform, new Vector3(0f, 1.36f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        GameObject helmet = MakePrimitive(PrimitiveType.Cube, "Player Helmet", player.transform, new Vector3(0f, 1.56f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f));
+        GameObject vest = MakePrimitive(PrimitiveType.Cube, "Player Vest", player.transform, new Vector3(0f, 0.92f, -0.19f), new Vector3(0.36f, 0.6f, 0.05f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.6f, 0.15f), 0.05f, 0.4f));
+        GameObject waist = MakePrimitive(PrimitiveType.Cube, "Player Waist", player.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, playerClothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Player Neck", player.transform, new Vector3(0f, 1.24f, 0f), new Vector3(0.12f, 0.1f, 0.12f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        MakePrimitive(PrimitiveType.Cube, "Player Shoulder L", player.transform, new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, playerClothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Player Shoulder R", player.transform, new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, playerClothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Player Hand L", leftArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        MakePrimitive(PrimitiveType.Cube, "Player Hand R", rightArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        playerClothRenderers.Add(waist.GetComponent<Renderer>());
+        playerHead = head.transform;
+        playerHeadRenderers = new[]
+        {
+            head.GetComponent<Renderer>(),
+            helmet.GetComponent<Renderer>(),
+            vest.GetComponent<Renderer>(),
+            torso.GetComponent<Renderer>()
+        };
+        SetHeadVisible(false);
+
         BuildOutfits();
         BuildViewmodel();
     }
@@ -2853,6 +2928,22 @@ public class KitchenSimulator : MonoBehaviour
         workSource.spatialBlend = 0f;
         workClip = CreateWorkClip();
 
+        ambientSource = player.AddComponent<AudioSource>();
+        ambientSource.playOnAwake = false;
+        ambientSource.spatialBlend = 0f;
+        ambientSource.loop = true;
+        ambientSource.volume = 0.35f;
+        ambientSource.clip = CreateAmbientClip();
+        ambientSource.Play();
+
+        musicSource = player.AddComponent<AudioSource>();
+        musicSource.playOnAwake = false;
+        musicSource.spatialBlend = 0f;
+        musicSource.loop = true;
+        musicSource.volume = 0.28f;
+        musicSource.clip = CreateMusicClip();
+        musicSource.Play();
+
         footstepClip = CreateFootstepClip();
         voiceBlips = new AudioClip[5];
         float[] freqs = { 210f, 245f, 280f, 320f, 175f };
@@ -2919,6 +3010,73 @@ public class KitchenSimulator : MonoBehaviour
             workSource.pitch = Random.Range(0.9f, 1.15f);
             workSource.PlayOneShot(workClip, 0.55f);
         }
+    }
+
+    // 环境音：低沉风声（滤波噪声），12 秒循环
+    private static AudioClip CreateAmbientClip()
+    {
+        const int rate = 22050;
+        int length = rate * 12;
+        float[] data = new float[length];
+        System.Random rng = new System.Random(909);
+        float low = 0f;
+        for (int i = 0; i < length; i++)
+        {
+            float white = (float)rng.NextDouble() * 2f - 1f;
+            low += (white - low) * 0.008f;                 // 一阶低通 → 风声
+            float swell = 0.6f + 0.4f * Mathf.Sin(i / (float)rate * 0.28f);
+            data[i] = low * swell * 1.6f;
+        }
+        AudioClip clip = AudioClip.Create("Ambient", length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    // BGM：C-Am-F-G 四和弦缓慢铺垫，16 秒循环
+    private static AudioClip CreateMusicClip()
+    {
+        const int rate = 22050;
+        const float chordSeconds = 4f;
+        float[] roots = { 130.81f, 110.00f, 87.31f, 98.00f };   // C3 A2 F2 G2
+        int[] thirds = { 4, 3, 4, 4 };                          // 大三/小三度
+        int length = (int)(rate * chordSeconds * roots.Length);
+        float[] data = new float[length];
+        for (int c = 0; c < roots.Length; c++)
+        {
+            int start = (int)(c * chordSeconds * rate);
+            int count = (int)(chordSeconds * rate);
+            for (int i = 0; i < count && start + i < length; i++)
+            {
+                float t = i / (float)rate;
+                // 每和弦内缓慢起落，避免爆音
+                float env = Mathf.Sin(Mathf.Clamp01(t / chordSeconds) * Mathf.PI);
+                float root = roots[c];
+                float third = root * Mathf.Pow(2f, thirds[c] / 12f);
+                float fifth = root * Mathf.Pow(2f, 7f / 12f);
+                float sample =
+                    Mathf.Sin(2f * Mathf.PI * root * t) * 0.5f +
+                    Mathf.Sin(2f * Mathf.PI * third * t) * 0.32f +
+                    Mathf.Sin(2f * Mathf.PI * fifth * t) * 0.28f;
+                data[start + i] += sample * env * 0.16f;
+            }
+        }
+        AudioClip clip = AudioClip.Create("Music", length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    private void ToggleMute()
+    {
+        audioMuted = !audioMuted;
+        if (ambientSource != null)
+        {
+            ambientSource.mute = audioMuted;
+        }
+        if (musicSource != null)
+        {
+            musicSource.mute = audioMuted;
+        }
+        ShowToast(audioMuted ? "已静音（P 恢复）" : "声音已开启", 2.5f);
     }
 
     // 施工音：短促冲击 + 噪声，模拟敲击/钻削
@@ -3019,19 +3177,26 @@ public class KitchenSimulator : MonoBehaviour
         Material trouserMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
         Material helmetMaterial = MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f);
 
-        Transform body = MakePrimitive(PrimitiveType.Cube, "Torso", root.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, clothMaterial).transform;
-        MakePrimitive(PrimitiveType.Cube, "Head", body, new Vector3(0f, 0.52f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Helmet", body, new Vector3(0f, 0.72f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
+        // 躯干分胸/腰两段，比例更像人
+        Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.48f, 0.44f, 0.3f), Quaternion.identity, clothMaterial).transform;
+        MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Neck", body, new Vector3(0f, -0.27f, 0f), new Vector3(0.12f, 0.1f, 0.12f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Head", body, new Vector3(0f, 0.4f, 0f), new Vector3(0.3f, 0.3f, 0.3f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Helmet", body, new Vector3(0f, 0.58f, 0f), new Vector3(0.38f, 0.09f, 0.38f), Quaternion.identity, helmetMaterial);
 
         Transform leftArm = new GameObject("Left Arm Pivot").transform;
         leftArm.SetParent(root.transform, false);
         leftArm.localPosition = new Vector3(-0.34f, 1.12f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.62f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
 
         Transform rightArm = new GameObject("Right Arm Pivot").transform;
         rightArm.SetParent(root.transform, false);
         rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.3f, 0f), new Vector3(0.14f, 0.6f, 0.14f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.62f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
 
         // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
         Transform leftLeg = new GameObject("Left Leg Pivot").transform;
@@ -3042,6 +3207,7 @@ public class KitchenSimulator : MonoBehaviour
         leftKnee.SetParent(leftLeg, false);
         leftKnee.localPosition = new Vector3(0f, -0.3f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Shin", leftKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Foot", leftKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, trouserMaterial);
 
         Transform rightLeg = new GameObject("Right Leg Pivot").transform;
         rightLeg.SetParent(root.transform, false);
@@ -3051,6 +3217,7 @@ public class KitchenSimulator : MonoBehaviour
         rightKnee.SetParent(rightLeg, false);
         rightKnee.localPosition = new Vector3(0f, -0.3f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Shin", rightKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Foot", rightKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, trouserMaterial);
 
         Collider[] colliders = root.GetComponentsInChildren<Collider>();
         for (int i = 0; i < colliders.Length; i++)
@@ -3497,6 +3664,12 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         UpdateTool();
+
+        // 第三人称下隐藏第一人称手持模型
+        if (toolPivot != null)
+        {
+            toolPivot.gameObject.SetActive(!thirdPerson);
+        }
     }
 
     // 施工时工具来回作业，平时随步伐轻微晃动
@@ -5691,7 +5864,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
     }
 
     private void DrawToast()
