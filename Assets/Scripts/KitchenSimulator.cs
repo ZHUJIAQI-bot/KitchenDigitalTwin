@@ -3529,36 +3529,187 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 工单模板与派单 ────────────────────────────────────
-    // 隐患 → 对应工程规范与材料清单（提升工程可信度）
-    private static readonly Dictionary<string, string[]> Compliance = new Dictionary<string, string[]>
+    // ── 工程数据：执行规范 + 材料清单（含真实市场参考价）+ 人工工时 ──
+    // 改造成本 = (材料费 × 1.15 材料损耗) + 人工工时 × 人工单价，再计 15% 管理费
+    private const int LaborRate = 65;        // 人工单价（元/工时，参考 2025 年一二线城市装修人工）
+
+    private class MaterialItem
     {
-        { "水槽下方渗漏",   new[] { "GB 50015《建筑给水排水设计标准》",       "角阀×2、存水弯×1、防水托盘×1、防潮垫层 1.2㎡" } },
-        { "灶台燃气管老化", new[] { "GB 50028《城镇燃气设计规范》",           "不锈钢波纹管×1、燃气专用接头×2、密封垫×4" } },
-        { "橱柜门板变形",   new[] { "GB/T 3324《木家具通用技术条件》",         "防潮柜门×1、液压铰链×2、封边条×4m" } },
-        { "冰箱插座接触不良", new[] { "GB 50096《住宅设计规范》",             "16A 插座面板×1、暗盒×1、4mm² 铜芯线×3m" } },
-        { "地面瓷砖空鼓",   new[] { "GB 50209《建筑地面工程施工质量验收规范》", "同色地砖×6、瓷砖胶 20kg、美缝剂×1" } },
-        { "沙发背景墙开裂", new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "耐水腻子 15kg、玻纤网格布 2㎡、底漆面漆各 5kg" } },
-        { "电视线缆外露",   new[] { "GB 50303《建筑电气工程施工质量验收规范》", "PVC 线槽 3m、扎带若干、线缆标识×1套" } },
-        { "吊顶灯带脱落",   new[] { "GB 50303《建筑电气工程施工质量验收规范》", "灯带卡扣×8、LED 灯带 2m、接线端子×4" } },
-        { "木门变形关不严", new[] { "GB/T 3324《木家具通用技术条件》",         "门铰链×3、防潮封边条 5m、木器漆 1kg" } },
-        { "墙面返潮发霉",   new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "外墙防水涂料 20kg、耐水腻子 20kg、防霉底漆 5kg" } },
-        { "衣柜滑轨卡顿",   new[] { "GB/T 3324《木家具通用技术条件》",         "三节滑轨×2、自攻螺丝×24、润滑脂×1" } },
-        { "床头插座松动",   new[] { "GB 50096《住宅设计规范》",               "五孔插座×1、暗盒加固件×1、绝缘胶带×1" } },
-        { "地漏返味",       new[] { "GB 50015《建筑给水排水设计标准》",       "防臭地漏芯×1、密封胶 1支、存水弯×1" } },
-        { "墙面瓷砖空鼓",   new[] { "GB 50210《建筑装饰装修工程质量验收标准》", "同色墙砖×8、瓷砖胶 15kg、防水涂料 5kg" } },
-        { "马桶底座渗水",   new[] { "GB 50015《建筑给水排水设计标准》",       "法兰密封圈×1、防霉硅酮胶×1、膨胀螺栓×2" } },
+        public string name;
+        public float qty;
+        public string unit;
+        public int unitPrice;   // 元
+
+        public MaterialItem(string name, float qty, string unit, int unitPrice)
+        {
+            this.name = name;
+            this.qty = qty;
+            this.unit = unit;
+            this.unitPrice = unitPrice;
+        }
+
+        public int Cost { get { return Mathf.RoundToInt(qty * unitPrice); } }
+    }
+
+    private class SpecSheet
+    {
+        public string standard;
+        public float laborHours;
+        public MaterialItem[] items;
+    }
+
+    private static readonly Dictionary<string, SpecSheet> Specs = new Dictionary<string, SpecSheet>
+    {
+        { "水槽下方渗漏", new SpecSheet { standard = "GB 50015《建筑给水排水设计标准》", laborHours = 4f, items = new[] {
+            new MaterialItem("角阀", 2, "只", 48), new MaterialItem("存水弯", 1, "套", 68),
+            new MaterialItem("防水托盘", 1, "个", 90), new MaterialItem("防潮垫层", 1.5f, "㎡", 28) } } },
+
+        { "灶台燃气管老化", new SpecSheet { standard = "GB 50028《城镇燃气设计规范》", laborHours = 3f, items = new[] {
+            new MaterialItem("不锈钢波纹管", 1, "根", 120), new MaterialItem("燃气专用接头", 2, "个", 35),
+            new MaterialItem("密封垫", 4, "片", 8), new MaterialItem("气密性检测", 1, "次", 150) } } },
+
+        { "橱柜门板变形", new SpecSheet { standard = "GB/T 3324《木家具通用技术条件》", laborHours = 3f, items = new[] {
+            new MaterialItem("防潮柜门", 1, "扇", 380), new MaterialItem("液压铰链", 2, "个", 45),
+            new MaterialItem("封边条", 4, "m", 12) } } },
+
+        { "冰箱插座接触不良", new SpecSheet { standard = "GB 50096《住宅设计规范》", laborHours = 2f, items = new[] {
+            new MaterialItem("16A 插座面板", 1, "个", 65), new MaterialItem("暗盒", 1, "个", 15),
+            new MaterialItem("4mm² 铜芯线", 3, "m", 18) } } },
+
+        { "地面瓷砖空鼓", new SpecSheet { standard = "GB 50209《建筑地面工程施工质量验收规范》", laborHours = 5f, items = new[] {
+            new MaterialItem("同色地砖", 6, "片", 85), new MaterialItem("瓷砖胶", 1, "袋", 55),
+            new MaterialItem("美缝剂", 1, "支", 45) } } },
+
+        { "沙发背景墙开裂", new SpecSheet { standard = "GB 50210《建筑装饰装修工程质量验收标准》", laborHours = 6f, items = new[] {
+            new MaterialItem("耐水腻子", 15, "kg", 3), new MaterialItem("玻纤网格布", 2, "㎡", 12),
+            new MaterialItem("底漆", 5, "kg", 28), new MaterialItem("面漆", 5, "kg", 32) } } },
+
+        { "电视线缆外露", new SpecSheet { standard = "GB 50303《建筑电气工程施工质量验收规范》", laborHours = 1.5f, items = new[] {
+            new MaterialItem("PVC 线槽", 3, "m", 18), new MaterialItem("扎带", 1, "包", 12),
+            new MaterialItem("线缆标识", 1, "套", 25) } } },
+
+        { "吊顶灯带脱落", new SpecSheet { standard = "GB 50303《建筑电气工程施工质量验收规范》", laborHours = 2f, items = new[] {
+            new MaterialItem("灯带卡扣", 8, "个", 6), new MaterialItem("LED 灯带", 2, "m", 28),
+            new MaterialItem("接线端子", 4, "个", 5) } } },
+
+        { "木门变形关不严", new SpecSheet { standard = "GB/T 3324《木家具通用技术条件》", laborHours = 3f, items = new[] {
+            new MaterialItem("门铰链", 3, "个", 35), new MaterialItem("防潮封边条", 5, "m", 12),
+            new MaterialItem("木器漆", 1, "kg", 85) } } },
+
+        { "墙面返潮发霉", new SpecSheet { standard = "GB 50210《建筑装饰装修工程质量验收标准》", laborHours = 8f, items = new[] {
+            new MaterialItem("外墙防水涂料", 20, "kg", 18), new MaterialItem("耐水腻子", 20, "kg", 3),
+            new MaterialItem("防霉底漆", 5, "kg", 32) } } },
+
+        { "衣柜滑轨卡顿", new SpecSheet { standard = "GB/T 3324《木家具通用技术条件》", laborHours = 1.5f, items = new[] {
+            new MaterialItem("三节滑轨", 2, "套", 85), new MaterialItem("自攻螺丝", 24, "个", 1),
+            new MaterialItem("润滑脂", 1, "支", 25) } } },
+
+        { "床头插座松动", new SpecSheet { standard = "GB 50096《住宅设计规范》", laborHours = 1f, items = new[] {
+            new MaterialItem("五孔插座", 1, "个", 48), new MaterialItem("暗盒加固件", 1, "套", 20),
+            new MaterialItem("绝缘胶带", 1, "卷", 8) } } },
+
+        { "地漏返味", new SpecSheet { standard = "GB 50015《建筑给水排水设计标准》", laborHours = 2f, items = new[] {
+            new MaterialItem("防臭地漏芯", 1, "个", 45), new MaterialItem("密封胶", 1, "支", 28),
+            new MaterialItem("存水弯", 1, "套", 68) } } },
+
+        { "墙面瓷砖空鼓", new SpecSheet { standard = "GB 50210《建筑装饰装修工程质量验收标准》", laborHours = 5f, items = new[] {
+            new MaterialItem("同色墙砖", 8, "片", 45), new MaterialItem("瓷砖胶", 1, "袋", 55),
+            new MaterialItem("防水涂料", 5, "kg", 22) } } },
+
+        { "马桶底座渗水", new SpecSheet { standard = "GB 50015《建筑给水排水设计标准》", laborHours = 2f, items = new[] {
+            new MaterialItem("法兰密封圈", 1, "个", 55), new MaterialItem("防霉硅酮胶", 1, "支", 35),
+            new MaterialItem("膨胀螺栓", 2, "个", 8) } } },
     };
+
+    private static SpecSheet SpecOf(string title)
+    {
+        SpecSheet spec;
+        return Specs.TryGetValue(title, out spec) ? spec : null;
+    }
 
     private static string StandardOf(Order order)
     {
-        string[] info;
-        return Compliance.TryGetValue(order.title, out info) ? info[0] : "—";
+        SpecSheet spec = SpecOf(order.title);
+        return spec == null ? "—" : spec.standard;
+    }
+
+    // 按真实材料单价核算造价：材料费×1.15(损耗) + 人工费，再计 15% 管理费
+    private static int QuoteCost(string title)
+    {
+        SpecSheet spec = SpecOf(title);
+        if (spec == null)
+        {
+            return 1000;
+        }
+        float material = 0f;
+        for (int i = 0; i < spec.items.Length; i++)
+        {
+            material += spec.items[i].Cost;
+        }
+        float labor = spec.laborHours * LaborRate;
+        return Mathf.RoundToInt((material * 1.15f + labor) * 1.15f / 10f) * 10;
+    }
+
+    // 造价构成：材料费(含 15% 损耗) / 人工费 / 管理费
+    private static void CostBreakdown(string title, out int materialCost, out int laborCost, out int manageCost)
+    {
+        SpecSheet spec = SpecOf(title);
+        if (spec == null)
+        {
+            materialCost = 0;
+            laborCost = 0;
+            manageCost = 0;
+            return;
+        }
+        float material = 0f;
+        for (int i = 0; i < spec.items.Length; i++)
+        {
+            material += spec.items[i].Cost;
+        }
+        materialCost = Mathf.RoundToInt(material * 1.15f);
+        laborCost = Mathf.RoundToInt(spec.laborHours * LaborRate);
+        manageCost = Mathf.RoundToInt((materialCost + laborCost) * 0.15f);
+    }
+
+    // 材料清单（带单价），用于面板与报告展示
+    private static string PricedMaterials(string title)
+    {
+        SpecSheet spec = SpecOf(title);
+        if (spec == null)
+        {
+            return "—";
+        }
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        for (int i = 0; i < spec.items.Length; i++)
+        {
+            MaterialItem item = spec.items[i];
+            if (i > 0)
+            {
+                sb.Append("　");
+            }
+            sb.Append(item.name).Append(" ").Append(item.qty.ToString("0.#")).Append(item.unit)
+              .Append(" ¥").Append(item.Cost);
+        }
+        return sb.ToString();
     }
 
     private static string MaterialsOf(Order order)
     {
-        string[] info;
-        return Compliance.TryGetValue(order.title, out info) ? info[1] : "—";
+        SpecSheet spec = SpecOf(order.title);
+        if (spec == null)
+        {
+            return "—";
+        }
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        for (int i = 0; i < spec.items.Length; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append("、");
+            }
+            sb.Append(spec.items[i].name).Append("×").Append(spec.items[i].qty.ToString("0.#")).Append(spec.items[i].unit);
+        }
+        return sb.ToString();
     }
 
     private void InitializeOrders()
@@ -3773,7 +3924,8 @@ public class KitchenSimulator : MonoBehaviour
         Vector3 site = room.center + template.offset;
         site.y = 0f;
 
-        int cost = Mathf.RoundToInt(Random.Range(template.costMin, template.costMax + 1) / 100f) * 100;
+        // 造价按材料清单与人工工时核算，不再是随机数
+        int cost = QuoteCost(template.title);
         Order order = new Order
         {
             id = ++orderSerial,
@@ -5196,10 +5348,12 @@ public class KitchenSimulator : MonoBehaviour
                 "验收判据：读数低于阈值 " + focus.sensorAlarm.ToString("F1") + focus.sensorUnit
                 + " 并持续 " + ObserveHours.ToString("F0") + " 小时　→　"
                 + (focus.verified ? "已闭环" : (focus.state == OrderState.Fixed ? "观察期中" : "未验收")), smallStyle);
-            GUI.Label(new Rect(rx, dy + 114f, 420f, 18f),
-                "费用构成：材料费 ¥" + Mathf.RoundToInt(focus.cost * 0.45f).ToString("N0")
-                + "　人工费 ¥" + Mathf.RoundToInt(focus.cost * 0.40f).ToString("N0")
-                + "　管理费 ¥" + Mathf.RoundToInt(focus.cost * 0.15f).ToString("N0"), smallStyle);
+            int matCost, labCost, manCost;
+            CostBreakdown(focus.title, out matCost, out labCost, out manCost);
+            GUI.Label(new Rect(rx, dy + 114f, 430f, 18f),
+                "费用构成：材料 ¥" + matCost.ToString("N0") + "　人工 ¥" + labCost.ToString("N0")
+                + "　管理 ¥" + manCost.ToString("N0") + "　合计 ¥" + focus.cost.ToString("N0"), smallStyle);
+            GUI.Label(new Rect(rx, dy + 136f, 430f, 18f), "材料明细：" + PricedMaterials(focus.title), smallStyle);
         }
 
         // ── KPI 与对比 ──
@@ -5276,13 +5430,15 @@ public class KitchenSimulator : MonoBehaviour
             sb.AppendLine("        传感器：" + o.sensorName + "  当前 " + o.sensorValue.ToString("F1") + o.sensorUnit
                 + "  报警阈值 >" + o.sensorAlarm.ToString("F1") + o.sensorUnit);
             sb.AppendLine("        执行规范：" + StandardOf(o));
-            sb.AppendLine("        材料清单：" + MaterialsOf(o));
+            sb.AppendLine("        材料清单：" + PricedMaterials(o.title));
             if (o.state == OrderState.Fixed)
             {
+                int mc, lc, gc;
+                CostBreakdown(o.title, out mc, out lc, out gc);
                 sb.AppendLine("        处置状态：已消除　经费 ¥" + o.cost.ToString("N0")
-                    + "（材料 ¥" + Mathf.RoundToInt(o.cost * 0.45f).ToString("N0")
-                    + " / 人工 ¥" + Mathf.RoundToInt(o.cost * 0.40f).ToString("N0")
-                    + " / 管理 ¥" + Mathf.RoundToInt(o.cost * 0.15f).ToString("N0") + "）");
+                    + "（材料 ¥" + mc.ToString("N0") + " / 人工 " + lc.ToString("N0")
+                    + " / 管理 " + gc.ToString("N0") + "）");
+                sb.AppendLine("        验收：" + (o.verified ? "已闭环" : "观察期中"));
                 sb.AppendLine("        处置方案：" + o.plan);
             }
             else
@@ -5298,6 +5454,9 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  平均处置时长      " + Pad((AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " h"), 20) + Pad(LegacyResponseHours().ToString("F0") + " h", 17));
         sb.AppendLine("  漏检率            " + Pad("3 %", 20) + Pad(LegacyMissRate().ToString("F0") + " %", 17));
         sb.AppendLine("  改造成本          " + Pad("¥" + expenses.ToString("N0"), 20) + Pad("x" + LegacyCostFactor().ToString("F2"), 17));
+        sb.AppendLine();
+        sb.AppendLine("  造价核算依据：材料费按市场参考单价计列并计 15% 损耗，");
+        sb.AppendLine("  人工费按 " + LaborRate + " 元/工时计取，另计 15% 管理费。");
         sb.AppendLine();
         sb.AppendLine("四、经营数据");
         sb.AppendLine("  累计改造投入：" + "¥" + expenses.ToString("N0"));
