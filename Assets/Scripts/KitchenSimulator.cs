@@ -65,6 +65,8 @@ public class KitchenSimulator : MonoBehaviour
         public float alarmTime;        // 首次报警时刻（用于统计响应时长）
         public readonly List<float> history = new List<float>();   // 最近采样，用于趋势曲线
         public float fixTime;          // 数据回归正常的时刻
+        public float normalSince;      // 读数持续正常的起点
+        public bool verified;          // 是否通过验收观察期（闭环）
 
         public string Code { get { return "#" + id.ToString("D3"); } }
         public string ScheduleText { get { return "第" + schedDay + "天 " + schedHour.ToString("D2") + ":00"; } }
@@ -1070,6 +1072,7 @@ public class KitchenSimulator : MonoBehaviour
 
     // 传感器实时数据仿真：报警值带噪声波动；改造完成后回落到正常值
     private float sampleTimer;
+    private const float ObserveHours = 1f;   // 验收观察期（游戏小时）
 
     private void UpdateSensors()
     {
@@ -1107,6 +1110,30 @@ public class KitchenSimulator : MonoBehaviour
                 && Mathf.Abs(order.sensorValue - order.sensorNormal) < Mathf.Max(0.05f, order.sensorAlarm * 0.08f))
             {
                 order.fixTime = gameTime;
+                order.normalSince = gameTime;
+            }
+
+            // 验收判据：读数稳定低于报警阈值并持续 OBSERVE_HOURS 游戏小时 → 判定闭环
+            if (fixedOrder && !order.verified && order.fixTime > 0f)
+            {
+                if (order.sensorValue < order.sensorAlarm)
+                {
+                    if (order.normalSince <= 0f)
+                    {
+                        order.normalSince = gameTime;
+                    }
+                    if ((gameTime - order.normalSince) / RealSecondsPerGameHour >= ObserveHours)
+                    {
+                        order.verified = true;
+                        ShowToast("闭环验收通过 · " + order.Code + " " + order.room
+                            + "　读数稳定低于阈值 " + ObserveHours.ToString("F0") + " 小时", 5f);
+                        SaveGame();
+                    }
+                }
+                else
+                {
+                    order.normalSince = 0f;   // 数据反弹则重新计时
+                }
             }
         }
     }
@@ -2244,6 +2271,59 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
+    // ── 存档（按账户保存经营数据）────────────────────────
+    private void SaveGame()
+    {
+        if (string.IsNullOrEmpty(currentAccount) || currentAccount == "游客")
+        {
+            return;
+        }
+        string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
+        // 格式：收入|支出|游戏时间|工单序号|已消除|已闭环
+        string value = income + "|" + expenses + "|" + gameTime.ToString("F2") + "|" + orderSerial
+            + "|" + CountFixed() + "|" + CountVerified();
+        PlayerPrefs.SetString(key, value);
+        PlayerPrefs.Save();
+    }
+
+    private void LoadGame()
+    {
+        if (string.IsNullOrEmpty(currentAccount) || currentAccount == "游客")
+        {
+            return;
+        }
+        string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
+        if (!PlayerPrefs.HasKey(key))
+        {
+            return;
+        }
+        string[] parts = PlayerPrefs.GetString(key).Split('|');
+        if (parts.Length < 6)
+        {
+            return;
+        }
+        int savedIncome, savedExpense, savedSerial;
+        float savedTime;
+        int.TryParse(parts[0], out savedIncome);
+        int.TryParse(parts[1], out savedExpense);
+        float.TryParse(parts[2], out savedTime);
+        int.TryParse(parts[3], out savedSerial);
+
+        income = savedIncome;
+        expenses = savedExpense;
+        if (savedTime > 0f)
+        {
+            gameTime = savedTime;
+            lastDay = DayIndex;
+            lastPaidMonth = GameMonth;
+        }
+        if (savedSerial > orderSerial)
+        {
+            orderSerial = savedSerial;
+        }
+        ShowToast("已载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0"), 5f);
+    }
+
     private void EnterGame(string accountName)
     {
         currentAccount = accountName;
@@ -2252,8 +2332,9 @@ public class KitchenSimulator : MonoBehaviour
         {
             AccountStore.UpdateAppearance(accountName, custCoat, custTrouser);
         }
+        LoadGame();
         SetCursorLock(true);
-        ShowToast("欢迎，" + accountName + "　·　按 B 看工具包，G 开商店，N 看日历账目", 7f);
+        ShowToast("欢迎，" + accountName + "　·　按 T 打开数字孪生监测平台", 6f);
     }
 
     private void TryLogin()
@@ -4138,6 +4219,7 @@ public class KitchenSimulator : MonoBehaviour
         repairingOrder = null;
         activeOrder = null;
         repairClicks = 0;
+        SaveGame();
     }
 
     private void StartRepair(Order order)
@@ -4560,7 +4642,11 @@ public class KitchenSimulator : MonoBehaviour
         {
             return "维修中 " + Mathf.RoundToInt(order.repairProgress * 100f) + "%";
         }
-        return order.state == OrderState.Fixed ? "已完工" : "待维修";
+        if (order.state != OrderState.Fixed)
+        {
+            return "待维修";
+        }
+        return order.verified ? "已闭环" : "观察期";
     }
 
     private Color StateTextColor(Order order)
@@ -4906,7 +4992,7 @@ public class KitchenSimulator : MonoBehaviour
             int alarms = AlarmCount();
             Fill(new Rect(bar.x + 12f, bar.y + 11f, 4f, 20f), alarms > 0 ? pendingColor : fixedColor);
             GUI.Label(new Rect(bar.x + 24f, bar.y + 10f, 250f, 22f),
-                "数字孪生监测　·　报警 " + alarms + " 个　·　已消除 " + CountFixed() + "/" + orders.Count, smallStyle);
+                "数字孪生监测　·　报警 " + alarms + " 个　·　已消除 " + CountFixed() + "/" + orders.Count + "　·　已闭环 " + CountVerified(), smallStyle);
 
             Rect expand = new Rect(bar.x + bar.width - 84f, bar.y + 8f, 72f, 26f);
             bool hoverExpand = expand.Contains(Event.current.mousePosition);
@@ -4944,6 +5030,7 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(rect.x + 268f, top + 28f, 110f, 18f), "实时值", smallStyle);
         GUI.Label(new Rect(rect.x + 388f, top + 28f, 90f, 18f), "报警阈值", smallStyle);
         GUI.Label(new Rect(rect.x + 486f, top + 28f, 90f, 18f), "状态", smallStyle);
+        GUI.Label(new Rect(rect.x + 566f, top + 28f, 100f, 18f), "验收", smallStyle);
 
         int shown = 0;
         for (int i = 0; i < orders.Count && shown < 6; i++)
@@ -4972,6 +5059,7 @@ public class KitchenSimulator : MonoBehaviour
             GUI.Label(new Rect(rect.x + 388f, ry, 90f, 18f), "> " + order.sensorAlarm.ToString("F1"), smallStyle);
             GUI.color = stateColor;
             GUI.Label(new Rect(rect.x + 486f, ry, 90f, 18f), stateText, smallStyle);
+            GUI.Label(new Rect(rect.x + 566f, ry, 100f, 18f), order.verified ? "已闭环" : (fixedOrder ? "观察期" : "—"), smallStyle);
             GUI.color = prev;
 
             // 数值条
@@ -5045,6 +5133,10 @@ public class KitchenSimulator : MonoBehaviour
             GUI.Label(new Rect(rx, dy + 44f, 420f, 18f), "隐患成因：" + focus.cause, smallStyle);
             GUI.Label(new Rect(rx, dy + 66f, 420f, 18f), "处置方案：" + focus.plan, smallStyle);
             GUI.Label(new Rect(rx, dy + 92f, 420f, 18f),
+                "验收判据：读数低于阈值 " + focus.sensorAlarm.ToString("F1") + focus.sensorUnit
+                + " 并持续 " + ObserveHours.ToString("F0") + " 小时　→　"
+                + (focus.verified ? "已闭环" : (focus.state == OrderState.Fixed ? "观察期中" : "未验收")), smallStyle);
+            GUI.Label(new Rect(rx, dy + 114f, 420f, 18f),
                 "费用构成：材料费 ¥" + Mathf.RoundToInt(focus.cost * 0.45f).ToString("N0")
                 + "　人工费 ¥" + Mathf.RoundToInt(focus.cost * 0.40f).ToString("N0")
                 + "　管理费 ¥" + Mathf.RoundToInt(focus.cost * 0.15f).ToString("N0"), smallStyle);
@@ -5060,11 +5152,11 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(lx, ky + 30f, 200f, 18f), "本平台（数字孪生）", cardTitleStyle);
         GUI.Label(new Rect(krx, ky + 30f, 200f, 18f), "传统人工巡检", cardTitleStyle);
 
-        string[] labels = { "隐患消除率", "平均处置时长", "漏检率" };
+        string[] labels = { "隐患消除率", "闭环验收率", "平均处置时长", "漏检率" };
         float clearRate = HazardClearRate();
         float avgHours = AverageResponseHours();
-        string[] digital = { clearRate.ToString("F0") + " %", (avgHours <= 0f ? "—" : avgHours.ToString("F1") + " h"), "3 %" };
-        string[] legacy = { "68 %", LegacyResponseHours().ToString("F0") + " h", LegacyMissRate().ToString("F0") + " %" };
+        string[] digital = { clearRate.ToString("F0") + " %", VerifyRate().ToString("F0") + " %", (avgHours <= 0f ? "—" : avgHours.ToString("F1") + " h"), "3 %" };
+        string[] legacy = { "68 %", "无此环节", LegacyResponseHours().ToString("F0") + " h", LegacyMissRate().ToString("F0") + " %" };
 
         for (int i = 0; i < labels.Length; i++)
         {
@@ -5113,6 +5205,8 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  数据回归正常　　：" + CountSensorNormal() + "（改造后传感器读数回落至正常区间）");
         sb.AppendLine("  隐患消除率　　　：" + HazardClearRate().ToString("F1") + " %");
         sb.AppendLine("  平均处置时长　　：" + (AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " 小时"));
+        sb.AppendLine("  闭环验收率　　　：" + VerifyRate().ToString("F1") + " %（读数稳定低于阈值并持续 "
+            + ObserveHours.ToString("F0") + " 游戏小时方判定闭环）");
         sb.AppendLine();
         sb.AppendLine("二、隐患清单与处置记录");
         for (int i = 0; i < orders.Count; i++)
@@ -5140,6 +5234,7 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("三、关键指标对比分析");
         sb.AppendLine("  指标              本平台(数字孪生)     传统人工巡检");
         sb.AppendLine("  隐患消除率        " + Pad(HazardClearRate().ToString("F0") + " %", 20) + Pad("68 %", 17));
+        sb.AppendLine("  闭环验收率        " + Pad(VerifyRate().ToString("F0") + " %", 20) + Pad("无此环节", 17));
         sb.AppendLine("  平均处置时长      " + Pad((AverageResponseHours() <= 0f ? "—" : AverageResponseHours().ToString("F1") + " h"), 20) + Pad(LegacyResponseHours().ToString("F0") + " h", 17));
         sb.AppendLine("  漏检率            " + Pad("3 %", 20) + Pad(LegacyMissRate().ToString("F0") + " %", 17));
         sb.AppendLine("  改造成本          " + Pad("¥" + expenses.ToString("N0"), 20) + Pad("x" + LegacyCostFactor().ToString("F2"), 17));
@@ -5194,6 +5289,25 @@ public class KitchenSimulator : MonoBehaviour
 #endif
 
     // 传感器读数已回到正常区间的点位数 —— 数字孪生"数据闭环"的直接证据
+    private int CountVerified()
+    {
+        int count = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].verified)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private float VerifyRate()
+    {
+        if (orders.Count == 0) return 0f;
+        return (float)CountVerified() / orders.Count * 100f;
+    }
+
     private int CountSensorNormal()
     {
         int count = 0;
