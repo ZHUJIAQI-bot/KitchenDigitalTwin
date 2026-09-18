@@ -267,6 +267,11 @@ public class KitchenSimulator : MonoBehaviour
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
     private int guideStep;               // 新手引导步骤
+
+    // 玩家住处与睡眠
+    private Vector3 sleepPoint;          // 床前站位
+    private bool sleeping;
+    private float sleepTimer;
     private bool thirdPerson;            // 第三人称视角
     private Transform playerHead;
     private Renderer[] playerHeadRenderers;
@@ -326,7 +331,7 @@ public class KitchenSimulator : MonoBehaviour
     private CharacterRig bossRig;
 
     // 小地图
-    private const float WorldMinX = -24f;
+    private const float WorldMinX = -36f;
     private const float WorldMaxX = 66f;
     private const float WorldMinZ = -20f;
     private const float WorldMaxZ = 28f;
@@ -445,6 +450,7 @@ public class KitchenSimulator : MonoBehaviour
             BuildPlayer();
             BuildNpc();
             // 注意：开场台词在 HandleDialogue 里按延迟构建，不要在这里再建一次，否则会重复两遍
+            BuildPlayerHome();
             BuildTools();
             BuildAudio();
             BuildEffects();
@@ -478,6 +484,8 @@ public class KitchenSimulator : MonoBehaviour
         HandleDialogue();
         UpdateSensors();
         UpdateGuide();
+        UpdateSleep();
+        UpdateColleagues();
         HandleShopInput();
         UpdateDoors();
         UpdateHomeowners();
@@ -604,6 +612,7 @@ public class KitchenSimulator : MonoBehaviour
     private static readonly float[,] buildingRects =
     {
         { -20f, -8f, -7f, 5f },      // 公司
+        { -33f, -22f, -7f, 5f },     // 员工宿舍
         { 2f, 63f, -8f, 8f },        // 第一排住宅（开间进深各不相同，取包络）
         { 10f, 55f, 12f, 27f },      // 第二排住宅
     };
@@ -756,9 +765,9 @@ public class KitchenSimulator : MonoBehaviour
         HashSet<Transform> protectedRoots = new HashSet<Transform>();
         for (int i = 0; i < colleagues.Count; i++)
         {
-            if (colleagues[i].root != null)
+            if (colleagues[i].rig != null && colleagues[i].rig.root != null)
             {
-                protectedRoots.Add(colleagues[i].root);
+                protectedRoots.Add(colleagues[i].rig.root);
             }
         }
         for (int i = 0; i < houseDoors.Count; i++)
@@ -865,6 +874,43 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 办公室同事 ────────────────────────────────────────
+    // ── 玩家住处：公司西侧的单间宿舍（含床，可睡觉）──
+    private void BuildPlayerHome()
+    {
+        const float x0 = -32f, x1 = -23f, z0 = -6f, z1 = 4f;
+        const float doorA = -28.6f, doorB = -26.6f;
+        Color wall = new Color(0.86f, 0.83f, 0.76f);
+
+        BuildRoomFloor(x0, x1, z0, z1, new Color(0.82f, 0.72f, 0.58f), true);
+
+        BuildWallWithOpenings("Home Front Wall", true, z0, x0, x1, 0.24f, wall, doorA, doorB, 0f, 2.2f);
+        BuildWallWithOpenings("Home Back Wall", true, z1, x0, x1, 0.24f, wall, -30.2f, -27.6f, 0.95f, 2.15f);
+        BuildWallWithOpenings("Home Left Wall", false, x0, z0, z1, 0.24f, wall, -3.6f, -1.2f, 0.95f, 2.15f);
+        BuildWallWithOpenings("Home Right Wall", false, x1, z0, z1, 0.24f, wall, -3.6f, -1.2f, 0.95f, 2.15f);
+        AddGlassPane(true, z1 - 0.14f, -30.2f, -27.6f, 0.95f, 2.15f);
+        AddGlassPane(false, x0 + 0.14f, -3.6f, -1.2f, 0.95f, 2.15f);
+        AddGlassPane(false, x1 - 0.14f, -3.6f, -1.2f, 0.95f, 2.15f);
+
+        BuildRoof("Home Roof", (x0 + x1) * 0.5f, (z0 + z1) * 0.5f, x1 - x0, z1 - z0, new Color(0.46f, 0.36f, 0.3f));
+
+        // 室内陈设：床头靠北墙、衣柜靠西墙、书桌椅
+        BuildBed(-28.4f, z1 - 1.55f, 180f);
+        BuildWardrobe(x0 + 0.55f, 0.9f, 90f);
+        BuildTable(-25.4f, 1.5f, 1.25f, 0.75f, 0f, 0.74f);
+        BuildChair(-25.4f, 0.55f, 0f);
+        BuildPlant(x1 - 0.7f, -4.7f);
+        BuildCeilingLight(-27.5f, -0.6f);
+        AddRoomLight(-27.5f, -0.6f, 14f);
+
+        BuildHouseDoor("Home Door", doorA, doorB, z0);
+
+        CreateDecoCube("Home Plate", new Vector3(-24.3f, 1.75f, z0 - 0.19f), new Vector3(1.7f, 0.6f, 0.08f), new Color(0.3f, 0.22f, 0.16f));
+        CreateWorldLabel("员工宿舍", new Vector3(-24.3f, 1.75f, z0 - 0.26f), 0.055f, Color.white);
+
+        sleepPoint = new Vector3(-28.4f, GroundLevel, z1 - 3.1f);
+        AddRoom("员工宿舍", "宿舍", x0, x1, z0, z1, new Vector3((doorA + doorB) * 0.5f, GroundLevel, z0 + 1.6f));
+    }
+
     private void BuildColleagues()
     {
         BuildDeskStation(-17.6f, -1.0f, 0f, true);
@@ -888,7 +934,107 @@ public class KitchenSimulator : MonoBehaviour
         rig.rightKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
         rig.leftArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
         rig.rightArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
-        colleagues.Add(new Colleague { name = name, root = rig.root, lines = lines });
+        colleagues.Add(new Colleague
+        {
+            name = name, rig = rig, lines = lines,
+            seat = new Vector3(x, -0.15f, z), state = 0
+        });
+    }
+
+    // 站姿（下班走路时用）
+    private void SetColleagueStanding(Colleague c)
+    {
+        c.rig.root.position = new Vector3(c.rig.root.position.x, 0f, c.rig.root.position.z);
+        c.rig.leftLeg.localRotation = Quaternion.identity;
+        c.rig.rightLeg.localRotation = Quaternion.identity;
+        c.rig.leftKnee.localRotation = Quaternion.identity;
+        c.rig.rightKnee.localRotation = Quaternion.identity;
+        c.rig.leftArm.localRotation = Quaternion.identity;
+        c.rig.rightArm.localRotation = Quaternion.identity;
+    }
+
+    // 坐姿（回到工位后恢复）
+    private void SetColleagueSeated(Colleague c)
+    {
+        c.rig.root.position = c.seat;
+        c.rig.leftLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
+        c.rig.rightLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
+        c.rig.leftKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
+        c.rig.rightKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
+        c.rig.leftArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
+        c.rig.rightArm.localRotation = Quaternion.Euler(-74f, 0f, 0f);
+    }
+
+    // 走向目标点，到达返回 true
+    private bool WalkTo(Colleague c, Vector3 target, float speed)
+    {
+        Vector3 current = c.rig.root.position;
+        Vector3 flat = new Vector3(target.x, current.y, target.z);
+        Vector3 delta = flat - current;
+        delta.y = 0f;
+
+        if (delta.magnitude <= 0.16f)
+        {
+            c.rig.root.position = flat;
+            return true;
+        }
+        c.rig.root.position += delta.normalized * speed * Time.deltaTime;
+        Vector3 face = new Vector3(delta.x, 0f, delta.z);
+        if (face.sqrMagnitude > 0.0004f)
+        {
+            c.rig.root.rotation = Quaternion.Slerp(c.rig.root.rotation, Quaternion.LookRotation(face), Time.deltaTime * 8f);
+        }
+        AnimateRig(c.rig, true, 1f);
+        return false;
+    }
+
+    // 天黑下班、天亮返岗
+    private void UpdateColleagues()
+    {
+        bool night = IsNight;
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            Colleague c = colleagues[i];
+            if (c.rig == null || c.rig.root == null)
+            {
+                continue;
+            }
+
+            if (night && c.state == 0)
+            {
+                c.state = 1;
+                SetColleagueStanding(c);
+                ShowToast(c.name + " 下班回家了", 3f);
+            }
+            else if (!night && c.state == 2)
+            {
+                c.state = 3;
+                c.rig.root.gameObject.SetActive(true);
+                SetColleagueStanding(c);
+            }
+
+            switch (c.state)
+            {
+                case 1:
+                    // 先走到公司门口，再走出门外
+                    if (WalkTo(c, new Vector3(-15.6f, 0f, -6.4f), 2.4f))
+                    {
+                        if (WalkTo(c, new Vector3(-16.4f, 0f, -11.5f), 2.4f))
+                        {
+                            c.state = 2;
+                            c.rig.root.gameObject.SetActive(false);   // 到家，离场
+                        }
+                    }
+                    break;
+                case 3:
+                    if (WalkTo(c, c.seat, 2.4f))
+                    {
+                        SetColleagueSeated(c);
+                        c.state = 0;
+                    }
+                    break;
+            }
+        }
     }
 
     private void StartColleagueChat(Colleague colleague)
@@ -1069,6 +1215,40 @@ public class KitchenSimulator : MonoBehaviour
     {
         expenses += amount;
         Today().expense += amount;
+    }
+
+    // 上床睡觉（参考沙盒游戏：天黑睡觉直接跳到次日清晨）
+    private void StartSleep()
+    {
+        if (!IsNight)
+        {
+            ShowToast("天还亮着，先干活吧 —— 天黑后回宿舍睡觉", 3.5f);
+            return;
+        }
+        sleeping = true;
+        sleepTimer = 2.2f;
+        StartTransition("就寝中…");
+    }
+
+    private void UpdateSleep()
+    {
+        if (!sleeping)
+        {
+            return;
+        }
+        sleepTimer -= Time.deltaTime;
+        if (sleepTimer > 0f)
+        {
+            return;
+        }
+
+        sleeping = false;
+        float hoursNow = gameTime / RealSecondsPerGameHour;
+        float nextMorning = (Mathf.Floor(hoursNow / HoursPerDay) + 1f) * HoursPerDay + 6f;
+        gameTime = nextMorning * RealSecondsPerGameHour;
+        lastDay = DayIndex;
+        lastPhaseMark = 0;
+        StartTransition("第 " + GameMonth + " 月 第 " + DayOfMonth + " 天 · 清晨");
     }
 
     // 转场淡入淡出
@@ -3646,7 +3826,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // 对话中或维修中不允许移动 / 跳跃
-        bool blocked = repairingOrder != null || dialogueIndex >= 0;
+        bool blocked = repairingOrder != null || dialogueIndex >= 0 || sleeping;
 
         // 垂直：真实重力 + 跳跃；落地即停，绝不穿地
         if (grounded && !blocked && Input.GetKeyDown(KeyCode.Space))
@@ -4169,8 +4349,10 @@ public class KitchenSimulator : MonoBehaviour
     private class Colleague
     {
         public string name;
-        public Transform root;
+        public CharacterRig rig;
         public string[] lines;
+        public Vector3 seat;      // 工位坐标（坐下时的位置）
+        public int state;         // 0 在岗 1 下班离场 2 已回家 3 返岗途中
     }
     private readonly List<Colleague> colleagues = new List<Colleague>();
     private Colleague activeColleague;
@@ -4184,7 +4366,7 @@ public class KitchenSimulator : MonoBehaviour
         for (int r = 0; r < rooms.Count; r++)
         {
             Room room = rooms[r];
-            if (room.type == "公司")
+            if (room.type == "公司" || room.type == "宿舍")
             {
                 continue;
             }
@@ -4679,6 +4861,13 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        // 床边按 E 睡觉（参考沙盒游戏）
+        if (Input.GetKeyDown(KeyCode.E) && Distance2D(playerPosition, sleepPoint) < 2.3f)
+        {
+            StartSleep();
+            return;
+        }
+
         Order nearest = null;
         float best = InteractDistance;
         for (int i = 0; i < orders.Count; i++)
@@ -4701,7 +4890,11 @@ public class KitchenSimulator : MonoBehaviour
         float best2 = 2.3f;
         for (int i = 0; i < colleagues.Count; i++)
         {
-            float d = Distance2D(playerPosition, colleagues[i].root.position);
+            if (colleagues[i].rig == null || !colleagues[i].rig.root.gameObject.activeSelf)
+            {
+                continue;
+            }
+            float d = Distance2D(playerPosition, colleagues[i].rig.root.position);
             if (d < best2)
             {
                 best2 = d;
@@ -6052,7 +6245,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　回宿舍按 E 睡觉　·　Tab 唤出鼠标", centerStyle);
     }
 
     private void DrawToast()
