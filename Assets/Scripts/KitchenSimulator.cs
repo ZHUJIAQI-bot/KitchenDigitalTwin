@@ -18,16 +18,16 @@ public class KitchenSimulator : MonoBehaviour
     private const int MonthDays = 7;
     private const int MonthSalary = 2200;
     private float gameTime = 8f * RealSecondsPerGameHour;   // 开局第 1 天 08:00
-    private const float MoveSpeed = 3.6f;
+    private const float MoveSpeed = 4.4f;
     private const float InteractDistance = 1.6f;
     private const float RepairDuration = 2.4f;
     private const float MarkerHeight = 1.95f;
     private const float PlayerRadius = 0.34f;
 
     // 派单节奏
-    private const float OrderIntervalMin = 9f;
-    private const float OrderIntervalMax = 16f;
-    private const int MaxActiveOrders = 4;
+    private const float OrderIntervalMin = 5f;
+    private const float OrderIntervalMax = 10f;
+    private const int MaxActiveOrders = 6;
     private const int MaxVisibleDone = 3;
 
     private enum OrderState
@@ -219,7 +219,7 @@ public class KitchenSimulator : MonoBehaviour
     private float toolAnim;
     private float toolStrike;   // 每次点击左键触发的工具挥动
     private int repairClicks;
-    private const int RepairClicks = 8;
+    private const int RepairClicks = 4;
     private bool walking;
 
     // 跳跃
@@ -261,7 +261,7 @@ public class KitchenSimulator : MonoBehaviour
     private float voiceBurst;   // 当前这句还剩多久发声，到 0 就安静下来
     private float stepTimer;
 
-    private readonly Vector3 spawnPosition = new Vector3(-15f, GroundLevel, -3f);
+    private readonly Vector3 spawnPosition = new Vector3(-14.8f, GroundLevel, 0.15f);
 
     // 开场 NPC 对话
     private class DialogueLine
@@ -345,6 +345,10 @@ public class KitchenSimulator : MonoBehaviour
     {
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
+        // WebGL 下限制阴影与逐像素光源开销，避免全屏时掉帧
+        QualitySettings.shadowDistance = 45f;
+        QualitySettings.shadowCascades = 1;
+        QualitySettings.pixelLightCount = 3;
 
         // 相机最先创建：即使后续初始化抛异常，也能渲染出画面而不是全黑
         BuildCamera();
@@ -353,6 +357,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             BuildMaterials();
             BuildWorld();
+            CombineStaticGeometry();
             InitializeOrders();
             ApplyLabelMaterials();
             BuildPlayer();
@@ -587,16 +592,114 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Window Mullion", position, bar, new Color(0.55f, 0.53f, 0.5f));
     }
 
+    // ── 静态几何合批：把上千个装饰物按材质合并，draw call 从 1600+ 降到几十 ──
+    private void CombineStaticGeometry()
+    {
+        // 同事的骨架会被逻辑引用，不能合并（合并会销毁原对象）
+        HashSet<Transform> protectedRoots = new HashSet<Transform>();
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            if (colleagues[i].root != null)
+            {
+                protectedRoots.Add(colleagues[i].root);
+            }
+        }
+
+        MeshFilter[] all = GetComponentsInChildren<MeshFilter>();
+        Dictionary<Material, List<MeshFilter>> groups = new Dictionary<Material, List<MeshFilter>>();
+
+        for (int i = 0; i < all.Length; i++)
+        {
+            MeshFilter filter = all[i];
+            if (filter == null || filter.sharedMesh == null)
+            {
+                continue;
+            }
+            string objectName = filter.gameObject.name;
+            if (objectName.StartsWith("Globe") || objectName.StartsWith("Label"))
+            {
+                continue;   // 灯罩要换材质、文字稍后要改材质，保持独立
+            }
+
+            bool isProtected = false;
+            Transform t = filter.transform;
+            while (t != null)
+            {
+                if (protectedRoots.Contains(t))
+                {
+                    isProtected = true;
+                    break;
+                }
+                t = t.parent;
+            }
+            if (isProtected)
+            {
+                continue;
+            }
+
+            Renderer renderer = filter.GetComponent<Renderer>();
+            if (renderer == null || renderer.sharedMaterial == null)
+            {
+                continue;
+            }
+
+            List<MeshFilter> list;
+            if (!groups.TryGetValue(renderer.sharedMaterial, out list))
+            {
+                list = new List<MeshFilter>();
+                groups[renderer.sharedMaterial] = list;
+            }
+            list.Add(filter);
+        }
+
+        int batchCount = 0;
+        int removed = 0;
+        foreach (KeyValuePair<Material, List<MeshFilter>> pair in groups)
+        {
+            List<MeshFilter> list = pair.Value;
+            if (list.Count < 2)
+            {
+                continue;
+            }
+
+            CombineInstance[] instances = new CombineInstance[list.Count];
+            for (int i = 0; i < list.Count; i++)
+            {
+                instances[i].mesh = list[i].sharedMesh;
+                instances[i].transform = list[i].transform.localToWorldMatrix;
+            }
+
+            Mesh mesh = new Mesh();
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            mesh.CombineMeshes(instances, true, true);
+            mesh.name = "Static Batch " + batchCount;
+
+            GameObject batchObject = new GameObject("Static Batch");
+            batchObject.transform.SetParent(transform, false);
+            batchObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+            batchObject.AddComponent<MeshRenderer>().sharedMaterial = pair.Key;
+            generatedObjects.Add(batchObject);
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                Destroy(list[i].gameObject);
+                removed++;
+            }
+            batchCount++;
+        }
+        Debug.Log("静态合批完成：合并 " + removed + " 个物件 → " + batchCount + " 个批次");
+    }
+
     // ── 办公室同事 ────────────────────────────────────────
     private void BuildColleagues()
     {
-        BuildDeskStation(-17.4f, -4.2f, 0f, true);
-        BuildDeskStation(-17.4f, -1.2f, 0f, true);
-        BuildColleague(-17.4f, -3.25f, 180f, "老王", new Color(0.5f, 0.45f, 0.28f),
+        BuildDeskStation(-17.6f, -1.0f, 0f, true);
+        BuildDeskStation(-17.6f, 2.2f, 0f, true);
+        BuildColleague(-17.6f, -0.05f, 180f, "老王", new Color(0.5f, 0.45f, 0.28f),
             new[] { "这户的水路我看过，八成是角阀老化。", "记账别忘了，月底要对账的。", "累了就歇会儿，活儿是干不完的。" });
-        BuildColleague(-11.8f, -3.25f, 180f, "小李", new Color(0.28f, 0.42f, 0.4f),
+        BuildColleague(-12.0f, -0.05f, 180f, "小李", new Color(0.28f, 0.42f, 0.4f),
             new[] { "陈哥，新来那批工具箱在仓库左边。", "客户催得紧的话，先打个电话说一声。", "我刚学了个补墙的新做法，回头教你。" });
-        BuildColleague(-17.4f, -0.25f, 180f, "老赵", new Color(0.42f, 0.3f, 0.42f),
+        BuildColleague(-17.6f, 3.15f, 180f, "老赵", new Color(0.42f, 0.3f, 0.42f),
             new[] { "天黑路灯就亮，夜班注意脚下。", "工资发了？去服装店看看新工装。", "工具买齐了干活快，别舍不得花钱。" });
     }
 
@@ -785,12 +888,12 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    private bool IsNight { get { return GameHour < 6 || GameHour >= 19; } }
+    private bool IsNight { get { return GameHour < 6 || GameHour >= 20; } }
 
     // 天黑后可以休息，直接跳到次日清晨 6:00
     private void RestUntilMorning()
     {
-        if (GameHour >= 6 && GameHour < 19)
+        if (GameHour >= 6 && GameHour < 20)
         {
             ShowToast("现在还是白天，先干活吧（天黑后按 R 休息）", 3f);
             return;
@@ -998,8 +1101,9 @@ public class KitchenSimulator : MonoBehaviour
 
         // 室内陈设
         // 桌子 yaw 0：椅子在桌子北侧，人面朝南（正对大门）
-        BuildDeskStation(-15f, -4.2f, 0f, false);
-        BuildDeskStation(-11.8f, -4.2f, 0f, true);
+        // 办公区往里挪，前台留在大门附近
+        BuildDeskStation(-14.8f, -1.0f, 0f, false);
+        BuildDeskStation(-12.0f, -1.0f, 0f, true);
         BuildCabinet(-19f, 3.4f, 0f);
         BuildPlant(-19.2f, -6f);
         BuildSofa(-9.6f, 2.6f, 270f);
@@ -1837,8 +1941,8 @@ public class KitchenSimulator : MonoBehaviour
         player = new GameObject("Inspector");
         playerPosition = spawnPosition;
         player.transform.position = spawnPosition;
-        player.transform.rotation = Quaternion.identity;
-        lookYaw = 0f;
+        player.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+        lookYaw = 180f;
 
         // 上衣与裤子用独立材质，便于服装店换装
         playerClothMaterial = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
@@ -2163,7 +2267,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildNpc()
     {
         // 工头站在工位旁，面朝玩家
-        bossRig = BuildCharacterModel("Boss", new Vector3(-14.6f, 0f, -1.6f), 200f,
+        bossRig = BuildCharacterModel("Boss", new Vector3(-14.8f, 0f, -2.2f), 0f,
             new Color(0.62f, 0.3f, 0.22f), new Color(0.83f, 0.66f, 0.5f));
     }
 
