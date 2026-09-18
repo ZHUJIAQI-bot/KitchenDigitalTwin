@@ -2008,6 +2008,7 @@ public class KitchenSimulator : MonoBehaviour
         public OrderTemplate template;
         public int phase;      // 0 走向玩家 1 说明情况 2 离开
         public float timer;
+        public float stuck;    // 被墙挡住累计时长
     }
 
     private readonly List<Homeowner> homeowners = new List<Homeowner>();
@@ -2097,10 +2098,12 @@ public class KitchenSimulator : MonoBehaviour
 
             if (owner.phase == 0)
             {
-                // 走向玩家
+                // 走向玩家（带碰撞，不会穿墙）
                 Vector3 delta = playerPosition - owner.root.position;
                 delta.y = 0f;
-                if (delta.magnitude <= 2.2f)
+
+                // 靠得够近，或被墙挡住太久（例如玩家关着门躲在屋里），就地说明情况
+                if (delta.magnitude <= 2.2f || owner.stuck > 1.5f)
                 {
                     owner.phase = 1;
                     owner.timer = 6f;
@@ -2109,7 +2112,35 @@ public class KitchenSimulator : MonoBehaviour
                 else
                 {
                     Vector3 step = delta.normalized * 2.4f * Time.deltaTime;
-                    owner.root.position += step;
+                    Vector3 next = owner.root.position + step;
+
+                    bool moved = false;
+                    if (!Collides(next))
+                    {
+                        owner.root.position = next;
+                        moved = true;
+                    }
+                    else
+                    {
+                        // 分离轴滑动，让他贴着墙找路
+                        Vector3 xOnly = new Vector3(next.x, owner.root.position.y, owner.root.position.z);
+                        if (!Collides(xOnly))
+                        {
+                            owner.root.position = xOnly;
+                            moved = true;
+                        }
+                        else
+                        {
+                            Vector3 zOnly = new Vector3(owner.root.position.x, owner.root.position.y, next.z);
+                            if (!Collides(zOnly))
+                            {
+                                owner.root.position = zOnly;
+                                moved = true;
+                            }
+                        }
+                    }
+                    owner.stuck = moved ? 0f : owner.stuck + Time.deltaTime;
+
                     if (delta.sqrMagnitude > 0.01f)
                     {
                         owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
@@ -2136,16 +2167,50 @@ public class KitchenSimulator : MonoBehaviour
             }
             else
             {
-                // 离开
-                Vector3 exit = new Vector3(-16.4f, owner.root.position.y, -13f);
+                // 离开：先走回公司大门，再走出门外；同样带碰撞
+                bool inside = owner.root.position.z > -6.6f;
+                Vector3 exit = inside
+                    ? new Vector3(-16.4f, owner.root.position.y, -7.5f)
+                    : new Vector3(-16.4f, owner.root.position.y, -13f);
+
                 Vector3 delta = exit - owner.root.position;
                 delta.y = 0f;
-                owner.root.position += delta.normalized * 2.6f * Time.deltaTime;
-                if (delta.sqrMagnitude > 0.01f)
+                if (delta.sqrMagnitude < 0.01f)
                 {
-                    owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+                    delta = Vector3.forward;
                 }
-                if (delta.magnitude < 1.2f)
+
+                Vector3 step = delta.normalized * 2.6f * Time.deltaTime;
+                Vector3 next = owner.root.position + step;
+                if (!Collides(next))
+                {
+                    owner.root.position = next;
+                }
+                else
+                {
+                    Vector3 xOnly = new Vector3(next.x, owner.root.position.y, owner.root.position.z);
+                    if (!Collides(xOnly))
+                    {
+                        owner.root.position = xOnly;
+                    }
+                    else
+                    {
+                        Vector3 zOnly = new Vector3(owner.root.position.x, owner.root.position.y, next.z);
+                        if (!Collides(zOnly))
+                        {
+                            owner.root.position = zOnly;
+                        }
+                        else
+                        {
+                            owner.stuck += Time.deltaTime;
+                        }
+                    }
+                }
+
+                owner.root.rotation = Quaternion.Slerp(owner.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
+
+                // 走到门外，或长时间无法脱身，就消失
+                if ((!inside && delta.magnitude < 1.2f) || owner.stuck > 8f)
                 {
                     Destroy(owner.root.gameObject);
                     homeowners.RemoveAt(i);
