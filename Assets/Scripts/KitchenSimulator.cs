@@ -11,6 +11,13 @@ public class KitchenSimulator : MonoBehaviour
     private const string ProjectName = "焕新家装";
     private const string ProjectSubtitle = "装修公司 · 上门维修";
     private const int StartCash = 600;
+
+    // ── 时间系统：1 游戏小时 = 2.5 秒真实时间；7 天为一个月 ──
+    private const float RealSecondsPerGameHour = 2.5f;
+    private const int HoursPerDay = 24;
+    private const int MonthDays = 7;
+    private const int MonthSalary = 2200;
+    private float gameTime = 8f * RealSecondsPerGameHour;   // 开局第 1 天 08:00
     private const float MoveSpeed = 3.6f;
     private const float InteractDistance = 1.6f;
     private const float RepairDuration = 2.4f;
@@ -45,8 +52,11 @@ public class KitchenSimulator : MonoBehaviour
         public Renderer[] renderers;
         public float repairProgress;
         public bool needsRebuild;
+        public int schedDay;      // 预约：第几天
+        public int schedHour;     // 预约：几点
 
         public string Code { get { return "#" + id.ToString("D3"); } }
+        public string ScheduleText { get { return "第" + schedDay + "天 " + schedHour.ToString("D2") + ":00"; } }
     }
 
     // 派单模板：某种房型里可能出现的具体问题，offset 是相对房间中心的偏移
@@ -118,6 +128,42 @@ public class KitchenSimulator : MonoBehaviour
     private Color[] stateColors;
     private Material wallMaterial;
     private Material glassMaterial;
+
+    // 昼夜与路灯
+    private Light sunLight;
+    private float sunBaseIntensity = 1.15f;
+    private readonly List<Light> lampLights = new List<Light>();
+    private readonly List<Renderer> lampGlobes = new List<Renderer>();
+    private Material lampOnMaterial;
+    private Material lampOffMaterial;
+    private bool lampsOn;
+    private int lastPaidMonth = 1;
+    private int lastDay = 1;
+
+    // 日历 / 账目 / 服装 / 商店
+    private class LedgerDay
+    {
+        public int day;
+        public int income;
+        public int expense;
+    }
+    private readonly List<LedgerDay> ledger = new List<LedgerDay>();
+    private int shopTab;            // 0 工具 1 服装
+    private int shopCursor;
+
+    private class Outfit
+    {
+        public string name;
+        public int price;
+        public Color coat;
+        public Color trouser;
+        public bool owned;
+    }
+    private readonly List<Outfit> outfits = new List<Outfit>();
+    private int currentOutfit;
+    private readonly List<Renderer> playerClothRenderers = new List<Renderer>();
+    private Material playerClothMaterial;
+    private Material playerTrouserMaterial;
     private Material floorMaterial;
 
     private GameObject player;
@@ -166,6 +212,9 @@ public class KitchenSimulator : MonoBehaviour
     // 第一人称手持工具（视图模型）
     private Transform toolPivot;
     private float toolAnim;
+    private float toolStrike;   // 每次点击左键触发的工具挥动
+    private int repairClicks;
+    private const int RepairClicks = 8;
     private bool walking;
 
     // 跳跃
@@ -179,6 +228,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool bagOpen;
     private bool minimapLarge;
     private bool shopOpen;
+    private bool almanacOpen;
 
     // 门
     private class HouseDoor
@@ -313,6 +363,7 @@ public class KitchenSimulator : MonoBehaviour
 
     private void Update()
     {
+        UpdateDayNight();
         HandleLook();
         HandleMovement();
         HandleDialogue();
@@ -355,10 +406,11 @@ public class KitchenSimulator : MonoBehaviour
         GameObject sunObject = new GameObject("Sun");
         Light sun = sunObject.AddComponent<Light>();
         sun.type = LightType.Directional;
-        sun.intensity = 1.15f;
+        sun.intensity = sunBaseIntensity;
         sun.color = new Color(1f, 0.96f, 0.86f);
         sun.shadows = LightShadows.Soft;
         sunObject.transform.rotation = Quaternion.Euler(46f, -38f, 0f);
+        sunLight = sun;
         generatedObjects.Add(sunObject);
 
         BuildOutdoor();
@@ -398,6 +450,7 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), pavement);
 
         BuildCitySkyline();
+        BuildStreetLamps();
 
         // 绿化：只放在建筑范围之外
         float[] tx = { -14f, -2f, 10f, 26f, 42f, 58f, 68f, -26f, -34f, 16f, 32f, 48f, 64f,
@@ -522,6 +575,185 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Window Mullion", position, bar, new Color(0.55f, 0.53f, 0.5f));
     }
 
+    // ── 办公室同事 ────────────────────────────────────────
+    private void BuildColleagues()
+    {
+        BuildColleague(-15.9f, -1.5f, 200f, "老王", new Color(0.5f, 0.45f, 0.28f),
+            new[] { "这户的水路我看过，八成是角阀老化。", "记账别忘了，月底要对账的。", "累了就歇会儿，活儿是干不完的。" });
+        BuildColleague(-12.7f, -1.5f, 160f, "小李", new Color(0.28f, 0.42f, 0.4f),
+            new[] { "陈哥，新来那批工具箱在仓库左边。", "客户催得紧的话，先打个电话说一声。", "我刚学了个补墙的新做法，回头教你。" });
+        BuildColleague(-16.4f, -4.8f, 20f, "老赵", new Color(0.42f, 0.3f, 0.42f),
+            new[] { "天黑路灯就亮，夜班注意脚下。", "工资发了？去服装店看看新工装。", "工具买齐了干活快，别舍不得花钱。" });
+    }
+
+    private void BuildColleague(float x, float z, float yaw, string name, Color coat, string[] lines)
+    {
+        CharacterRig rig = BuildCharacterModel(name, new Vector3(x, 0.44f, z), yaw, coat, new Color(0.85f, 0.68f, 0.52f));
+        // 坐姿：大腿前伸、小臂搭在桌上
+        rig.leftLeg.localRotation = Quaternion.Euler(80f, 0f, 0f);
+        rig.rightLeg.localRotation = Quaternion.Euler(80f, 0f, 0f);
+        rig.leftArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
+        rig.rightArm.localRotation = Quaternion.Euler(-62f, 0f, 0f);
+        colleagues.Add(new Colleague { name = name, root = rig.root, lines = lines });
+    }
+
+    private void StartColleagueChat(Colleague colleague)
+    {
+        talkTarget = null;
+        dialogue.Clear();
+        dialogue.Add(new DialogueLine { speaker = colleague.name, text = Pick(colleague.lines) });
+        dialogue.Add(new DialogueLine { speaker = "陈师傅", text = Pick(Replies) });
+        dialogueIndex = 0;
+        BeginLine();
+    }
+
+    // ── 小区路灯（天黑自动亮）──────────────────────────────
+    private void BuildStreetLamps()
+    {
+        lampOnMaterial = MakeMaterial(new Color(1f, 0.9f, 0.62f), 0f, 0.6f);
+        lampOffMaterial = MakeMaterial(new Color(0.42f, 0.44f, 0.46f), 0.1f, 0.4f);
+        Material pole = MakeMaterial(new Color(0.3f, 0.32f, 0.34f), 0.6f, 0.55f);
+
+        // 沿主干道与小区内街布点，按需稀疏
+        float[] xs = { -12f, 6f, 24f, 42f, 60f };
+        for (int i = 0; i < xs.Length; i++)
+        {
+            BuildLamp(new Vector3(xs[i], 0f, -10.4f), pole);
+            BuildLamp(new Vector3(xs[i] + 9f, 0f, 9.6f), pole);
+        }
+    }
+
+    private void BuildLamp(Vector3 basePosition, Material pole)
+    {
+        GameObject lamp = new GameObject("Street Lamp");
+        lamp.transform.SetParent(transform, false);
+        lamp.transform.position = basePosition;
+
+        DecoPart(PrimitiveType.Cylinder, "Base", lamp.transform, new Vector3(0f, 0.15f, 0f), new Vector3(0.22f, 0.15f, 0.22f), Quaternion.identity, pole);
+        DecoPart(PrimitiveType.Cylinder, "Pole", lamp.transform, new Vector3(0f, 2.1f, 0f), new Vector3(0.08f, 2.1f, 0.08f), Quaternion.identity, pole);
+        DecoPart(PrimitiveType.Cube, "Arm", lamp.transform, new Vector3(0.35f, 4.12f, 0f), new Vector3(0.8f, 0.09f, 0.09f), Quaternion.identity, pole);
+
+        GameObject globe = DecoPart(PrimitiveType.Sphere, "Globe", lamp.transform, new Vector3(0.72f, 3.98f, 0f), Vector3.one * 0.42f, Quaternion.identity, lampOffMaterial);
+        lampGlobes.Add(globe.GetComponent<Renderer>());
+
+        GameObject lightObject = new GameObject("Lamp Light");
+        lightObject.transform.SetParent(lamp.transform, false);
+        lightObject.transform.position = basePosition + new Vector3(0.72f, 3.9f, 0f);
+        Light light = lightObject.AddComponent<Light>();
+        light.type = LightType.Point;
+        light.range = 11f;
+        light.intensity = 1.5f;
+        light.color = new Color(1f, 0.88f, 0.62f);
+        light.enabled = false;
+        lampLights.Add(light);
+
+        generatedObjects.Add(lamp);
+    }
+
+    // 时间推进 + 昼夜变化
+    private void UpdateDayNight()
+    {
+        float previousTime = gameTime;
+        gameTime += Time.deltaTime;
+
+        // 6 点日出、18 点日落
+        float dayFactor = Mathf.Clamp01(Mathf.Sin((GameHourFloat - 6f) / 12f * Mathf.PI));
+        Color nightSky = new Color(0.06f, 0.09f, 0.17f);
+        Color daySky = new Color(0.53f, 0.76f, 0.94f);
+
+        if (viewCamera != null)
+        {
+            viewCamera.backgroundColor = Color.Lerp(nightSky, daySky, dayFactor);
+        }
+        if (sunLight != null)
+        {
+            sunLight.intensity = Mathf.Lerp(0.1f, sunBaseIntensity, dayFactor);
+            sunLight.color = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
+            // 太阳随时间转动
+            sunLight.transform.rotation = Quaternion.Euler(Mathf.Lerp(10f, 150f, 1f - dayFactor), -38f, 0f);
+        }
+        RenderSettings.ambientLight = Color.Lerp(new Color(0.16f, 0.19f, 0.28f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
+        RenderSettings.ambientIntensity = Mathf.Lerp(0.55f, 1.1f, dayFactor);
+
+        bool shouldLightUp = dayFactor < 0.22f;
+        if (shouldLightUp != lampsOn)
+        {
+            lampsOn = shouldLightUp;
+            for (int i = 0; i < lampLights.Count; i++)
+            {
+                lampLights[i].enabled = lampsOn;
+            }
+            for (int i = 0; i < lampGlobes.Count; i++)
+            {
+                if (lampGlobes[i] != null)
+                {
+                    lampGlobes[i].sharedMaterial = lampsOn ? lampOnMaterial : lampOffMaterial;
+                }
+            }
+        }
+
+        // 跨日 / 跨月结算
+        int day = DayIndex;
+        if (day != lastDay)
+        {
+            lastDay = day;
+            if (GameMonth > lastPaidMonth)
+            {
+                lastPaidMonth = GameMonth;
+                PaySalary();
+            }
+        }
+    }
+
+    // ── 账目本 ────────────────────────────────────────────
+    private LedgerDay Today()
+    {
+        int day = DayIndex;
+        for (int i = 0; i < ledger.Count; i++)
+        {
+            if (ledger[i].day == day)
+            {
+                return ledger[i];
+            }
+        }
+        LedgerDay entry = new LedgerDay { day = day };
+        ledger.Add(entry);
+        return entry;
+    }
+
+    private void AddIncome(int amount)
+    {
+        income += amount;
+        Today().income += amount;
+    }
+
+    private void AddExpense(int amount)
+    {
+        expenses += amount;
+        Today().expense += amount;
+    }
+
+    private void PaySalary()
+    {
+        AddIncome(MonthSalary);
+        ShowToast("第 " + GameMonth + " 月工资到账 ¥" + MonthSalary.ToString("N0") + " —— 可以去服装店换身行头了", 9f);
+    }
+
+    private float GameHourFloat
+    {
+        get { return (gameTime / RealSecondsPerGameHour) % HoursPerDay; }
+    }
+
+    private int GameHour { get { return Mathf.FloorToInt(GameHourFloat); } }
+    private int DayIndex { get { return Mathf.FloorToInt(gameTime / (RealSecondsPerGameHour * HoursPerDay)) + 1; } }
+    private int GameMonth { get { return (DayIndex - 1) / MonthDays + 1; } }
+    private int DayOfMonth { get { return (DayIndex - 1) % MonthDays + 1; } }
+
+    private string ClockText
+    {
+        get { return "第 " + GameMonth + " 月 第 " + DayOfMonth + " 天  " + GameHour.ToString("D2") + ":" + Mathf.FloorToInt((GameHourFloat % 1f) * 60f).ToString("D2"); }
+    }
+
     // 远处城市天际线：纯装饰，无碰撞
     private void BuildCitySkyline()
     {
@@ -532,24 +764,19 @@ public class KitchenSimulator : MonoBehaviour
             new Color(0.63f, 0.66f, 0.71f),
             new Color(0.41f, 0.47f, 0.56f),
             new Color(0.52f, 0.55f, 0.6f),
+            new Color(0.36f, 0.42f, 0.52f),
         };
-        Color windowTone = new Color(0.75f, 0.8f, 0.86f);
+        Color windowTone = new Color(0.78f, 0.83f, 0.88f);
+        Color roofTone = new Color(0.34f, 0.37f, 0.42f);
+        Color metalTone = new Color(0.6f, 0.63f, 0.67f);
 
-        // 南面（马路那侧）的远景楼群
+        // 南面（马路那侧）的远景楼群，细节最丰富
         for (int i = 0; i < 16; i++)
         {
             float x = -95f + i * 13f + Random.Range(-3.5f, 3.5f);
             float z = -58f - Random.Range(0f, 26f);
-            float h = Random.Range(11f, 36f);
-            float w = Random.Range(8f, 15f);
-            float d = w * Random.Range(0.8f, 1.25f);
-            CreateDecoCube("City Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, d), tones[Random.Range(0, tones.Length)]);
-            // 楼层带
-            int bands = Mathf.FloorToInt(h / 4.5f);
-            for (int b = 1; b < bands; b++)
-            {
-                CreateDecoCube("City Windows", new Vector3(x, b * 4.5f - 0.2f, z - d * 0.5f - 0.06f), new Vector3(w * 0.82f, 1.1f, 0.1f), windowTone);
-            }
+            BuildCityTower(new Vector3(x, 0f, z), Random.Range(12f, 38f), Random.Range(8f, 15f),
+                tones[Random.Range(0, tones.Length)], windowTone, roofTone, metalTone, true);
         }
 
         // 北面远景
@@ -557,19 +784,75 @@ public class KitchenSimulator : MonoBehaviour
         {
             float x = -80f + i * 14f + Random.Range(-3f, 3f);
             float z = 62f + Random.Range(0f, 24f);
-            float h = Random.Range(10f, 30f);
-            float w = Random.Range(8f, 14f);
-            CreateDecoCube("City Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * Random.Range(0.85f, 1.2f)), tones[Random.Range(0, tones.Length)]);
+            BuildCityTower(new Vector3(x, 0f, z), Random.Range(11f, 31f), Random.Range(8f, 14f),
+                tones[Random.Range(0, tones.Length)], windowTone, roofTone, metalTone, false);
         }
 
         // 东西两侧远景
         for (int i = 0; i < 8; i++)
         {
             float z = -40f + i * 16f;
-            float h = Random.Range(10f, 28f);
-            CreateDecoCube("City Tower", new Vector3(-105f - Random.Range(0f, 20f), h * 0.5f - 0.2f, z), new Vector3(11f, h, 11f), tones[Random.Range(0, tones.Length)]);
-            h = Random.Range(10f, 28f);
-            CreateDecoCube("City Tower", new Vector3(140f + Random.Range(0f, 20f), h * 0.5f - 0.2f, z), new Vector3(11f, h, 11f), tones[Random.Range(0, tones.Length)]);
+            BuildCityTower(new Vector3(-105f - Random.Range(0f, 22f), 0f, z), Random.Range(11f, 29f), 11f,
+                tones[Random.Range(0, tones.Length)], windowTone, roofTone, metalTone, false);
+            BuildCityTower(new Vector3(140f + Random.Range(0f, 22f), 0f, z), Random.Range(11f, 29f), 11f,
+                tones[Random.Range(0, tones.Length)], windowTone, roofTone, metalTone, false);
+        }
+    }
+
+    // 单栋远景楼：主体 + 退台 + 楼层窗带 + 屋顶设备 + 天线
+    private void BuildCityTower(Vector3 basePosition, float height, float width, Color body, Color windowTone, Color roofTone, Color metalTone, bool detailed)
+    {
+        float depth = width * Random.Range(0.8f, 1.25f);
+        CreateDecoCube("City Body", new Vector3(basePosition.x, height * 0.5f - 0.2f, basePosition.z),
+            new Vector3(width, height, depth), body);
+
+        float top = height - 0.2f;
+
+        // 退台：高楼顶上加一层收进的体块
+        if (height > 22f)
+        {
+            float upperH = Random.Range(4f, 9f);
+            float upperW = width * Random.Range(0.5f, 0.72f);
+            CreateDecoCube("City Upper", new Vector3(basePosition.x, top + upperH * 0.5f, basePosition.z),
+                new Vector3(upperW, upperH, depth * Random.Range(0.55f, 0.78f)), body * 0.92f);
+            top += upperH;
+        }
+
+        // 楼层窗带（面向街道一侧）
+        int bands = Mathf.FloorToInt(height / 4.2f);
+        for (int b = 1; b < bands; b++)
+        {
+            CreateDecoCube("City Windows", new Vector3(basePosition.x, b * 4.2f - 0.2f, basePosition.z - depth * 0.5f - 0.06f),
+                new Vector3(width * 0.84f, 1.05f, 0.1f), windowTone);
+        }
+
+        if (!detailed)
+        {
+            // 远景只加一条轮廓压顶
+            CreateDecoCube("City Cap", new Vector3(basePosition.x, top + 0.2f, basePosition.z),
+                new Vector3(width * 1.04f, 0.42f, depth * 1.04f), roofTone);
+            return;
+        }
+
+        // 屋顶女儿墙 + 设备箱 + 天线，让轮廓不那么呆板
+        CreateDecoCube("City Cap", new Vector3(basePosition.x, top + 0.25f, basePosition.z),
+            new Vector3(width * 1.05f, 0.5f, depth * 1.05f), roofTone);
+
+        int units = Random.Range(1, 4);
+        for (int u = 0; u < units; u++)
+        {
+            float ox = Random.Range(-width * 0.3f, width * 0.3f);
+            float oz = Random.Range(-depth * 0.3f, depth * 0.3f);
+            float uh = Random.Range(0.6f, 1.8f);
+            CreateDecoCube("City Roof Unit", new Vector3(basePosition.x + ox, top + 0.5f + uh * 0.5f, basePosition.z + oz),
+                new Vector3(Random.Range(0.9f, 2.2f), uh, Random.Range(0.9f, 2.2f)), metalTone);
+        }
+
+        if (Random.value < 0.7f)
+        {
+            float mastH = Random.Range(2.5f, 7f);
+            CreateDecoCube("City Mast", new Vector3(basePosition.x, top + 0.5f + mastH * 0.5f, basePosition.z),
+                new Vector3(0.18f, mastH, 0.18f), metalTone);
         }
     }
 
@@ -656,6 +939,7 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Reception Top", new Vector3(-13.2f, 1.03f, -5.6f), new Vector3(3.4f, 0.08f, 0.95f), new Color(0.78f, 0.76f, 0.72f));
 
         // 吸顶灯
+        BuildColleagues();
         BuildCeilingLight(-16f, -1f);
         BuildCeilingLight(-12f, -1f);
         BuildCeilingLight(-16f, 3f);
@@ -1430,6 +1714,10 @@ public class KitchenSimulator : MonoBehaviour
         {
             shopOpen = !shopOpen;
         }
+        if (Input.GetKeyDown(KeyCode.N))
+        {
+            almanacOpen = !almanacOpen;
+        }
 
         // 按住 Tab 唤出鼠标（松开自动收回），Esc 也可释放
         bool wantMouse = Input.GetKey(KeyCode.Tab);
@@ -1477,20 +1765,25 @@ public class KitchenSimulator : MonoBehaviour
         player.transform.rotation = Quaternion.identity;
         lookYaw = 0f;
 
-        Material bodyMaterial = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
-        Material legMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
+        // 上衣与裤子用独立材质，便于服装店换装
+        playerClothMaterial = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
+        playerTrouserMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
+        Material bodyMaterial = playerClothMaterial;
+        Material legMaterial = playerTrouserMaterial;
 
         // 身体与四肢在世界中可见（低头能看见），头部隐藏避免遮挡视线
-        playerBody = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, bodyMaterial).transform;
+        GameObject torso = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, bodyMaterial);
+        playerBody = torso.transform;
+        playerClothRenderers.Add(torso.GetComponent<Renderer>());
 
         leftArmPivot = new GameObject("Left Arm Pivot").transform;
         leftArmPivot.SetParent(player.transform, false);
         leftArmPivot.localPosition = new Vector3(-0.32f, 1.1f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Left Arm", leftArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial);
+        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Left Arm", leftArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
         rightArmPivot = new GameObject("Right Arm Pivot").transform;
         rightArmPivot.SetParent(player.transform, false);
         rightArmPivot.localPosition = new Vector3(0.32f, 1.1f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Right Arm", rightArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial);
+        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Right Arm", rightArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
 
         leftLegPivot = new GameObject("Left Leg Pivot").transform;
         leftLegPivot.SetParent(player.transform, false);
@@ -1501,7 +1794,61 @@ public class KitchenSimulator : MonoBehaviour
         rightLegPivot.localPosition = new Vector3(0.13f, 0.68f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Right Leg", rightLegPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.16f, 0.56f, 0.16f), Quaternion.identity, legMaterial);
 
+        BuildOutfits();
         BuildViewmodel();
+    }
+
+    // ── 服装 ──────────────────────────────────────────────
+    private void BuildOutfits()
+    {
+        outfits.Add(new Outfit { name = "标准工装", price = 0, coat = new Color(0.16f, 0.34f, 0.48f), trouser = new Color(0.22f, 0.26f, 0.3f), owned = true });
+        outfits.Add(new Outfit { name = "耐磨劳保服", price = 260, coat = new Color(0.45f, 0.36f, 0.2f), trouser = new Color(0.3f, 0.27f, 0.22f) });
+        outfits.Add(new Outfit { name = "亮橙反光衣", price = 420, coat = new Color(0.92f, 0.45f, 0.12f), trouser = new Color(0.26f, 0.3f, 0.36f) });
+        outfits.Add(new Outfit { name = "深灰技师服", price = 520, coat = new Color(0.24f, 0.26f, 0.3f), trouser = new Color(0.17f, 0.18f, 0.2f) });
+        outfits.Add(new Outfit { name = "藏青监理装", price = 680, coat = new Color(0.12f, 0.2f, 0.4f), trouser = new Color(0.14f, 0.16f, 0.22f) });
+        outfits.Add(new Outfit { name = "枣红工装夹克", price = 840, coat = new Color(0.5f, 0.18f, 0.18f), trouser = new Color(0.24f, 0.22f, 0.22f) });
+        ApplyOutfit(0);
+    }
+
+    private void ApplyOutfit(int index)
+    {
+        if (index < 0 || index >= outfits.Count)
+        {
+            return;
+        }
+        currentOutfit = index;
+        Outfit outfit = outfits[index];
+        if (playerClothMaterial != null)
+        {
+            playerClothMaterial.color = outfit.coat;
+        }
+        if (playerTrouserMaterial != null)
+        {
+            playerTrouserMaterial.color = outfit.trouser;
+        }
+    }
+
+    private void BuyOutfit(int index)
+    {
+        if (index < 0 || index >= outfits.Count || outfits[index].owned)
+        {
+            if (index >= 0 && index < outfits.Count)
+            {
+                ApplyOutfit(index);
+                ShowToast("已换上「" + outfits[index].name + "」", 3f);
+            }
+            return;
+        }
+        Outfit outfit = outfits[index];
+        if (Cash < outfit.price)
+        {
+            ShowToast("现金不足，还差 ¥" + (outfit.price - Cash).ToString("N0"), 3f);
+            return;
+        }
+        AddExpense(outfit.price);
+        outfit.owned = true;
+        ApplyOutfit(index);
+        ShowToast("购入并换上「" + outfit.name + "」（¥" + outfit.price.ToString("N0") + "）", 4f);
     }
 
     // ── 工具背包 ──────────────────────────────────────────
@@ -1558,7 +1905,7 @@ public class KitchenSimulator : MonoBehaviour
             ShowToast("现金不足，还差 ¥" + (tool.price - Cash).ToString("N0"), 3f);
             return;
         }
-        expenses += tool.price;
+        AddExpense(tool.price);
         tool.unlocked = true;
         currentTool = index;
         BuildToolModel();
@@ -2234,13 +2581,12 @@ public class KitchenSimulator : MonoBehaviour
 
         if (repairingOrder != null)
         {
-            // 作业：机身前后推动 + 轻微旋转抖动
-            float t = Time.time * 16f;
-            toolAnim = Mathf.Lerp(toolAnim, 1f, Time.deltaTime * 6f);
-            float push = (Mathf.Sin(t) * 0.5f + 0.5f) * 0.09f;
-            float shake = Mathf.Sin(t * 2.4f) * 3f;
-            toolPivot.localPosition = basePosition + new Vector3(0f, push * 0.35f, push) + new Vector3(0f, 0f, 0f);
-            toolPivot.localRotation = Quaternion.Euler(baseEuler.x + push * 90f, baseEuler.y, baseEuler.z + shake);
+            // 每点一次左键：工具向前猛冲一下并抖动，随后回位，形成"施工"的手感
+            float s = toolStrike * toolStrike;
+            float push = s * 0.15f;
+            float shake = toolStrike * Mathf.Sin(Time.time * 58f) * 5.5f;
+            toolPivot.localPosition = basePosition + new Vector3(0f, push * 0.3f, push);
+            toolPivot.localRotation = Quaternion.Euler(baseEuler.x + push * 115f, baseEuler.y, baseEuler.z + shake);
         }
         else
         {
@@ -2320,6 +2666,16 @@ public class KitchenSimulator : MonoBehaviour
 
     private readonly List<Homeowner> homeowners = new List<Homeowner>();
 
+    // 办公室同事（可对话）
+    private class Colleague
+    {
+        public string name;
+        public Transform root;
+        public string[] lines;
+    }
+    private readonly List<Colleague> colleagues = new List<Colleague>();
+    private Colleague activeColleague;
+
     private bool TrySpawnHomeowner()
     {
         // 选一个"位置上还没有活跃工单"的房间×模板组合
@@ -2357,9 +2713,16 @@ public class KitchenSimulator : MonoBehaviour
 
         int pick = Random.Range(0, candidateRooms.Count);
 
-        // 从公司大门外走进来
+        // 40% 直接打电话预约，不出现 NPC
+        if (Random.value < 0.4f)
+        {
+            RegisterOrder(candidateRooms[pick], candidateTemplates[pick], "电话预约");
+            return true;
+        }
+
+        // 其余：本人到公司前台登记
         Vector3 spawn = new Vector3(-16.4f, GroundLevel, -11f);
-        float yaw = Mathf.Atan2(playerPosition.x - spawn.x, playerPosition.z - spawn.z) * Mathf.Rad2Deg;
+        float yaw = Mathf.Atan2(receptionPoint.x - spawn.x, receptionPoint.z - spawn.z) * Mathf.Rad2Deg;
         Color[] coats =
         {
             new Color(0.55f, 0.42f, 0.62f),
@@ -2392,6 +2755,34 @@ public class KitchenSimulator : MonoBehaviour
         return false;
     }
 
+    // 公司前台位置：户主来这里登记，而不是追着玩家跑
+    private readonly Vector3 receptionPoint = new Vector3(-13.2f, GroundLevel, -4.3f);
+
+    // 登记预约：生成带时间的工单
+    private void RegisterOrder(Room room, OrderTemplate template, string channel)
+    {
+        Vector3 site = room.center + template.offset;
+        site.y = 0f;
+
+        int cost = Mathf.RoundToInt(Random.Range(template.costMin, template.costMax + 1) / 100f) * 100;
+        Order order = new Order
+        {
+            id = ++orderSerial,
+            title = template.title,
+            room = room.name,
+            cause = template.cause,
+            plan = template.plan,
+            cost = cost,
+            site = site,
+            state = OrderState.Pending,
+            schedDay = DayIndex + (Random.value < 0.5f ? 0 : 1),
+            schedHour = Random.Range(9, 18)
+        };
+        BuildOrderMarker(order);
+        orders.Add(order);
+        ShowToast(channel + " 新工单 " + order.Code + " · " + order.room + " · " + order.title + "　预约 " + order.ScheduleText, 6f);
+    }
+
     private void UpdateHomeowners()
     {
         for (int i = homeowners.Count - 1; i >= 0; i--)
@@ -2405,19 +2796,16 @@ public class KitchenSimulator : MonoBehaviour
 
             if (owner.phase == 0)
             {
-                // 走向玩家（带碰撞，不会穿墙）
-                Vector3 delta = playerPosition - owner.rig.root.position;
+                // 走向公司前台登记（带碰撞，不会穿墙）——不再追着玩家跑
+                Vector3 delta = receptionPoint - owner.rig.root.position;
                 delta.y = 0f;
 
-                // 靠得够近，或被墙挡住太久（例如玩家关着门躲在屋里），就地说明情况
-                // 走到跟前就开始对话（一次只进行一场对话）
-                bool canTalk = dialogueIndex < 0 && introDone && talkTarget == null;
-                if (canTalk && (delta.magnitude <= 2.2f || owner.stuck > 5f))
+                if (delta.magnitude <= 1.1f || owner.stuck > 8f)
                 {
                     owner.phase = 1;
                     owner.moving = false;
-                    owner.timer = 90f;   // 兜底：对话异常时不会永远站着
-                    StartConversation(owner);
+                    owner.timer = 2.5f;   // 登记中
+                    FaceReception(owner);
                 }
                 else
                 {
@@ -2460,13 +2848,35 @@ public class KitchenSimulator : MonoBehaviour
             }
             else if (owner.phase == 1)
             {
-                // 对话中：站着面向玩家，等对话结束后由 EndConversation 切换到 phase 2
+                // 在前台登记
+                owner.moving = false;
+                FaceReception(owner);
+                owner.timer -= Time.deltaTime;
+                if (owner.timer <= 0f)
+                {
+                    FileReport(owner);
+                    // 玩家恰好在前台旁边的话可以聊两句，否则登记完就回家
+                    bool playerNearby = Distance2D(playerPosition, owner.rig.root.position) < 3.5f;
+                    if (playerNearby && dialogueIndex < 0 && talkTarget == null)
+                    {
+                        owner.phase = 3;
+                        owner.timer = 90f;
+                        StartConversation(owner);
+                    }
+                    else
+                    {
+                        owner.phase = 2;
+                    }
+                }
+            }
+            else if (owner.phase == 3)
+            {
+                // 与玩家对话中：等 EndConversation 把 phase 切到 2
                 owner.moving = false;
                 FacePlayer(owner, 5f);
                 owner.timer -= Time.deltaTime;
                 if (owner.timer <= 0f)
                 {
-                    // 兜底：对话异常中断时，避免户主永远站在这里
                     owner.phase = 2;
                 }
             }
@@ -2553,25 +2963,17 @@ public class KitchenSimulator : MonoBehaviour
     // 户主说明情况 → 生成工单 + 头顶气泡
     private void FileReport(Homeowner owner)
     {
-        Vector3 site = owner.room.center + owner.template.offset;
-        site.y = 0f;
+        RegisterOrder(owner.room, owner.template, "上门登记");
+    }
 
-        int cost = Mathf.RoundToInt(Random.Range(owner.template.costMin, owner.template.costMax + 1) / 100f) * 100;
-        Order order = new Order
+    private void FaceReception(Homeowner owner)
+    {
+        Vector3 look = receptionPoint - owner.rig.root.position;
+        look.y = 0f;
+        if (look.sqrMagnitude > 0.01f)
         {
-            id = ++orderSerial,
-            title = owner.template.title,
-            room = owner.room.name,
-            cause = owner.template.cause,
-            plan = owner.template.plan,
-            cost = cost,
-            site = site,
-            state = OrderState.Pending
-        };
-        BuildOrderMarker(order);
-        orders.Add(order);
-
-        ShowToast("新工单 " + order.Code + " · " + order.room + " · " + owner.template.title, 5f);
+            owner.rig.root.rotation = Quaternion.LookRotation(look);
+        }
     }
 
     private GameObject BuildBubble(Vector3 position, string text)
@@ -2731,10 +3133,62 @@ public class KitchenSimulator : MonoBehaviour
         }
         activeOrder = nearest;
 
-        if (activeOrder != null && Input.GetKeyDown(KeyCode.E))
+        // 附近有同事就优先提示聊天
+        activeColleague = null;
+        float best2 = 2.3f;
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            float d = Distance2D(playerPosition, colleagues[i].root.position);
+            if (d < best2)
+            {
+                best2 = d;
+                activeColleague = colleagues[i];
+            }
+        }
+        if (activeColleague != null && Input.GetKeyDown(KeyCode.E))
+        {
+            StartColleagueChat(activeColleague);
+            return;
+        }
+
+        // 维修改为「多次点击左键」：第一次点击开工，之后每点一次推进一格
+        if (activeOrder != null && Input.GetMouseButtonDown(0) && cursorLocked)
+        {
+            HandleRepairClick();
+        }
+    }
+
+    private void HandleRepairClick()
+    {
+        if (repairingOrder == null)
         {
             StartRepair(activeOrder);
+            toolStrike = 1f;
+            repairClicks = 1;
+            activeOrder.repairProgress = (float)repairClicks / RepairClicks;
+            return;
         }
+
+        repairClicks++;
+        toolStrike = 1f;
+        repairingOrder.repairProgress = Mathf.Clamp01((float)repairClicks / RepairClicks);
+
+        if (repairClicks >= RepairClicks)
+        {
+            CompleteRepair();
+        }
+    }
+
+    private void CompleteRepair()
+    {
+        repairingOrder.repairProgress = 1f;
+        repairingOrder.state = OrderState.Fixed;
+        AddIncome(repairingOrder.cost);
+        ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（业主支付 ¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
+
+        repairingOrder = null;
+        activeOrder = null;
+        repairClicks = 0;
     }
 
     private void StartRepair(Order order)
@@ -2742,6 +3196,7 @@ public class KitchenSimulator : MonoBehaviour
         repairingOrder = order;
         order.state = OrderState.Repairing;
         order.repairProgress = 0f;
+        repairClicks = 0;
 
         Vector3 direction = order.site - playerPosition;
         direction.y = 0f;
@@ -2750,26 +3205,15 @@ public class KitchenSimulator : MonoBehaviour
             player.transform.forward = direction.normalized;
         }
 
-        ShowToast("开始维修 " + order.Code + " · " + order.room + " · " + order.title, 3f);
+        ShowToast("开始维修 " + order.Code + " · 连续点击左键施工（共 " + RepairClicks + " 次）", 4f);
     }
 
     private void UpdateRepair()
     {
-        if (repairingOrder == null)
+        // 工具挥动/钻孔的余韵随时间衰减
+        if (toolStrike > 0f)
         {
-            return;
-        }
-
-        repairingOrder.repairProgress += Time.deltaTime / RepairDuration;
-        if (repairingOrder.repairProgress >= 1f)
-        {
-            repairingOrder.repairProgress = 1f;
-            repairingOrder.state = OrderState.Fixed;
-            income += repairingOrder.cost;
-            ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
-
-            repairingOrder = null;
-            activeOrder = null;
+            toolStrike = Mathf.Max(0f, toolStrike - Time.deltaTime * 4.5f);
         }
     }
 
@@ -2904,7 +3348,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
-            return new Rect(316f, 146f, 322f, shopOpen ? (56f + tools.Count * 32f) : 60f);
+            int rows = Mathf.Max(tools.Count, outfits.Count);
+            return new Rect(316f, 146f, 322f, shopOpen ? (122f + rows * 32f) : 60f);
         }
     }
     private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
@@ -2917,6 +3362,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawTaskList();
         DrawBag();
         DrawShop();
+        DrawAlmanac();
         DrawToolChip();
         DrawPromptPanel();
         DrawDialogue();
@@ -3056,10 +3502,11 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 44f), pendingColor);
         GUI.Label(new Rect(rect.x + 26f, rect.y + 16f, 280f, 28f), ProjectName, titleStyle);
-        GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 280f, 20f), ProjectSubtitle + "　·　当前：" + currentRoomName, smallStyle);
-        Fill(new Rect(rect.x + 22f, rect.y + 70f, rect.width - 44f, 1f), dividerColor);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 76f, 290f, 22f), "业主支付合计  ¥" + income.ToString("N0"), bodyStyle);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 98f, 290f, 22f), "道具支出 ¥" + expenses.ToString("N0") + "    现金 ¥" + Cash.ToString("N0"), bodyStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 300f, 18f), ProjectSubtitle + "　·　" + currentRoomName, smallStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText, smallStyle);
+        Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 290f, 22f), "累计收入 ¥" + income.ToString("N0") + "    成本 ¥" + expenses.ToString("N0"), bodyStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 290f, 22f), "净利 ¥" + (income - expenses).ToString("N0") + "    现金 ¥" + Cash.ToString("N0"), bodyStyle);
     }
 
     private void DrawTaskList()
@@ -3114,7 +3561,7 @@ public class KitchenSimulator : MonoBehaviour
         Color previous = GUI.color;
         GUI.color = StateTextColor(order);
         GUI.Label(new Rect(card.x + 22f, card.y + 23f, card.width - 32f, 18f),
-            StateText(order) + "　　¥" + order.cost.ToString("N0"), smallStyle);
+            StateText(order) + "　预约 " + order.ScheduleText + "　¥" + order.cost.ToString("N0"), smallStyle);
         GUI.color = previous;
     }
 
@@ -3191,6 +3638,7 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 道具商店（G 键，可展开/收起）──────────────────────
+    // ── 商店（G 召唤；←/→ 切分类，↑/↓ 选择，Enter 购买；也可鼠标点击）──
     private void DrawShop()
     {
         if (tools.Count == 0)
@@ -3201,10 +3649,9 @@ public class KitchenSimulator : MonoBehaviour
         Rect rect = ShopRect;
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), fixedColor);
-        GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 200f, 26f), "道具商店", titleStyle);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 200f, 26f), "商店", titleStyle);
         GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 240f, 18f), "现金 ¥" + Cash.ToString("N0"), smallStyle);
 
-        // 展开 / 收起按钮
         Rect toggle = new Rect(rect.x + rect.width - 74f, rect.y + 16f, 62f, 26f);
         bool hoverToggle = toggle.Contains(Event.current.mousePosition);
         DrawPanel(toggle, hoverToggle ? Color.Lerp(btnBlue, Color.white, 0.15f) : btnBlue, Color.clear);
@@ -3219,34 +3666,191 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
-        for (int i = 0; i < tools.Count; i++)
+        string[] tabs = { "工具店", "服装店" };
+        int itemCount = shopTab == 0 ? tools.Count : outfits.Count;
+        Rect tabBar = new Rect(rect.x + 12f, rect.y + 60f, rect.width - 24f, 30f);
+        float tabWidth = (tabBar.width - 8f) * 0.5f;
+        for (int i = 0; i < tabs.Length; i++)
         {
-            ToolInfo tool = tools[i];
-            Rect row = new Rect(rect.x + 10f, rect.y + 62f + i * 32f, rect.width - 20f, 28f);
-            bool hover = row.Contains(Event.current.mousePosition);
-            DrawPanel(row, hover ? new Color(1f, 1f, 1f, 0.08f) : new Color(1f, 1f, 1f, 0.03f), Color.clear);
-
-            Fill(new Rect(row.x + 10f, row.y + 9f, 10f, 10f), tool.color);
-            GUI.Label(new Rect(row.x + 28f, row.y + 4f, row.width - 130f, 20f), tool.name, cardTitleStyle);
-
-            if (tool.unlocked)
+            Rect tab = new Rect(tabBar.x + i * (tabWidth + 8f), tabBar.y, tabWidth, 30f);
+            Fill(tab, i == shopTab ? btnBlue : new Color(1f, 1f, 1f, 0.06f));
+            if (GUI.Button(tab, GUIContent.none, GUIStyle.none))
             {
-                GUI.Label(new Rect(row.x + row.width - 76f, row.y + 6f, 66f, 18f), "已拥有", smallStyle);
-                continue;
+                shopTab = i;
+                shopCursor = 0;
             }
-
-            bool afford = Cash >= tool.price;
-            GUI.Label(new Rect(row.x + row.width - 152f, row.y + 6f, 68f, 18f), "¥" + tool.price.ToString("N0"), smallStyle);
-
-            Rect buy = new Rect(row.x + row.width - 80f, row.y + 3f, 70f, 22f);
-            bool hoverBuy = buy.Contains(Event.current.mousePosition);
-            DrawPanel(buy, afford ? (hoverBuy ? Color.Lerp(btnBlue, Color.white, 0.18f) : btnBlue) : new Color(0.28f, 0.3f, 0.33f, 0.9f), Color.clear);
-            if (afford && GUI.Button(buy, GUIContent.none, GUIStyle.none))
-            {
-                BuyTool(i);
-            }
-            GUI.Label(buy, "购买", cardButtonStyle);
+            GUI.Label(tab, tabs[i], cardButtonStyle);
         }
+        GUI.Label(new Rect(rect.x + 12f, rect.y + rect.height - 22f, rect.width - 24f, 18f), "←/→ 切分类　↑/↓ 选择　Enter 购买", smallStyle);
+
+        if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.RightArrow))
+        {
+            shopTab = 1 - shopTab;
+            shopCursor = 0;
+            itemCount = shopTab == 0 ? tools.Count : outfits.Count;
+        }
+        if (Input.GetKeyDown(KeyCode.UpArrow))
+        {
+            shopCursor = (shopCursor - 1 + Mathf.Max(1, itemCount)) % Mathf.Max(1, itemCount);
+        }
+        if (Input.GetKeyDown(KeyCode.DownArrow))
+        {
+            shopCursor = (shopCursor + 1) % Mathf.Max(1, itemCount);
+        }
+        if (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter))
+        {
+            ActivateShopItem(shopCursor);
+        }
+
+        for (int i = 0; i < itemCount; i++)
+        {
+            Rect row = new Rect(rect.x + 10f, rect.y + 98f + i * 32f, rect.width - 20f, 28f);
+            bool hover = row.Contains(Event.current.mousePosition);
+            DrawPanel(row, i == shopCursor ? new Color(1f, 1f, 1f, 0.13f) : (hover ? new Color(1f, 1f, 1f, 0.08f) : new Color(1f, 1f, 1f, 0.03f)), Color.clear);
+
+            if (shopTab == 0)
+            {
+                ToolInfo tool = tools[i];
+                Fill(new Rect(row.x + 10f, row.y + 9f, 10f, 10f), tool.color);
+                GUI.Label(new Rect(row.x + 28f, row.y + 4f, row.width - 130f, 20f), tool.name, cardTitleStyle);
+                if (tool.unlocked)
+                {
+                    GUI.Label(new Rect(row.x + row.width - 76f, row.y + 6f, 66f, 18f), "已拥有", smallStyle);
+                    continue;
+                }
+                GUI.Label(new Rect(row.x + row.width - 152f, row.y + 6f, 68f, 18f), "¥" + tool.price.ToString("N0"), smallStyle);
+                bool afford = Cash >= tool.price;
+                Rect buy = new Rect(row.x + row.width - 80f, row.y + 3f, 70f, 22f);
+                DrawPanel(buy, afford ? btnBlue : new Color(0.28f, 0.3f, 0.33f, 0.9f), Color.clear);
+                if (afford && GUI.Button(buy, GUIContent.none, GUIStyle.none))
+                {
+                    BuyTool(i);
+                }
+                GUI.Label(buy, "购买", cardButtonStyle);
+            }
+            else
+            {
+                Outfit outfit = outfits[i];
+                Fill(new Rect(row.x + 10f, row.y + 9f, 10f, 10f), outfit.coat);
+                GUI.Label(new Rect(row.x + 28f, row.y + 4f, row.width - 130f, 20f), outfit.name, cardTitleStyle);
+                if (outfit.owned)
+                {
+                    bool wearing = i == currentOutfit;
+                    GUI.Label(new Rect(row.x + row.width - 76f, row.y + 6f, 66f, 18f), wearing ? "穿着中" : "已拥有", smallStyle);
+                    if (!wearing)
+                    {
+                        Rect wear = new Rect(row.x + row.width - 156f, row.y + 3f, 70f, 22f);
+                        DrawPanel(wear, btnBlue, Color.clear);
+                        if (GUI.Button(wear, GUIContent.none, GUIStyle.none))
+                        {
+                            ApplyOutfit(i);
+                        }
+                        GUI.Label(wear, "换上", cardButtonStyle);
+                    }
+                    continue;
+                }
+                GUI.Label(new Rect(row.x + row.width - 152f, row.y + 6f, 68f, 18f), "¥" + outfit.price.ToString("N0"), smallStyle);
+                bool affordOutfit = Cash >= outfit.price;
+                Rect buyOutfit = new Rect(row.x + row.width - 80f, row.y + 3f, 70f, 22f);
+                DrawPanel(buyOutfit, affordOutfit ? btnBlue : new Color(0.28f, 0.3f, 0.33f, 0.9f), Color.clear);
+                if (affordOutfit && GUI.Button(buyOutfit, GUIContent.none, GUIStyle.none))
+                {
+                    BuyOutfit(i);
+                }
+                GUI.Label(buyOutfit, "购买", cardButtonStyle);
+            }
+        }
+    }
+
+    private void ActivateShopItem(int index)
+    {
+        if (shopTab == 0)
+        {
+            BuyTool(index);
+        }
+        else
+        {
+            BuyOutfit(index);
+        }
+    }
+
+    // ── 日历 / 任务单 / 账目本（N 键）────────────────────
+    private Rect AlmanacRect { get { return new Rect(Screen.width * 0.5f - 300f, 96f, 600f, 380f); } }
+
+    private void DrawAlmanac()
+    {
+        if (!almanacOpen)
+        {
+            return;
+        }
+
+        Rect rect = AlmanacRect;
+        DrawPanel(rect, panelFill, panelBorder);
+        Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), speakerStyle.normal.textColor);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 300f, 26f), "日历 · 任务单 · 账目本", titleStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 300f, 18f), ClockText + "　·　N 收起", smallStyle);
+
+        float half = (rect.width - 36f) * 0.5f;
+        float top = rect.y + 66f;
+
+        // 左：日历 + 预约任务单
+        GUI.Label(new Rect(rect.x + 16f, top, half, 20f), "近期待办", cardTitleStyle);
+        Fill(new Rect(rect.x + 16f, top + 22f, half, 1f), dividerColor);
+
+        int shown = 0;
+        int schedShown = 0;
+        for (int day = DayIndex; day <= DayIndex + 2 && schedShown < 7; day++)
+        {
+            for (int i = 0; i < orders.Count && schedShown < 7; i++)
+            {
+                Order order = orders[i];
+                if (order.state == OrderState.Fixed || order.schedDay != day)
+                {
+                    continue;
+                }
+                string tag = day == DayIndex ? "今天" : "第" + day + "天";
+                Color previous = GUI.color;
+                GUI.color = order == activeOrder || order == repairingOrder ? workingColor : new Color(0.88f, 0.92f, 0.95f);
+                GUI.Label(new Rect(rect.x + 16f, top + 30f + schedShown * 20f, half, 18f),
+                    tag + " " + order.schedHour.ToString("D2") + ":00  " + order.room, smallStyle);
+                GUI.color = previous;
+                GUI.Label(new Rect(rect.x + 16f + half * 0.58f, top + 30f + schedShown * 20f, half * 0.42f, 18f),
+                    order.title, smallStyle);
+                schedShown++;
+            }
+        }
+        if (schedShown == 0)
+        {
+            GUI.Label(new Rect(rect.x + 16f, top + 30f, half, 18f), "暂无预约", smallStyle);
+        }
+
+        // 右：账目本
+        float rx = rect.x + 16f + half + 20f;
+        GUI.Label(new Rect(rx, top, half, 20f), "账目本", cardTitleStyle);
+        Fill(new Rect(rx, top + 22f, half, 1f), dividerColor);
+        GUI.Label(new Rect(rx, top + 28f, half, 18f), "日期　　　 收入　　成本", smallStyle);
+
+        for (int i = ledger.Count - 1; i >= 0 && shown < 5; i--)
+        {
+            LedgerDay entry = ledger[i];
+            string label = "第" + entry.day + "天";
+            GUI.Label(new Rect(rx, top + 48f + shown * 18f, half, 18f),
+                label + "　　¥" + entry.income.ToString("N0") + "　　¥" + entry.expense.ToString("N0"), smallStyle);
+            shown++;
+        }
+        if (shown == 0)
+        {
+            GUI.Label(new Rect(rx, top + 48f, half, 18f), "今天还没有进出账", smallStyle);
+        }
+
+        Fill(new Rect(rx, top + 158f, half, 1f), dividerColor);
+        GUI.Label(new Rect(rx, top + 166f, half, 20f), "累计收入　¥" + income.ToString("N0"), bodyStyle);
+        GUI.Label(new Rect(rx, top + 188f, half, 20f), "累计成本　¥" + expenses.ToString("N0"), bodyStyle);
+        Color prevColor = GUI.color;
+        GUI.color = new Color(0.55f, 0.9f, 0.75f);
+        GUI.Label(new Rect(rx, top + 212f, half, 22f), "净利润　　¥" + (income - expenses).ToString("N0"), hintStyle);
+        GUI.color = prevColor;
+        GUI.Label(new Rect(rx, top + 240f, half, 20f), "月薪 ¥" + MonthSalary.ToString("N0") + "（每 " + MonthDays + " 天发放）", smallStyle);
     }
 
     private void DrawPromptPanel()
@@ -3276,12 +3880,21 @@ public class KitchenSimulator : MonoBehaviour
 
             Rect button = new Rect(rect.x + rect.width - 150f, rect.y + 66f, 132f, 34f);
             DrawPanel(button, btnBlue, Color.clear);
-            GUI.Label(button, "按 [E] 维修", cardButtonStyle);
+            GUI.Label(button, "点击左键 维修", cardButtonStyle);
+            return;
+        }
+
+        if (activeColleague != null)
+        {
+            DrawPanel(rect, panelFill, panelBorder);
+            Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), activeColleague.name + "（同事）", titleStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f), "同事正在工位上，按 E 聊两句", bodyStyle);
             return;
         }
 
         DrawPanel(rect, new Color(0.04f, 0.06f, 0.08f, 0.6f), Color.clear);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 14f, rect.width - 44f, 24f), "系统自动派单中", bodyStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 14f, rect.width - 44f, 24f), "户主会到前台登记或电话预约", bodyStyle);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 38f, rect.width - 44f, 20f),
             CountActive() < MaxActiveOrders ? "下一张工单约 " + Mathf.CeilToInt(orderTimer) + " 秒后到达" : "当前工单已满，先完成现场维修", smallStyle);
     }
@@ -3290,7 +3903,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　G 商店　·　B 工具包　·　Q/滚轮 换工具　·　E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　G 商店　·　N 日历账目　·　B 工具包　·　Q/滚轮 换工具　·　E 维修", centerStyle);
     }
 
     private void DrawToast()
@@ -3418,7 +4031,8 @@ public class KitchenSimulator : MonoBehaviour
         Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
         return BudgetRect.Contains(point) || TaskListRect.Contains(point) || MinimapRect.Contains(point)
             || PromptRect.Contains(point) || ToolChipRect.Contains(point)
-            || (bagOpen && BagRect.Contains(point)) || ShopRect.Contains(point);
+            || (bagOpen && BagRect.Contains(point)) || ShopRect.Contains(point)
+            || (almanacOpen && AlmanacRect.Contains(point));
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
