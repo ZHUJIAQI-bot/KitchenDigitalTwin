@@ -348,7 +348,7 @@ public class KitchenSimulator : MonoBehaviour
         // WebGL 下限制阴影与逐像素光源开销，避免全屏时掉帧
         QualitySettings.shadowDistance = 45f;
         QualitySettings.shadowCascades = 1;
-        QualitySettings.pixelLightCount = 3;
+        QualitySettings.pixelLightCount = 6;
 
         // 相机最先创建：即使后续初始化抛异常，也能渲染出画面而不是全黑
         BuildCamera();
@@ -777,9 +777,9 @@ public class KitchenSimulator : MonoBehaviour
         lightObject.transform.position = basePosition + new Vector3(0.72f, 3.9f, 0f);
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Point;
-        light.range = 11f;
-        light.intensity = 1.5f;
-        light.color = new Color(1f, 0.88f, 0.62f);
+        light.range = 16f;
+        light.intensity = 3.2f;
+        light.color = new Color(1f, 0.9f, 0.68f);
         light.enabled = false;
         lampLights.Add(light);
 
@@ -810,7 +810,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (sunLight != null)
         {
-            sunLight.intensity = Mathf.Lerp(0.1f, sunBaseIntensity, dayFactor);
+            sunLight.intensity = Mathf.Lerp(0.28f, sunBaseIntensity, dayFactor);
             Color sunTone = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
             sunLight.color = Color.Lerp(sunTone, new Color(1f, 0.58f, 0.3f), duskWarmth * 0.8f);
             // 太阳高度角：正午最高约 62°，晨昏接近地平线约 12°
@@ -818,8 +818,9 @@ public class KitchenSimulator : MonoBehaviour
             float sunPitch = Mathf.Lerp(12f, 62f, dayFactor);
             sunLight.transform.rotation = Quaternion.Euler(sunPitch, -38f, 0f);
         }
-        RenderSettings.ambientLight = Color.Lerp(new Color(0.16f, 0.19f, 0.28f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
-        RenderSettings.ambientIntensity = Mathf.Lerp(0.55f, 1.1f, dayFactor);
+        // 夜间环境光不能压太暗，否则合批后的大网格几乎全黑
+        RenderSettings.ambientLight = Color.Lerp(new Color(0.34f, 0.38f, 0.48f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
+        RenderSettings.ambientIntensity = Mathf.Lerp(0.95f, 1.1f, dayFactor);
 
         // 昼夜切换 → 转场画面
         int phaseMark = IsNight ? 1 : 0;
@@ -1137,7 +1138,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildCeilingLight(-12f, -1f);
         BuildCeilingLight(-16f, 3f);
         BuildCeilingLight(-12f, 3f);
-        AddRoomLight(-14f, -1f, 16f);
+        AddRoomLight(-14f, -1f, 18f);
 
         rooms.Add(new Room { name = "装修公司", type = "公司", center = new Vector3(-14f, 0f, -1f), xMin = x0, xMax = x1, zMin = z0, zMax = z1 });
 
@@ -1187,8 +1188,8 @@ public class KitchenSimulator : MonoBehaviour
         lightObject.transform.position = new Vector3(x, WallHeight - 0.4f, z);
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Point;
-        light.range = range;
-        light.intensity = 1.1f;
+        light.range = range * 1.3f;
+        light.intensity = 2.4f;
         light.color = new Color(1f, 0.94f, 0.85f);
         generatedObjects.Add(lightObject);
     }
@@ -1409,7 +1410,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildCeilingLight(x1 + 3f, z0 + 3f);
         BuildCeilingLight(x0 + 3f, zMid + 3f);
         BuildCeilingLight(x1 + 3f, zMid + 3f);
-        AddRoomLight(x0 + 6f, zMid - 1f, 15f);
+        AddRoomLight(x0 + 6f, zMid - 1f, 17f);
 
         BuildHouseDoor(tag + " Door", x0 + 2f, x0 + 4.2f, z0);
 
