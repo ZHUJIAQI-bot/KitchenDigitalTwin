@@ -288,7 +288,10 @@ public class KitchenSimulator : MonoBehaviour
     private AudioClip footstepClip;
     private AudioClip[] voiceBlips;
     private float voiceTimer;
-    private float voiceBurst;   // 当前这句还剩多久发声，到 0 就安静下来
+    private float voiceBurst;
+    private ParticleSystem dustEffect;
+    private AudioSource workSource;
+    private AudioClip workClip;   // 当前这句还剩多久发声，到 0 就安静下来
     private float stepTimer;
 
     private readonly Vector3 spawnPosition = new Vector3(-14.8f, GroundLevel, 0.15f);
@@ -432,6 +435,7 @@ public class KitchenSimulator : MonoBehaviour
             // 注意：开场台词在 HandleDialogue 里按延迟构建，不要在这里再建一次，否则会重复两遍
             BuildTools();
             BuildAudio();
+            BuildEffects();
         }
         catch (System.Exception e)
         {
@@ -1606,10 +1610,10 @@ public class KitchenSimulator : MonoBehaviour
         string tag = index + "号楼";
 
         // 房间地板：整块铺装（用色区分房型，避免大量小方块拖慢 WebGL）
-        BuildRoomFloor(x0, x1, z0, zMid, new Color(0.82f, 0.72f, 0.58f));  // 客厅 木地板
-        BuildRoomFloor(x1, x2, z0, zMid, new Color(0.76f, 0.78f, 0.76f));  // 厨房 灰砖
-        BuildRoomFloor(x0, x1, zMid, z1, new Color(0.8f, 0.85f, 0.86f));   // 卫生间 浅蓝砖
-        BuildRoomFloor(x1, x2, zMid, z1, new Color(0.85f, 0.76f, 0.62f));  // 卧室 木地板
+        BuildRoomFloor(x0, x1, z0, zMid, new Color(0.82f, 0.72f, 0.58f), true);   // 客厅 木地板
+        BuildRoomFloor(x1, x2, z0, zMid, new Color(0.76f, 0.78f, 0.76f), false);  // 厨房 灰砖
+        BuildRoomFloor(x0, x1, zMid, z1, new Color(0.8f, 0.85f, 0.86f), false);   // 卫生间 浅蓝砖
+        BuildRoomFloor(x1, x2, zMid, z1, new Color(0.85f, 0.76f, 0.62f), true);   // 卧室 木地板
 
         // 外墙：前墙留门洞，其余墙开窗
         BuildWallWithOpenings("Res Front Wall", true, z0, x0, x2, 0.24f, wall,
@@ -1748,7 +1752,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         Material cab = MakeMaterial(new Color(0.5f, 0.36f, 0.22f), 0.02f, 0.4f);
         Material door = MakeMaterial(new Color(0.62f, 0.46f, 0.3f), 0.02f, 0.4f);
-        Material top = MakeMaterial(new Color(0.74f, 0.73f, 0.7f), 0.05f, 0.5f);
+        EnsureTextures();
+        Material top = TexturedMaterial(new Color(0.74f, 0.73f, 0.7f), stoneTexture, 3f);
         Material steel = MakeMaterial(new Color(0.72f, 0.75f, 0.78f), 0.75f, 0.7f);
         float counterZ = cz + 2.3f;
 
@@ -1873,7 +1878,8 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildTable(float x, float z, float sizeX, float sizeZ, float yaw, float height)
     {
         Transform g = CreateGroup("Table", new Vector3(x, 0f, z), yaw);
-        Material wood = MakeMaterial(new Color(0.6f, 0.43f, 0.26f), 0.02f, 0.4f);
+        EnsureTextures();
+        Material wood = TexturedMaterial(new Color(0.6f, 0.43f, 0.26f), woodTexture, 2f);
 
         DecoPart(PrimitiveType.Cube, "Top", g, new Vector3(0f, height, 0f), new Vector3(sizeX, 0.08f, sizeZ), Quaternion.identity, wood);
         float lx = sizeX * 0.5f - 0.12f;
@@ -1906,8 +1912,9 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildSofa(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Sofa", new Vector3(x, 0f, z), yaw);
-        Material fabric = MakeMaterial(new Color(0.4f, 0.47f, 0.53f), 0.02f, 0.45f);
-        Material cushion = MakeMaterial(new Color(0.5f, 0.58f, 0.64f), 0.02f, 0.45f);
+        EnsureTextures();
+        Material fabric = TexturedMaterial(new Color(0.4f, 0.47f, 0.53f), fabricTexture, 4f);
+        Material cushion = TexturedMaterial(new Color(0.5f, 0.58f, 0.64f), fabricTexture, 4f);
 
         DecoPart(PrimitiveType.Cube, "Base", g, new Vector3(0f, 0.22f, 0f), new Vector3(2f, 0.44f, 0.85f), Quaternion.identity, fabric);
         DecoPart(PrimitiveType.Cube, "Back", g, new Vector3(0f, 0.62f, -0.36f), new Vector3(2f, 0.55f, 0.14f), Quaternion.identity, fabric);
@@ -1921,8 +1928,9 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildWardrobe(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Wardrobe", new Vector3(x, 0f, z), yaw);
-        Material body = MakeMaterial(new Color(0.5f, 0.35f, 0.2f), 0.02f, 0.4f);
-        Material door = MakeMaterial(new Color(0.62f, 0.46f, 0.28f), 0.02f, 0.4f);
+        EnsureTextures();
+        Material body = TexturedMaterial(new Color(0.5f, 0.35f, 0.2f), woodTexture, 2f);
+        Material door = TexturedMaterial(new Color(0.62f, 0.46f, 0.28f), woodTexture, 2f);
         Material handle = MakeMaterial(new Color(0.82f, 0.78f, 0.45f), 0.7f, 0.6f);
 
         DecoPart(PrimitiveType.Cube, "Body", g, new Vector3(0f, 1.1f, 0f), new Vector3(1.7f, 2.2f, 0.6f), Quaternion.identity, body);
@@ -2011,11 +2019,15 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 几何/碰撞辅助 ─────────────────────────────────────
-    private void BuildRoomFloor(float xMin, float xMax, float zMin, float zMax, Color color)
+    private void BuildRoomFloor(float xMin, float xMax, float zMin, float zMax, Color color, bool wood)
     {
+        EnsureTextures();
         float cx = (xMin + xMax) * 0.5f;
         float cz = (zMin + zMax) * 0.5f;
-        CreateDecoCube("Room Floor", new Vector3(cx, 0.005f, cz), new Vector3(xMax - xMin, 0.01f, zMax - zMin), color);
+        Material floorSurface = wood
+            ? TexturedMaterial(color, woodTexture, 5f)
+            : TexturedMaterial(color, tileTexture, 5f);
+        CreateDecoCube("Room Floor", new Vector3(cx, 0.005f, cz), new Vector3(xMax - xMin, 0.01f, zMax - zMin), floorSurface);
         // 踢脚线
         Color trim = new Color(0.45f, 0.36f, 0.27f);
         CreateDecoCube("Skirting", new Vector3(cx, 0.07f, zMax - 0.12f), new Vector3(xMax - xMin, 0.14f, 0.05f), trim);
@@ -2703,6 +2715,11 @@ public class KitchenSimulator : MonoBehaviour
         voiceSource.spatialBlend = 0f;
         voiceSource.volume = 0.55f;
 
+        workSource = player.AddComponent<AudioSource>();
+        workSource.playOnAwake = false;
+        workSource.spatialBlend = 0f;
+        workClip = CreateWorkClip();
+
         footstepClip = CreateFootstepClip();
         voiceBlips = new AudioClip[5];
         float[] freqs = { 210f, 245f, 280f, 320f, 175f };
@@ -2710,6 +2727,85 @@ public class KitchenSimulator : MonoBehaviour
         {
             voiceBlips[i] = CreateBlipClip(freqs[i], 0.11f);
         }
+    }
+
+    // 施工特效：粉尘/碎屑粒子，每次点击左键迸发
+    private void BuildEffects()
+    {
+        GameObject fx = new GameObject("施工特效");
+        fx.transform.SetParent(transform, false);
+        dustEffect = fx.AddComponent<ParticleSystem>();
+
+        ParticleSystem.MainModule main = dustEffect.main;
+        main.startLifetime = 0.7f;
+        main.startSpeed = 2.4f;
+        main.startSize = 0.08f;
+        main.startColor = new Color(0.86f, 0.83f, 0.74f, 0.9f);
+        main.gravityModifier = 0.9f;
+        main.playOnAwake = false;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+        main.maxParticles = 240;
+
+        ParticleSystem.EmissionModule emission = dustEffect.emission;
+        emission.enabled = false;   // 由代码 Emit 触发
+
+        ParticleSystem.ShapeModule shape = dustEffect.shape;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 0.14f;
+
+        dustEffect.Stop();
+
+        // 粒子材质显式指定，避免打包时被裁掉
+        Shader particleShader = Shader.Find("Particles/Standard Unlit");
+        if (particleShader == null)
+        {
+            particleShader = Shader.Find("Sprites/Default");
+        }
+        if (particleShader != null)
+        {
+            Material particleMaterial = new Material(particleShader);
+            particleMaterial.color = Color.white;
+            ParticleSystemRenderer fxRenderer = fx.GetComponent<ParticleSystemRenderer>();
+            if (fxRenderer != null)
+            {
+                fxRenderer.sharedMaterial = particleMaterial;
+            }
+        }
+    }
+
+    private void EmitWorkEffect(Vector3 position)
+    {
+        if (dustEffect == null)
+        {
+            return;
+        }
+        dustEffect.transform.position = position + Vector3.up * 0.9f;
+        dustEffect.Emit(16);
+        if (workSource != null && workClip != null)
+        {
+            workSource.pitch = Random.Range(0.9f, 1.15f);
+            workSource.PlayOneShot(workClip, 0.55f);
+        }
+    }
+
+    // 施工音：短促冲击 + 噪声，模拟敲击/钻削
+    private static AudioClip CreateWorkClip()
+    {
+        const int rate = 44100;
+        int length = (int)(rate * 0.18f);
+        float[] data = new float[length];
+        System.Random rng = new System.Random(4242);
+        for (int i = 0; i < length; i++)
+        {
+            float t = (float)i / rate;
+            float envelope = Mathf.Exp(-t * 26f);
+            float impact = Mathf.Sin(2f * Mathf.PI * 160f * t) * 0.6f;
+            float grind = ((float)rng.NextDouble() * 2f - 1f) * 0.35f;
+            data[i] = (impact + grind) * envelope * 0.45f;
+        }
+        AudioClip clip = AudioClip.Create("Work", length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     private static AudioClip CreateFootstepClip()
@@ -4021,6 +4117,10 @@ public class KitchenSimulator : MonoBehaviour
     {
         repairClicks++;
         toolStrike = 1f;
+        if (repairingOrder != null)
+        {
+            EmitWorkEffect(repairingOrder.site);
+        }
         repairingOrder.repairProgress = Mathf.Clamp01((float)repairClicks / RepairClicks);
         if (repairClicks >= RepairClicks)
         {
@@ -5402,6 +5502,170 @@ public class KitchenSimulator : MonoBehaviour
 
     // 共享材质：同一颜色复用同一个 Material 实例，避免上千个物件各持一份材质导致无法批处理
     private static readonly Dictionary<Color, Material> simpleMaterials = new Dictionary<Color, Material>();
+
+    // ── 程序化贴图（不依赖任何美术资源，运行时生成）──────────
+    private static Texture2D woodTexture;
+    private static Texture2D tileTexture;
+    private static Texture2D brickTexture;
+    private static Texture2D fabricTexture;
+    private static Texture2D stoneTexture;
+
+    private static void EnsureTextures()
+    {
+        if (woodTexture != null)
+        {
+            return;
+        }
+        woodTexture = MakeWoodTexture();
+        tileTexture = MakeTileTexture();
+        brickTexture = MakeBrickTexture();
+        fabricTexture = MakeFabricTexture();
+        stoneTexture = MakeStoneTexture();
+    }
+
+    private static Texture2D NewTexture(int size)
+    {
+        Texture2D tex = new Texture2D(size, size, TextureFormat.RGB24, true);
+        tex.wrapMode = TextureWrapMode.Repeat;
+        tex.filterMode = FilterMode.Bilinear;
+        tex.hideFlags = HideFlags.HideAndDontSave;
+        return tex;
+    }
+
+    // 木纹：横向年轮 + 细噪声
+    private static Texture2D MakeWoodTexture()
+    {
+        const int size = 256;
+        Texture2D tex = NewTexture(size);
+        Color[] px = new Color[size * size];
+        System.Random rng = new System.Random(7);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float grain = Mathf.Sin((y + Mathf.Sin(x * 0.05f) * 6f) * 0.45f) * 0.5f + 0.5f;
+                grain = Mathf.Pow(grain, 0.6f);
+                float noise = (float)rng.NextDouble() * 0.06f - 0.03f;
+                float v = 0.72f + grain * 0.2f + noise;
+                px[y * size + x] = new Color(v, v * 0.82f, v * 0.62f);
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
+    }
+
+    // 瓷砖：网格缝
+    private static Texture2D MakeTileTexture()
+    {
+        const int size = 256;
+        const int cell = 64;
+        Texture2D tex = NewTexture(size);
+        Color[] px = new Color[size * size];
+        System.Random rng = new System.Random(11);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                bool grout = (x % cell < 3) || (y % cell < 3);
+                float noise = (float)rng.NextDouble() * 0.04f - 0.02f;
+                float v = grout ? 0.55f : (0.93f + noise);
+                px[y * size + x] = new Color(v, v, v);
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
+    }
+
+    // 砖墙：错缝砖块
+    private static Texture2D MakeBrickTexture()
+    {
+        const int size = 256;
+        const int bh = 26;
+        const int bw = 62;
+        Texture2D tex = NewTexture(size);
+        Color[] px = new Color[size * size];
+        System.Random rng = new System.Random(23);
+        for (int y = 0; y < size; y++)
+        {
+            int row = y / bh;
+            int offset = (row % 2 == 0) ? 0 : bw / 2;
+            for (int x = 0; x < size; x++)
+            {
+                int bx = (x + offset) % bw;
+                bool mortar = (y % bh < 3) || (bx < 3);
+                float tint = 0.86f + (float)rng.NextDouble() * 0.16f;
+                float v = mortar ? 0.72f : (0.62f * tint);
+                px[y * size + x] = new Color(v, v * 0.92f, v * 0.86f);
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
+    }
+
+    // 织物：细密交错纹
+    private static Texture2D MakeFabricTexture()
+    {
+        const int size = 128;
+        Texture2D tex = NewTexture(size);
+        Color[] px = new Color[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float weave = ((x % 4 < 2) == (y % 4 < 2)) ? 0.06f : -0.06f;
+                float v = 0.92f + weave;
+                px[y * size + x] = new Color(v, v, v);
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
+    }
+
+    // 石材：斑驳颗粒
+    private static Texture2D MakeStoneTexture()
+    {
+        const int size = 128;
+        Texture2D tex = NewTexture(size);
+        Color[] px = new Color[size * size];
+        System.Random rng = new System.Random(31);
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float n = (float)rng.NextDouble() * 0.14f - 0.07f;
+                float v = 0.95f + n;
+                px[y * size + x] = new Color(v, v, v * 0.98f);
+            }
+        }
+        tex.SetPixels(px);
+        tex.Apply();
+        return tex;
+    }
+
+    private static readonly Dictionary<string, Material> texturedMaterials = new Dictionary<string, Material>();
+
+    // 带贴图的共享材质（按 颜色+贴图+平铺 缓存，保证仍可合批）
+    private static Material TexturedMaterial(Color color, Texture2D tex, float tiling)
+    {
+        string key = color.ToString() + "|" + tex.name + "|" + tiling.ToString("F1");
+        Material material;
+        if (texturedMaterials.TryGetValue(key, out material) && material != null)
+        {
+            return material;
+        }
+        material = new Material(Shader.Find("Standard"));
+        material.color = color;
+        material.mainTexture = tex;
+        material.mainTextureScale = new Vector2(tiling, tiling);
+        material.SetFloat("_Metallic", 0.02f);
+        material.SetFloat("_Glossiness", 0.35f);
+        texturedMaterials[key] = material;
+        return material;
+    }
 
     private static Material SimpleMaterial(Color color)
     {

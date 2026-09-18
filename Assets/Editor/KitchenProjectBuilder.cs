@@ -105,6 +105,7 @@ public static class KitchenProjectBuilder
         "Standard",
         "Custom/Glass",
         "Unlit/Transparent Cutout",
+        "Particles/Standard Unlit",
         "Transparent/Cutout/Diffuse",
         "Legacy Shaders/Transparent/Diffuse",
     };
