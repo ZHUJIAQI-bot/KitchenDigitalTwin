@@ -1841,6 +1841,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 introStarted = true;
                 BuildIntroDialogue();
+                dialogueIndex = 0;   // 必须置 0，否则对话永远不开始、introDone 也永远不为 true（派单会整个停摆）
                 BeginLine();
             }
             return;
@@ -2289,6 +2290,7 @@ public class KitchenSimulator : MonoBehaviour
                 {
                     owner.phase = 1;
                     owner.moving = false;
+                    owner.timer = 90f;   // 兜底：对话异常时不会永远站着
                     StartConversation(owner);
                 }
                 else
@@ -2336,9 +2338,9 @@ public class KitchenSimulator : MonoBehaviour
                 owner.moving = false;
                 FacePlayer(owner, 5f);
                 owner.timer -= Time.deltaTime;
-                if (owner.timer > 30f)
+                if (owner.timer <= 0f)
                 {
-                    // 兜底：极端情况下避免永远站着
+                    // 兜底：对话异常中断时，避免户主永远站在这里
                     owner.phase = 2;
                 }
             }
