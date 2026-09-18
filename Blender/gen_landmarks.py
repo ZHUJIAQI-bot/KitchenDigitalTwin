@@ -157,7 +157,7 @@ def build_antenna(root, z0, z1, r_bot, r_top, white_mat, red_mat, tip_mat):
 def build_oriental_pearl(root):
     S = 0.15  # 真实米 → 游戏单位
 
-    body = make_material("LJ_Glow_PearlBody", (0.35, 0.37, 0.42), metallic=0.3, roughness=0.35)
+    body = make_material("LJ_Glow_PearlBody", (0.50, 0.53, 0.58), metallic=0.3, roughness=0.35)
     grid = make_material("LJ_Pearl_Grid", (0.38, 0.40, 0.45), metallic=0.35, roughness=0.4)
     glow_low = make_material("LJ_Glow_PearlLow", (0.62, 0.20, 0.38), metallic=0.0, roughness=0.05,
                              emissive=(0.95, 0.25, 0.55), emit_strength=3.0)
