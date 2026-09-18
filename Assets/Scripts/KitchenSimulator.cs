@@ -3180,7 +3180,7 @@ public class KitchenSimulator : MonoBehaviour
         // 躯干分胸/腰两段，比例更像人
         Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.48f, 0.44f, 0.3f), Quaternion.identity, clothMaterial).transform;
         MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Neck", body, new Vector3(0f, -0.27f, 0f), new Vector3(0.12f, 0.1f, 0.12f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Neck", body, new Vector3(0f, 0.24f, 0f), new Vector3(0.13f, 0.1f, 0.13f), Quaternion.identity, skinMaterial);
         MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, clothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Head", body, new Vector3(0f, 0.4f, 0f), new Vector3(0.3f, 0.3f, 0.3f), Quaternion.identity, skinMaterial);
@@ -3253,7 +3253,7 @@ public class KitchenSimulator : MonoBehaviour
             rig.rightArm.localRotation = Quaternion.Euler(-swing, 0f, 0f);
             rig.leftLeg.localRotation = Quaternion.Euler(-swing, 0f, 0f);
             rig.rightLeg.localRotation = Quaternion.Euler(swing, 0f, 0f);
-            rig.body.localPosition = new Vector3(0f, 0.85f + Mathf.Abs(Mathf.Sin(t)) * 0.04f, 0f);
+            rig.body.localPosition = new Vector3(0f, 1.02f + Mathf.Abs(Mathf.Sin(t)) * 0.04f, 0f);
         }
         else
         {
@@ -3261,7 +3261,7 @@ public class KitchenSimulator : MonoBehaviour
             rig.rightArm.localRotation = Quaternion.identity;
             rig.leftLeg.localRotation = Quaternion.identity;
             rig.rightLeg.localRotation = Quaternion.identity;
-            rig.body.localPosition = new Vector3(0f, 0.85f, 0f);
+            rig.body.localPosition = new Vector3(0f, 1.02f, 0f);
         }
     }
 
