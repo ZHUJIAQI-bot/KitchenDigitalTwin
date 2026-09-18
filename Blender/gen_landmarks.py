@@ -47,10 +47,20 @@ def new_object(name, data):
     return obj
 
 
-def add_sphere(name, location, radius, mat):
-    bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=radius, location=location)
+def add_sphere(name, location, radius, mat, segments=64, ring_count=32):
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=segments, ring_count=ring_count, radius=radius, location=location)
     obj = bpy.context.object
     obj.name = name
+    obj.data.materials.append(mat)
+    return obj
+
+
+def add_torus(name, location, major_r, minor_r, mat, rotation=(0, 0, 0)):
+    bpy.ops.mesh.primitive_torus_add(major_radius=major_r, minor_radius=minor_r,
+                                    major_segments=32, minor_segments=8, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.rotation_euler = rotation
     obj.data.materials.append(mat)
     return obj
 
@@ -117,43 +127,78 @@ def build_twisted_tower(name, base_r, top_r, height, twist_deg, sides, mat):
     return obj
 
 
-# ── 东方明珠 ──────────────────────────────────────────
+# ── 东方明珠（按真实参数缩放，S=0.15：468m → 70.2 游戏单位） ──
+def build_sphere_grid(root, name, center_z, radius, grid_mat):
+    """球面几何窗格：24 条经线 + 8 条纬线（线框，非贴图）"""
+    fr = 0.2  # 窗框线径（游戏单位，略夸张保证远景可见）
+    for i in range(1, 8):
+        lat = math.radians(-70.0 + i * 20.0)
+        r = radius * math.cos(lat)
+        z = center_z + radius * math.sin(lat)
+        parent_to(add_torus(name + "_Lat%02d" % i, (0, 0, z), r, fr, grid_mat), root)
+    for i in range(24):
+        lon = math.radians(i * 15.0)
+        parent_to(add_torus(name + "_Mer%02d" % i, (0, 0, center_z), radius, fr, grid_mat,
+                            rotation=(math.pi * 0.5, 0, lon)), root)
+
+
+def build_antenna(root, z0, z1, r_bot, r_top, white_mat, red_mat, tip_mat):
+    """天线桅杆：红白分段 + 顶部红色警示灯"""
+    segs = 6
+    seg_h = (z1 - z0) / segs
+    for i in range(segs):
+        z_c = z0 + seg_h * (i + 0.5)
+        r = r_bot + (r_top - r_bot) * ((i + 0.5) / segs)
+        parent_to(add_cylinder("Antenna_Seg%02d" % i, (0, 0, z_c), r, seg_h,
+                               red_mat if i % 2 == 0 else white_mat), root)
+    parent_to(add_sphere("Antenna_TipLight", (0, 0, z1), 0.3, tip_mat, segments=16, ring_count=8), root)
+
+
 def build_oriental_pearl(root):
-    body = make_material("LJ_Pearl_Body", (0.62, 0.42, 0.52), metallic=0.45, roughness=0.35)
-    glow_low = make_material("LJ_Glow_PearlLow", (1.0, 0.30, 0.55), metallic=0.0, roughness=0.25,
-                             emissive=(1.0, 0.25, 0.5), emit_strength=6.0)
-    glow_high = make_material("LJ_Glow_PearlHigh", (0.62, 0.45, 1.0), metallic=0.0, roughness=0.25,
-                              emissive=(0.5, 0.3, 1.0), emit_strength=6.0)
-    glow_small = make_material("LJ_Glow_PearlSmall", (1.0, 0.75, 0.4), metallic=0.0, roughness=0.25,
-                               emissive=(1.0, 0.7, 0.3), emit_strength=5.0)
+    S = 0.15  # 真实米 → 游戏单位
 
-    # 底座
-    p = add_cylinder("Pearl_Base", (0, 0, 0.75), 6.0, 1.5, body)
-    parent_to(p, root)
+    body = make_material("LJ_Pearl_Body", (0.42, 0.44, 0.47), metallic=0.9, roughness=0.25)
+    grid = make_material("LJ_Pearl_Grid", (0.16, 0.18, 0.19), metallic=0.8, roughness=0.35)
+    glow_low = make_material("LJ_Glow_PearlLow", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
+                             emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
+    glow_high = make_material("LJ_Glow_PearlHigh", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
+                              emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
+    glow_cap = make_material("LJ_Glow_PearlSmall", (0.74, 0.84, 0.90), metallic=0.0, roughness=0.05,
+                             emissive=(1.0, 0.85, 0.62), emit_strength=3.0)
+    ant_white = make_material("LJ_Pearl_AntennaWhite", (0.86, 0.86, 0.87), metallic=0.2, roughness=0.4)
+    ant_red = make_material("LJ_Pearl_AntennaRed", (0.72, 0.13, 0.11), metallic=0.2, roughness=0.4)
+    tip_light = make_material("LJ_Glow_AntennaTip", (1.0, 0.08, 0.04), metallic=0.0, roughness=0.3,
+                              emissive=(1.0, 0.04, 0.02), emit_strength=8.0)
 
-    # 三根斜腿：底部半径 5、顶部收拢到 1.2，从地面升到 20
+    # 三根擎天柱：r=4.5m，Z=0~250m，半径20m圆，90°/210°/330°
     for k in range(3):
-        th = math.radians(k * 120.0)
-        r_b, r_t, z_t = 5.0, 1.2, 20.0
-        d = Vector(((r_t - r_b) * math.cos(th), (r_t - r_b) * math.sin(th), z_t))
-        mid = Vector(((r_b + r_t) * 0.5 * math.cos(th), (r_b + r_t) * 0.5 * math.sin(th), z_t * 0.5))
-        leg = add_cylinder("Pearl_Leg%d" % k, tuple(mid), 0.9, d.length, body)
+        th = math.radians(90.0 + k * 120.0)
+        x = 20 * S * math.cos(th)
+        y = 20 * S * math.sin(th)
+        parent_to(add_cylinder("Pillar_%02d" % (k + 1), (x, y, 250 * S * 0.5), 4.5 * S, 250 * S, body), root)
+
+    # 三根斜柱：r=3.5m，底部半径35m Z=0，顶部连下球边缘 Z=68m，30°/150°/270°
+    for k in range(3):
+        th = math.radians(30.0 + k * 120.0)
+        p_bot = Vector((35 * S * math.cos(th), 35 * S * math.sin(th), 0.0))
+        p_top = Vector((25 * S * math.cos(th), 25 * S * math.sin(th), 68 * S))
+        d = p_top - p_bot
+        mid = (p_bot + p_top) * 0.5
+        leg = add_cylinder("Diagonal_%02d" % (k + 1), tuple(mid), 3.5 * S, d.length, body)
         leg.rotation_euler = d.normalized().to_track_quat('Z', 'Y').to_euler()
         parent_to(leg, root)
 
-    # 下球较低；上球用长细柱拉开距离，避免「洋葱/雪人」感；顶球(太空舱)很小
-    s1 = add_sphere("Pearl_BallLow", (0, 0, 21), 5.5, glow_low)        # 15.5~26.5
-    parent_to(s1, root)
-    c1 = add_cylinder("Pearl_ColLong", (0, 0, 32), 1.0, 11.0, body)    # 26.5~37.5
-    parent_to(c1, root)
-    s2 = add_sphere("Pearl_BallHigh", (0, 0, 40), 4.2, glow_high)      # 35.8~44.2
-    parent_to(s2, root)
-    c2 = add_cylinder("Pearl_ColShort", (0, 0, 47), 0.6, 5.0, body)    # 44.5~49.5
-    parent_to(c2, root)
-    s3 = add_sphere("Pearl_BallSmall", (0, 0, 51), 1.6, glow_small)    # 49.4~52.6
-    parent_to(s3, root)
-    ant = add_cylinder("Pearl_Antenna", (0, 0, 62), 0.22, 16.0, body)  # 54~70
-    parent_to(ant, root)
+    # 三个球体：下球 r=25m@68m、上球 r=22.5m@250m、太空舱 r=8m@350m
+    parent_to(add_sphere("Sphere_Lower", (0, 0, 68 * S), 25 * S, glow_low), root)
+    parent_to(add_sphere("Sphere_Upper", (0, 0, 250 * S), 22.5 * S, glow_high), root)
+    parent_to(add_sphere("Capsule", (0, 0, 350 * S), 8 * S, glow_cap), root)
+
+    # 球面窗格（下球/上球各 24 经线 × 8 纬线）
+    build_sphere_grid(root, "WindowGrid_Lower", 68 * S, 25 * S, grid)
+    build_sphere_grid(root, "WindowGrid_Upper", 250 * S, 22.5 * S, grid)
+
+    # 天线：Z=350m~468m，底 r=3m 顶 r=0.3m，红白涂装 + 红色警示灯
+    build_antenna(root, 350 * S, 468 * S, 3 * S, 0.3 * S, ant_white, ant_red, tip_light)
 
 
 # ── 上海中心 ──────────────────────────────────────────
