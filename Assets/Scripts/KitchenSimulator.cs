@@ -288,6 +288,7 @@ public class KitchenSimulator : MonoBehaviour
         public float xMin;
         public float xMax;
         public float z;
+        public bool manualOpen;
     }
     private readonly List<HouseDoor> houseDoors = new List<HouseDoor>();
     private Transform sensorDoorLeft;
@@ -433,9 +434,9 @@ public class KitchenSimulator : MonoBehaviour
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
         // WebGL 下限制阴影与逐像素光源开销，避免全屏时掉帧
-        QualitySettings.shadowDistance = 45f;
+        QualitySettings.shadowDistance = 30f;
         QualitySettings.shadowCascades = 1;
-        QualitySettings.pixelLightCount = 6;
+        QualitySettings.pixelLightCount = 4;
 
         // 相机最先创建：即使后续初始化抛异常，也能渲染出画面而不是全黑
         BuildCamera();
@@ -1003,19 +1004,30 @@ public class KitchenSimulator : MonoBehaviour
             if (night && c.state == 0)
             {
                 c.state = 1;
+                c.walkTimer = 0f;
                 SetColleagueStanding(c);
                 ShowToast(c.name + " 下班回家了", 3f);
             }
             else if (!night && c.state == 2)
             {
                 c.state = 3;
+                c.walkTimer = 0f;
                 c.rig.root.gameObject.SetActive(true);
                 SetColleagueStanding(c);
             }
 
+            c.walkTimer += Time.deltaTime;
+
             switch (c.state)
             {
                 case 1:
+                    // 兜底：走路超过 25 秒直接判定已到家，避免卡住死循环
+                    if (c.walkTimer > 25f)
+                    {
+                        c.state = 2;
+                        c.rig.root.gameObject.SetActive(false);
+                        break;
+                    }
                     // 先走到公司门口，再走出门外
                     if (WalkTo(c, new Vector3(-15.6f, 0f, -6.4f), 2.4f))
                     {
@@ -1027,6 +1039,13 @@ public class KitchenSimulator : MonoBehaviour
                     }
                     break;
                 case 3:
+                    // 兜底：返岗走路超过 25 秒直接归位
+                    if (c.walkTimer > 25f)
+                    {
+                        SetColleagueSeated(c);
+                        c.state = 0;
+                        break;
+                    }
                     if (WalkTo(c, c.seat, 2.4f))
                     {
                         SetColleagueSeated(c);
@@ -2094,8 +2113,8 @@ public class KitchenSimulator : MonoBehaviour
             }
             if (nearest != null)
             {
-                nearest.target = nearest.target > 0.5f ? 0f : 1f;
-                ShowToast(nearest.target > 0.5f ? "开门" : "关门", 1.5f);
+                nearest.manualOpen = !nearest.manualOpen;
+                ShowToast(nearest.manualOpen ? "门已设为常开" : "门已设为常闭（有人靠近仍会自动开）", 2.5f);
             }
         }
 
@@ -2106,15 +2125,22 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
+
+            // 有人（玩家或 NPC）靠近就自动开门，否则回到玩家手动设定的状态
+            Vector3 doorMid = new Vector3((door.xMin + door.xMax) * 0.5f, 0f, door.z);
+            bool someone = Distance2D(playerPosition, doorMid) < 2.7f || AnyoneNear(doorMid, 2.7f);
+            door.target = someone ? 1f : (door.manualOpen ? 1f : 0f);
+
             door.open = Mathf.Lerp(door.open, door.target, Time.deltaTime * 5f);
             door.pivot.localRotation = Quaternion.Euler(0f, -95f * door.open, 0f);
         }
 
-        // 公司感应玻璃门：靠近自动滑开
+        // 公司感应玻璃门：玩家或任何 NPC 靠近都自动滑开
         if (sensorDoorLeft != null && sensorDoorRight != null)
         {
-            float distance = Distance2D(playerPosition, sensorDoorCenter);
-            float target = distance < 3.2f ? 1f : 0f;
+            bool anyone = Distance2D(playerPosition, sensorDoorCenter) < 3.4f
+                || AnyoneNear(sensorDoorCenter, 3.4f);
+            float target = anyone ? 1f : 0f;
             sensorDoorOpen = Mathf.Lerp(sensorDoorOpen, target, Time.deltaTime * 4f);
             float slide = sensorDoorHalf * sensorDoorOpen;
             sensorDoorLeft.position = new Vector3(sensorDoorCenter.x - slide, 0f, sensorDoorCenter.z);
@@ -2703,6 +2729,29 @@ public class KitchenSimulator : MonoBehaviour
                 playerHeadRenderers[i].enabled = visible;   // 头部/安全帽/反光背心
             }
         }
+    }
+
+    // 某个位置附近是否有 NPC（同事 / 户主 / 工头）
+    private bool AnyoneNear(Vector3 point, float radius)
+    {
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            if (colleagues[i].rig != null && colleagues[i].rig.root != null
+                && colleagues[i].rig.root.gameObject.activeSelf
+                && Distance2D(colleagues[i].rig.root.position, point) < radius)
+            {
+                return true;
+            }
+        }
+        for (int i = 0; i < homeowners.Count; i++)
+        {
+            if (homeowners[i].rig != null && homeowners[i].rig.root != null
+                && Distance2D(homeowners[i].rig.root.position, point) < radius)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void SetCursorLock(bool locked)
@@ -4353,6 +4402,7 @@ public class KitchenSimulator : MonoBehaviour
         public string[] lines;
         public Vector3 seat;      // 工位坐标（坐下时的位置）
         public int state;         // 0 在岗 1 下班离场 2 已回家 3 返岗途中
+        public float walkTimer;   // 走路超时兜底
     }
     private readonly List<Colleague> colleagues = new List<Colleague>();
     private Colleague activeColleague;
