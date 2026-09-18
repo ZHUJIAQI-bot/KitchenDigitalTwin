@@ -80,7 +80,7 @@ def setup_render():
         pass
 
     # 优先 EEVEE（快），失败退回 Cycles
-    for name in ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE', 'CYCLES'):
+    for name in ('CYCLES', 'BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'):
         try:
             scene.render.engine = name
             break
@@ -89,8 +89,18 @@ def setup_render():
     print("渲染引擎：%s" % scene.render.engine)
 
     if scene.render.engine == 'CYCLES':
-        scene.cycles.samples = 64
+        scene.cycles.samples = 128
         scene.cycles.use_denoising = True
+        scene.cycles.max_bounces = 6
+        scene.cycles.diffuse_bounces = 4
+        scene.cycles.glossy_bounces = 3
+        scene.cycles.transmission_bounces = 2
+        scene.cycles.use_adaptive_sampling = True
+        scene.cycles.adaptive_threshold = 0.02
+        try:
+            scene.cycles.use_fast_gi = True
+        except Exception:
+            pass
     else:
         try:
             scene.eevee.taa_render_samples = 160
@@ -182,8 +192,8 @@ def main():
         ("05_办公区同事", (-15.2, 3.2, 1.7), (-17.2, -0.6, 1.1), 34,
          [((-15.5, 1.2, 2.6), 118, warm), ((-18.2, -2.2, 2.5), 62, warm)]),
         # 7. 客厅布置：沙发正对电视，茶几居中
-        ("07_客厅布置", (7.3, 1.9, 2.25), (3.9, 5.5, 0.9), 28,
-         [((5.6, 5.0, 2.55), 92, warm), ((4.0, 6.2, 2.45), 48, cool)]),
+        ("07_客厅布置", (7.72, 1.42, 2.15), (3.9, 3.05, 0.8), 19,
+         [((5.0, 2.4, 2.6), 92, warm), ((3.6, 4.6, 2.5), 48, cool)]),
         # 8. 卧室布置：床头靠墙，床头柜贴床头，衣柜靠墙
         ("08_卧室布置", (13.6, -0.4, 1.95), (9.6, -3.6, 0.85), 30,
          [((11.0, -2.0, 2.55), 92, warm), ((12.6, -4.2, 2.45), 48, cool)]),

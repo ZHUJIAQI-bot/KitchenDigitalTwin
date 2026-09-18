@@ -1886,14 +1886,15 @@ public class KitchenSimulator : MonoBehaviour
 
     private void BuildLivingRoom(float cx, float cz)
     {
-        // 常规客厅布置：电视靠西墙、沙发在对面正对电视、茶几居中
-        // 客厅南墙是入户门、北墙有通往卫生间的门，因此电视避开这两处开口
-        float axisZ = cz - 1.5f;                 // 坐具轴线
-        BuildTvUnit(cx - 2.5f, axisZ, 90f);      // 电视柜靠西墙，面朝东
-        BuildSofa(cx + 0.9f, axisZ, 270f);       // 沙发正对电视，面朝西
-        BuildTable(cx - 0.75f, axisZ, 1.2f, 0.7f, 0f, 0.45f);   // 茶几在两者之间
-        CreateDecoCube("Rug", new Vector3(cx - 0.75f, 0.02f, axisZ), new Vector3(2.8f, 0.02f, 2.20f), new Color(0.68f, 0.55f, 0.44f));
-        BuildPlant(cx + 2.4f, cz + 2.4f);        // 绿植摆角落
+        // 常规客厅布置：电视靠西墙、沙发正对电视、茶几居中
+        // 关键约束：入户门（南墙 x0+2 处，扇宽 2.2m）向内摆动的扫掠区内不能放家具，
+        // 否则开门会穿模；北墙还有一道通往卫生间的门洞，沙发也不能挡住
+        float axisZ = cz + 1.2f;                 // 坐具轴线北移，让开门的扫掠区
+        BuildTvUnit(cx - 2.1f, axisZ, 90f);      // 电视柜靠西墙，面朝东
+        BuildSofa(cx + 1.3f, axisZ, 270f);       // 沙发正对电视，面朝西
+        BuildTable(cx - 0.4f, axisZ, 1.2f, 0.7f, 0f, 0.45f);    // 茶几在两者之间
+        CreateDecoCube("Rug", new Vector3(cx - 0.4f, 0.02f, axisZ), new Vector3(3.0f, 0.02f, 2.20f), new Color(0.68f, 0.55f, 0.44f));
+        BuildPlant(cx + 2.4f, cz - 2.4f);        // 绿植移到东南角，远离门扇
     }
 
     // ── 家具构件 ──────────────────────────────────────────
