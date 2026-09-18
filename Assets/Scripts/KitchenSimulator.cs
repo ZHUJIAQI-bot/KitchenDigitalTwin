@@ -140,6 +140,11 @@ public class KitchenSimulator : MonoBehaviour
     private int lastPaidMonth = 1;
     private int lastDay = 1;
 
+    // 昼夜转场
+    private float fadeAlpha;
+    private string fadeMessage = string.Empty;
+    private int lastPhaseMark = -1;   // 0 白天 1 夜晚，用于检测昼夜切换
+
     // 日历 / 账目 / 服装 / 商店
     private class LedgerDay
     {
@@ -303,6 +308,7 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle cardButtonStyle;
     private GUIStyle speakerStyle;
     private GUIStyle dialogueStyle;
+    private GUIStyle transitionStyle;
 
     private int Cash { get { return StartCash + income - expenses; } }
 
@@ -368,6 +374,7 @@ public class KitchenSimulator : MonoBehaviour
         dialogueJustEnded = false;
 
         UpdateDayNight();
+        UpdateFade();
         HandleLook();
         HandleMovement();
         HandleDialogue();
@@ -583,13 +590,13 @@ public class KitchenSimulator : MonoBehaviour
     // ── 办公室同事 ────────────────────────────────────────
     private void BuildColleagues()
     {
-        BuildDeskStation(-17.4f, -4.2f, 180f, true);
-        BuildDeskStation(-14.4f, -1.2f, 180f, true);
-        BuildColleague(-17.4f, -5.15f, 0f, "老王", new Color(0.5f, 0.45f, 0.28f),
+        BuildDeskStation(-17.4f, -4.2f, 0f, true);
+        BuildDeskStation(-17.4f, -1.2f, 0f, true);
+        BuildColleague(-17.4f, -3.25f, 180f, "老王", new Color(0.5f, 0.45f, 0.28f),
             new[] { "这户的水路我看过，八成是角阀老化。", "记账别忘了，月底要对账的。", "累了就歇会儿，活儿是干不完的。" });
-        BuildColleague(-11.8f, -5.15f, 0f, "小李", new Color(0.28f, 0.42f, 0.4f),
+        BuildColleague(-11.8f, -3.25f, 180f, "小李", new Color(0.28f, 0.42f, 0.4f),
             new[] { "陈哥，新来那批工具箱在仓库左边。", "客户催得紧的话，先打个电话说一声。", "我刚学了个补墙的新做法，回头教你。" });
-        BuildColleague(-14.4f, -2.15f, 0f, "老赵", new Color(0.42f, 0.3f, 0.42f),
+        BuildColleague(-17.4f, -0.25f, 180f, "老赵", new Color(0.42f, 0.3f, 0.42f),
             new[] { "天黑路灯就亮，夜班注意脚下。", "工资发了？去服装店看看新工装。", "工具买齐了干活快，别舍不得花钱。" });
     }
 
@@ -670,20 +677,40 @@ public class KitchenSimulator : MonoBehaviour
         float dayFactor = Mathf.Clamp01(Mathf.Sin((GameHourFloat - 6f) / 12f * Mathf.PI));
         Color nightSky = new Color(0.06f, 0.09f, 0.17f);
         Color daySky = new Color(0.53f, 0.76f, 0.94f);
+        Color duskSky = new Color(0.86f, 0.52f, 0.32f);
+
+        // 黄昏/清晨的暖色过渡：日出前后与日落前后各约 1.5 小时
+        float sunrise = Mathf.Clamp01(1f - Mathf.Abs(GameHourFloat - 6.5f) / 1.5f);
+        float sunset = Mathf.Clamp01(1f - Mathf.Abs(GameHourFloat - 18f) / 1.5f);
+        float duskWarmth = Mathf.Max(sunrise, sunset);
 
         if (viewCamera != null)
         {
-            viewCamera.backgroundColor = Color.Lerp(nightSky, daySky, dayFactor);
+            Color sky = Color.Lerp(nightSky, daySky, dayFactor);
+            viewCamera.backgroundColor = Color.Lerp(sky, duskSky, duskWarmth * 0.55f);
         }
         if (sunLight != null)
         {
             sunLight.intensity = Mathf.Lerp(0.1f, sunBaseIntensity, dayFactor);
-            sunLight.color = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
+            Color sunTone = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
+            sunLight.color = Color.Lerp(sunTone, new Color(1f, 0.58f, 0.3f), duskWarmth * 0.8f);
             // 太阳随时间转动
             sunLight.transform.rotation = Quaternion.Euler(Mathf.Lerp(10f, 150f, 1f - dayFactor), -38f, 0f);
         }
         RenderSettings.ambientLight = Color.Lerp(new Color(0.16f, 0.19f, 0.28f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
         RenderSettings.ambientIntensity = Mathf.Lerp(0.55f, 1.1f, dayFactor);
+
+        // 昼夜切换 → 转场画面
+        int phaseMark = IsNight ? 1 : 0;
+        if (lastPhaseMark < 0)
+        {
+            lastPhaseMark = phaseMark;
+        }
+        else if (phaseMark != lastPhaseMark)
+        {
+            lastPhaseMark = phaseMark;
+            StartTransition(phaseMark == 1 ? "夜幕降临" : "天亮了");
+        }
 
         bool shouldLightUp = dayFactor < 0.22f;
         if (shouldLightUp != lampsOn)
@@ -743,6 +770,23 @@ public class KitchenSimulator : MonoBehaviour
         Today().expense += amount;
     }
 
+    // 转场淡入淡出
+    private void StartTransition(string message)
+    {
+        fadeAlpha = 1f;
+        fadeMessage = message;
+    }
+
+    private void UpdateFade()
+    {
+        if (fadeAlpha > 0f)
+        {
+            fadeAlpha = Mathf.Max(0f, fadeAlpha - Time.deltaTime / 1.8f);
+        }
+    }
+
+    private bool IsNight { get { return GameHour < 6 || GameHour >= 19; } }
+
     // 天黑后可以休息，直接跳到次日清晨 6:00
     private void RestUntilMorning()
     {
@@ -755,7 +799,8 @@ public class KitchenSimulator : MonoBehaviour
         float nextMorning = (Mathf.Floor(hoursNow / HoursPerDay) + 1f) * HoursPerDay + 6f;
         gameTime = nextMorning * RealSecondsPerGameHour;
         lastDay = DayIndex;
-        ShowToast("好好睡了一觉，天亮了", 4f);
+        lastPhaseMark = 0;
+        StartTransition("第 " + GameMonth + " 月 第 " + DayOfMonth + " 天 · 清晨");
     }
 
     private void PaySalary()
@@ -952,8 +997,9 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(-12.6f, 1.45f, z0 - 0.33f), 0.040f, new Color(0.15f, 0.15f, 0.18f));           // 2.05 × 1.24
 
         // 室内陈设
-        BuildDeskStation(-15f, -4.2f, 180f, false);
-        BuildDeskStation(-11.8f, -4.2f, 180f, true);
+        // 桌子 yaw 0：椅子在桌子北侧，人面朝南（正对大门）
+        BuildDeskStation(-15f, -4.2f, 0f, false);
+        BuildDeskStation(-11.8f, -4.2f, 0f, true);
         BuildCabinet(-19f, 3.4f, 0f);
         BuildPlant(-19.2f, -6f);
         BuildSofa(-9.6f, 2.6f, 270f);
@@ -2117,7 +2163,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildNpc()
     {
         // 工头站在工位旁，面朝玩家
-        bossRig = BuildCharacterModel("Boss", new Vector3(-14.5f, 0f, -1.2f), 196f,
+        bossRig = BuildCharacterModel("Boss", new Vector3(-14.6f, 0f, -1.6f), 200f,
             new Color(0.62f, 0.3f, 0.22f), new Color(0.83f, 0.66f, 0.5f));
     }
 
@@ -2704,9 +2750,17 @@ public class KitchenSimulator : MonoBehaviour
         public float timer;
         public float stuck;    // 被墙挡住累计时长
         public bool moving;
+        public int routeIndex; // 进门前按路点走，避免撞墙
     }
 
     private readonly List<Homeowner> homeowners = new List<Homeowner>();
+
+    // 进公司大门的路点：门外对齐门洞 → 穿过门 → 前台
+    private static readonly Vector3[] homeownerRoute =
+    {
+        new Vector3(-16.4f, 0f, -9.0f),
+        new Vector3(-16.2f, 0f, -5.4f),
+    };
 
     // 办公室同事（可对话）
     private class Colleague
@@ -2838,11 +2892,21 @@ public class KitchenSimulator : MonoBehaviour
 
             if (owner.phase == 0)
             {
-                // 走向公司前台登记（带碰撞，不会穿墙）——不再追着玩家跑
-                Vector3 delta = receptionPoint - owner.rig.root.position;
-                delta.y = 0f;
+                // 按路点走：大门外 → 门洞 → 前台。直线过去会撞在门边的墙上
+                Vector3 target = owner.routeIndex < homeownerRoute.Length
+                    ? new Vector3(homeownerRoute[owner.routeIndex].x, owner.rig.root.position.y, homeownerRoute[owner.routeIndex].z)
+                    : receptionPoint;
 
-                if (delta.magnitude <= 1.1f || owner.stuck > 8f)
+                Vector3 delta = target - owner.rig.root.position;
+                delta.y = 0f;
+                if (delta.magnitude <= 0.7f && owner.routeIndex < homeownerRoute.Length)
+                {
+                    owner.routeIndex++;
+                    delta = target - owner.rig.root.position;
+                }
+
+                bool atReception = Distance2D(owner.rig.root.position, receptionPoint) <= 1.1f;
+                if (atReception || owner.stuck > 8f)
                 {
                     owner.phase = 1;
                     owner.moving = false;
@@ -3213,6 +3277,11 @@ public class KitchenSimulator : MonoBehaviour
         }
         else if (activeOrder != null)
         {
+            if (IsNight)
+            {
+                ShowToast("天黑了，收工吧 —— 按 R 回驻地休息，明天再干", 4f);
+                return;
+            }
             StartRepair(activeOrder);
             AdvanceRepair();
         }
@@ -3419,6 +3488,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawHintBar();
         DrawToast();
         DrawStartOverlay();
+        DrawTransition();
         DrawStartError();
     }
 
@@ -3533,6 +3603,22 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, new Color(0.04f, 0.06f, 0.08f, 0.92f), panelBorder);
         GUI.Label(new Rect(rect.x + 20f, rect.y + 16f, rect.width - 40f, 26f), "点击画面开始", titleStyle);
         GUI.Label(new Rect(rect.x + 20f, rect.y + 44f, rect.width - 40f, 22f), "锁定鼠标后可转动视角　·　按住 Tab 可唤出鼠标", smallStyle);
+    }
+
+    // 昼夜转场：黑屏 + 居中文字
+    private void DrawTransition()
+    {
+        if (fadeAlpha <= 0f)
+        {
+            return;
+        }
+        Fill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0f, 0f, 0f, fadeAlpha));
+        if (fadeAlpha > 0.25f)
+        {
+            GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01((fadeAlpha - 0.25f) / 0.5f));
+            GUI.Label(new Rect(0f, Screen.height * 0.5f - 24f, Screen.width, 48f), fadeMessage, transitionStyle);
+            GUI.color = Color.white;
+        }
     }
 
     private void DrawStartError()
@@ -4058,6 +4144,7 @@ public class KitchenSimulator : MonoBehaviour
         cardButtonStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
         speakerStyle = new GUIStyle(GUI.skin.label) { fontSize = 19, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.98f, 0.86f, 0.6f) } };
         dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, wordWrap = true, normal = { textColor = new Color(0.94f, 0.95f, 0.96f) } };
+        transitionStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.96f, 0.93f, 0.86f) } };
 
         Font font = UiFont;
         if (font != null)
@@ -4073,6 +4160,7 @@ public class KitchenSimulator : MonoBehaviour
             cardButtonStyle.font = font;
             speakerStyle.font = font;
             dialogueStyle.font = font;
+            transitionStyle.font = font;
         }
     }
 
