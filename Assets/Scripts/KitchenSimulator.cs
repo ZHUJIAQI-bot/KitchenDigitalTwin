@@ -133,6 +133,9 @@ public class KitchenSimulator : MonoBehaviour
     private Light sunLight;
     private float sunBaseIntensity = 1.15f;
     private readonly List<Light> lampLights = new List<Light>();
+    private readonly List<Light> roomLights = new List<Light>();
+    private Material cityWindowMaterial;
+    private readonly Color cityWindowDayTone = new Color(0.78f, 0.83f, 0.88f);
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -746,7 +749,8 @@ public class KitchenSimulator : MonoBehaviour
     // ── 小区路灯（天黑自动亮）──────────────────────────────
     private void BuildStreetLamps()
     {
-        lampOnMaterial = MakeMaterial(new Color(1f, 0.9f, 0.62f), 0f, 0.6f);
+        // 灯罩自发光：点光源在灯罩内部，照不到球体外表面，必须靠 emission 才会"亮"
+        lampOnMaterial = MakeGlow(new Color(1f, 0.9f, 0.62f), 1.6f);
         lampOffMaterial = MakeMaterial(new Color(0.42f, 0.44f, 0.46f), 0.1f, 0.4f);
         Material pole = MakeMaterial(new Color(0.3f, 0.32f, 0.34f), 0.6f, 0.55f);
 
@@ -778,7 +782,7 @@ public class KitchenSimulator : MonoBehaviour
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Point;
         light.range = 16f;
-        light.intensity = 3.2f;
+        light.intensity = 2.2f;
         light.color = new Color(1f, 0.9f, 0.68f);
         light.enabled = false;
         lampLights.Add(light);
@@ -810,7 +814,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (sunLight != null)
         {
-            sunLight.intensity = Mathf.Lerp(0.28f, sunBaseIntensity, dayFactor);
+            sunLight.intensity = Mathf.Lerp(0.2f, sunBaseIntensity, dayFactor);
             Color sunTone = Color.Lerp(new Color(0.62f, 0.72f, 1f), new Color(1f, 0.96f, 0.86f), dayFactor);
             sunLight.color = Color.Lerp(sunTone, new Color(1f, 0.58f, 0.3f), duskWarmth * 0.8f);
             // 太阳高度角：正午最高约 62°，晨昏接近地平线约 12°
@@ -819,8 +823,8 @@ public class KitchenSimulator : MonoBehaviour
             sunLight.transform.rotation = Quaternion.Euler(sunPitch, -38f, 0f);
         }
         // 夜间环境光不能压太暗，否则合批后的大网格几乎全黑
-        RenderSettings.ambientLight = Color.Lerp(new Color(0.34f, 0.38f, 0.48f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
-        RenderSettings.ambientIntensity = Mathf.Lerp(0.95f, 1.1f, dayFactor);
+        RenderSettings.ambientLight = Color.Lerp(new Color(0.25f, 0.28f, 0.37f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
+        RenderSettings.ambientIntensity = Mathf.Lerp(0.78f, 1.1f, dayFactor);
 
         // 昼夜切换 → 转场画面
         int phaseMark = IsNight ? 1 : 0;
@@ -847,6 +851,26 @@ public class KitchenSimulator : MonoBehaviour
                 if (lampGlobes[i] != null)
                 {
                     lampGlobes[i].sharedMaterial = lampsOn ? lampOnMaterial : lampOffMaterial;
+                }
+            }
+            // 室内灯：白天全灭
+            for (int i = 0; i < roomLights.Count; i++)
+            {
+                roomLights[i].enabled = lampsOn;
+            }
+            // 远处城市的窗户亮起（假装屋里开着灯）
+            if (cityWindowMaterial != null)
+            {
+                if (lampsOn)
+                {
+                    cityWindowMaterial.EnableKeyword("_EMISSION");
+                    cityWindowMaterial.SetColor("_EmissionColor", new Color(1f, 0.84f, 0.55f) * 1.15f);
+                    cityWindowMaterial.color = new Color(1f, 0.9f, 0.66f);
+                }
+                else
+                {
+                    cityWindowMaterial.DisableKeyword("_EMISSION");
+                    cityWindowMaterial.color = cityWindowDayTone;
                 }
             }
         }
@@ -958,7 +982,9 @@ public class KitchenSimulator : MonoBehaviour
             new Color(0.52f, 0.55f, 0.6f),
             new Color(0.36f, 0.42f, 0.52f),
         };
-        Color windowTone = new Color(0.78f, 0.83f, 0.88f);
+        // 所有城市窗户共用一个材质实例：合批后只需改它就能整片点亮
+        cityWindowMaterial = MakeMaterial(cityWindowDayTone, 0f, 0.4f);
+        Color windowTone = cityWindowDayTone;
         Color roofTone = new Color(0.34f, 0.37f, 0.42f);
         Color metalTone = new Color(0.6f, 0.63f, 0.67f);
 
@@ -1015,7 +1041,7 @@ public class KitchenSimulator : MonoBehaviour
         for (int b = 1; b < bands; b++)
         {
             CreateDecoCube("City Windows", new Vector3(basePosition.x, b * 4.2f - 0.2f, basePosition.z - depth * 0.5f - 0.06f),
-                new Vector3(width * 0.84f, 1.05f, 0.1f), windowTone);
+                new Vector3(width * 0.84f, 1.05f, 0.1f), cityWindowMaterial);
         }
 
         if (!detailed)
@@ -1189,8 +1215,10 @@ public class KitchenSimulator : MonoBehaviour
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Point;
         light.range = range * 1.3f;
-        light.intensity = 2.4f;
+        light.intensity = 1.7f;
         light.color = new Color(1f, 0.94f, 0.85f);
+        light.enabled = false;   // 白天不开灯
+        roomLights.Add(light);
         generatedObjects.Add(lightObject);
     }
 
@@ -4322,6 +4350,19 @@ public class KitchenSimulator : MonoBehaviour
         {
             material.EnableKeyword("_EMISSION");
             material.SetColor("_EmissionColor", color * 0.4f);
+            material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
+        }
+        return material;
+    }
+
+    // 自发光材质：灯罩、城市窗户用它才能"自己亮"，而不是靠外部光照
+    private Material MakeGlow(Color color, float intensity)
+    {
+        Material material = MakeMaterial(color, 0f, 0.6f);
+        if (material.HasProperty("_EmissionColor"))
+        {
+            material.EnableKeyword("_EMISSION");
+            material.SetColor("_EmissionColor", color * intensity);
             material.globalIlluminationFlags = MaterialGlobalIlluminationFlags.None;
         }
         return material;
