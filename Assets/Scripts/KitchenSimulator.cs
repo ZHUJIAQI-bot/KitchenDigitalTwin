@@ -938,7 +938,7 @@ public class KitchenSimulator : MonoBehaviour
         colleagues.Add(new Colleague
         {
             name = name, rig = rig, lines = lines,
-            seat = new Vector3(x, -0.15f, z), state = 0
+            seat = new Vector3(x, -0.15f, z), seatYaw = yaw, state = 0
         });
     }
 
@@ -958,6 +958,7 @@ public class KitchenSimulator : MonoBehaviour
     private void SetColleagueSeated(Colleague c)
     {
         c.rig.root.position = c.seat;
+        c.rig.root.rotation = Quaternion.Euler(0f, c.seatYaw, 0f);   // 关键：恢复面朝工位
         c.rig.leftLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
         c.rig.rightLeg.localRotation = Quaternion.Euler(-55f, 0f, 0f);
         c.rig.leftKnee.localRotation = Quaternion.Euler(55f, 0f, 0f);
@@ -4401,6 +4402,7 @@ public class KitchenSimulator : MonoBehaviour
         public CharacterRig rig;
         public string[] lines;
         public Vector3 seat;      // 工位坐标（坐下时的位置）
+        public float seatYaw;     // 工位朝向（坐下时面朝工位）
         public int state;         // 0 在岗 1 下班离场 2 已回家 3 返岗途中
         public float walkTimer;   // 走路超时兜底
     }
