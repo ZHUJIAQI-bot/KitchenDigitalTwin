@@ -1086,10 +1086,10 @@ public class KitchenSimulator : MonoBehaviour
         // 江面（黄浦江）——放在地标正前方、略高于草坪，确保醒目可见
         CreateDecoCube("River", new Vector3(30f, -0.04f, -42f), new Vector3(320f, 0.2f, 26f), NightLight(new Color(0.14f, 0.35f, 0.55f)));
 
-        BuildOrientalPearl(c + new Vector3(-38f, 0f, 12f));
-        BuildShanghaiTower(c + new Vector3(-10f, 0f, -4f));
-        BuildWorldFinancial(c + new Vector3(10f, 0f, 3f));
-        BuildJinMao(c + new Vector3(28f, 0f, -6f));
+        SpawnLandmark("Models/Lujiazui/OrientalPearl", c + new Vector3(-38f, 0f, 12f));
+        SpawnLandmark("Models/Lujiazui/ShanghaiTower", c + new Vector3(-10f, 0f, -4f));
+        SpawnLandmark("Models/Lujiazui/SWFC", c + new Vector3(10f, 0f, 3f));
+        SpawnLandmark("Models/Lujiazui/JinMao", c + new Vector3(28f, 0f, -6f));
 
         // 周边高层群，形成密集的现代化天际线（置于地标之后）
         Color[] bodyTones =
@@ -1123,86 +1123,32 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    // 东方明珠：立柱 + 球体 + 天线
-    private void BuildOrientalPearl(Vector3 b)
+    // 加载 Blender 导出的地标模型（Resources），并收集发光材质供夜间点灯
+    private void SpawnLandmark(string path, Vector3 position)
     {
-        Material body = MakeMaterial(new Color(0.62f, 0.45f, 0.5f), 0.15f, 0.6f);
-        Material glow = NightLight(new Color(1f, 0.35f, 0.55f));
-        Material glow2 = NightLight(new Color(0.6f, 0.45f, 1f));
-
-        CreateDecoCylinder("Pearl Mast", b + new Vector3(0f, 31f, 0f), 1.6f, 62f, Quaternion.identity, body);
-        CreateDecoSphere("Pearl Ball Low", b + new Vector3(0f, 28f, 0f), 6.5f, glow);
-        CreateDecoSphere("Pearl Ball High", b + new Vector3(0f, 43f, 0f), 5f, glow2);
-        CreateDecoCylinder("Pearl Cabin", b + new Vector3(0f, 52f, 0f), 2.2f, 4f, Quaternion.identity, glow);
-        CreateDecoCylinder("Pearl Spire", b + new Vector3(0f, 59f, 0f), 0.35f, 12f, Quaternion.identity, body);
-        // 三根斜撑（绕立柱 120° 均布，底部略外张）
-        for (int i = 0; i < 3; i++)
+        GameObject prefab = Resources.Load<GameObject>(path);
+        if (prefab == null)
         {
-            float ang = i * 120f;
-            Vector3 offset = Quaternion.Euler(0f, ang, 0f) * new Vector3(2.8f, 0f, 0f);
-            CreateDecoCylinder("Pearl Leg", b + offset + new Vector3(0f, 10f, 0f), 0.9f, 20f, Quaternion.Euler(0f, ang, 10f), body);
+            Debug.LogWarning("未找到地标模型: " + path);
+            return;
         }
-    }
-
-    // 上海中心：分段微扭转、逐渐收分
-    private void BuildShanghaiTower(Vector3 b)
-    {
-        Material shell = MakeMaterial(new Color(0.42f, 0.5f, 0.6f), 0.35f, 0.7f);
-        Material glow = NightLight(new Color(0.4f, 0.8f, 1f));
-        int segs = 8;
-        float y = 0f;
-        for (int i = 0; i < segs; i++)
+        GameObject instance = Instantiate(prefab, position, Quaternion.identity, transform);
+        instance.name = path;
+        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
+        for (int i = 0; i < renderers.Length; i++)
         {
-            float w = 12f - i * 0.8f;
-            float segH = 7.5f;
-            CreateDecoCube("SH Tower", new Vector3(b.x, y + segH * 0.5f, b.z), new Vector3(w, segH, w * 0.82f),
-                Quaternion.Euler(0f, i * 6.5f, 0f), shell);
-            // 每段顶部的玻璃幕墙亮带
-            if (i % 2 == 0)
+            Material[] mats = renderers[i].sharedMaterials;
+            for (int j = 0; j < mats.Length; j++)
             {
-                CreateDecoCube("SH Band", new Vector3(b.x, y + segH - 1.1f, b.z), new Vector3(w * 1.02f, 0.55f, w * 0.84f),
-                    Quaternion.Euler(0f, i * 6.5f, 0f), glow);
+                Material m = mats[j];
+                if (m != null && m.name.Contains("LJ_Glow"))
+                {
+                    m.DisableKeyword("_EMISSION");
+                    nightLightMaterials.Add(m);
+                }
             }
-            y += segH;
         }
-        CreateDecoCylinder("SH Spire", new Vector3(b.x, y + 5f, b.z), 0.45f, 10f, Quaternion.identity, glow);
-    }
-
-    // 环球金融中心：顶部梯形开口（用两侧立柱 + 顶梁近似）
-    private void BuildWorldFinancial(Vector3 b)
-    {
-        Material body = MakeMaterial(new Color(0.5f, 0.56f, 0.64f), 0.4f, 0.75f);
-        Material glow = NightLight(new Color(1f, 0.85f, 0.45f));
-
-        CreateDecoCube("SWFC Body", new Vector3(b.x, 25f, b.z), new Vector3(15f, 50f, 9f), body);
-        // 顶部两侧立柱，中间留出标志性开口
-        CreateDecoCube("SWFC Pillar L", new Vector3(b.x - 4.6f, 53f, b.z), new Vector3(3.4f, 12f, 9f), body);
-        CreateDecoCube("SWFC Pillar R", new Vector3(b.x + 4.6f, 53f, b.z), new Vector3(3.4f, 12f, 9f), body);
-        CreateDecoCube("SWFC Beam", new Vector3(b.x, 60f, b.z), new Vector3(15f, 2.4f, 9f), body);
-        // 竖向灯光带
-        for (int i = -1; i <= 1; i++)
-        {
-            CreateDecoCube("SWFC Strip", new Vector3(b.x + i * 5.5f, 25f, b.z - 4.6f), new Vector3(0.7f, 48f, 0.16f), glow);
-        }
-        CreateDecoCube("SWFC Crown", new Vector3(b.x, 62f, b.z), new Vector3(15.6f, 1.3f, 9.4f), glow);
-    }
-
-    // 金茂大厦：层叠塔身 + 尖顶
-    private void BuildJinMao(Vector3 b)
-    {
-        Material body = MakeMaterial(new Color(0.55f, 0.5f, 0.44f), 0.3f, 0.7f);
-        Material glow = NightLight(new Color(1f, 0.62f, 0.3f));
-
-        CreateDecoCube("JM T1", new Vector3(b.x, 11f, b.z), new Vector3(16f, 22f, 13.5f), body);
-        CreateDecoCube("JM T2", new Vector3(b.x, 28f, b.z), new Vector3(13f, 12f, 11f), body);
-        CreateDecoCube("JM T3", new Vector3(b.x, 40f, b.z), new Vector3(10.5f, 12f, 8.8f), body);
-        CreateDecoCube("JM T4", new Vector3(b.x, 50f, b.z), new Vector3(8f, 8f, 6.8f), body);
-        CreateDecoCylinder("JM Spire", new Vector3(b.x, 60f, b.z), 0.5f, 12f, Quaternion.identity, glow);
-
-        // 每层收分处的环向灯带
-        CreateDecoCube("JM Ring1", new Vector3(b.x, 22.3f, b.z), new Vector3(16.3f, 0.6f, 13.8f), glow);
-        CreateDecoCube("JM Ring2", new Vector3(b.x, 34.3f, b.z), new Vector3(13.3f, 0.6f, 11.3f), glow);
-        CreateDecoCube("JM Ring3", new Vector3(b.x, 46.3f, b.z), new Vector3(10.8f, 0.6f, 9.1f), glow);
+        generatedObjects.Add(instance);
     }
 
     private void BuildStreetLamps()
