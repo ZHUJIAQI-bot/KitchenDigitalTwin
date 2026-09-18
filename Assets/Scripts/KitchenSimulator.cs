@@ -321,6 +321,43 @@ public class KitchenSimulator : MonoBehaviour
     private string startError;
     private bool dialogueJustEnded;
 
+    // ── 登录 / 本地账户 ───────────────────────────────────
+    // 说明：GitHub Pages 是静态托管，没有服务端数据库。
+    // 这里用 PlayerPrefs（浏览器 localStorage）做本地账户存储，
+    // 逻辑集中在 AccountStore 里，将来接真实后端只需替换这一个类。
+    private bool loggedIn;
+    private string loginUser = "";
+    private string loginPass = "";
+    private string loginMessage = "";
+    private string currentAccount = "";
+    private int loginTab;                 // 0 登录 1 注册 2 外观
+    private int custCoat;
+    private int custTrouser;
+    private Material playerSkinMaterial;
+
+    private static readonly Color[] CoatPalette =
+    {
+        new Color(0.16f, 0.34f, 0.48f),   // 标准工装蓝
+        new Color(0.45f, 0.36f, 0.2f),    // 劳保卡其
+        new Color(0.92f, 0.45f, 0.12f),   // 反光橙
+        new Color(0.24f, 0.26f, 0.3f),    // 技师深灰
+        new Color(0.12f, 0.2f, 0.4f),     // 监理藏青
+        new Color(0.5f, 0.18f, 0.18f),    // 枣红夹克
+        new Color(0.28f, 0.42f, 0.34f),   // 军绿
+        new Color(0.55f, 0.5f, 0.62f),    // 浅紫
+    };
+
+    private static readonly Color[] TrouserPalette =
+    {
+        new Color(0.22f, 0.26f, 0.3f),    // 深蓝灰
+        new Color(0.3f, 0.27f, 0.22f),    // 卡其
+        new Color(0.16f, 0.17f, 0.19f),   // 近黑
+        new Color(0.4f, 0.42f, 0.45f),    // 浅灰
+    };
+
+    private static readonly string[] CoatNames = { "工装蓝", "劳保卡其", "反光橙", "技师灰", "监理藏青", "枣红", "军绿", "浅紫" };
+    private static readonly string[] TrouserNames = { "深蓝灰", "卡其", "近黑", "浅灰" };
+
     private static Font uiFont;
     private static bool uiFontLoaded;
 
@@ -377,6 +414,9 @@ public class KitchenSimulator : MonoBehaviour
             startError = e.GetType().Name + ": " + e.Message;
             Debug.LogError("初始化失败：" + e);
         }
+
+        // 登录界面需要鼠标；登录后再锁定
+        SetCursorLock(false);
     }
 
     private void Update()
@@ -387,6 +427,13 @@ public class KitchenSimulator : MonoBehaviour
         UpdateDayNight();
         UpdateFade();
         HandleLook();
+
+        // 未登录：只渲染场景供预览，屏蔽一切操作
+        if (!loggedIn)
+        {
+            return;
+        }
+
         HandleMovement();
         HandleDialogue();
         HandleShopInput();
@@ -598,6 +645,71 @@ public class KitchenSimulator : MonoBehaviour
         // 窗棂
         Vector3 bar = alongX ? new Vector3(0.05f, height, 0.07f) : new Vector3(0.07f, height, 0.05f);
         CreateDecoCube("Window Mullion", position, bar, new Color(0.55f, 0.53f, 0.5f));
+    }
+
+    // ── 本地账户存储（将来替换为真实后端只需改这个类）──────
+    private static class AccountStore
+    {
+        private const string Prefix = "kitchen_account_";
+
+        public static bool Exists(string user)
+        {
+            return PlayerPrefs.HasKey(Prefix + user.ToLowerInvariant());
+        }
+
+        // 简易散列：仅用于避免明文存储，演示项目不做真实加密
+        private static string Hash(string input)
+        {
+            int h = 17;
+            for (int i = 0; i < input.Length; i++)
+            {
+                h = h * 31 + input[i];
+            }
+            return h.ToString("X8");
+        }
+
+        public static void Save(string user, string password, int coat, int trouser)
+        {
+            string value = Hash(password) + "|" + coat + "|" + trouser;
+            PlayerPrefs.SetString(Prefix + user.ToLowerInvariant(), value);
+            PlayerPrefs.Save();
+        }
+
+        public static bool TryLoad(string user, string password, out int coat, out int trouser)
+        {
+            coat = 0;
+            trouser = 0;
+            string key = Prefix + user.ToLowerInvariant();
+            if (!PlayerPrefs.HasKey(key))
+            {
+                return false;
+            }
+            string[] parts = PlayerPrefs.GetString(key).Split('|');
+            if (parts.Length < 3)
+            {
+                return false;
+            }
+            if (parts[0] != Hash(password))
+            {
+                return false;
+            }
+            int.TryParse(parts[1], out coat);
+            int.TryParse(parts[2], out trouser);
+            return true;
+        }
+
+        public static void UpdateAppearance(string user, int coat, int trouser)
+        {
+            string key = Prefix + user.ToLowerInvariant();
+            if (!PlayerPrefs.HasKey(key))
+            {
+                return;
+            }
+            string[] parts = PlayerPrefs.GetString(key).Split('|');
+            string hash = parts.Length > 0 ? parts[0] : "0";
+            PlayerPrefs.SetString(key, hash + "|" + coat + "|" + trouser);
+            PlayerPrefs.Save();
+        }
     }
 
     // ── 静态几何合批：把上千个装饰物按材质合并，draw call 从 1600+ 降到几十 ──
@@ -1970,7 +2082,7 @@ public class KitchenSimulator : MonoBehaviour
                 SetCursorLock(false);
             }
         }
-        else if (!cursorLocked && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
+        else if (loggedIn && !cursorLocked && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
         {
             // WebGL 需要一次点击才能锁定鼠标
             SetCursorLock(true);
@@ -1992,6 +2104,195 @@ public class KitchenSimulator : MonoBehaviour
         cursorLocked = locked;
         Cursor.lockState = locked ? CursorLockMode.Locked : CursorLockMode.None;
         Cursor.visible = !locked;
+    }
+
+    // ── 登录界面 ──────────────────────────────────────────
+    private void ApplyAppearance(int coat, int trouser)
+    {
+        custCoat = Mathf.Clamp(coat, 0, CoatPalette.Length - 1);
+        custTrouser = Mathf.Clamp(trouser, 0, TrouserPalette.Length - 1);
+        if (playerClothMaterial != null)
+        {
+            playerClothMaterial.color = CoatPalette[custCoat];
+        }
+        if (playerTrouserMaterial != null)
+        {
+            playerTrouserMaterial.color = TrouserPalette[custTrouser];
+        }
+        // 同步到服装列表的第一件（标准工装），让换装界面显示一致
+        if (outfits.Count > 0)
+        {
+            outfits[0].coat = CoatPalette[custCoat];
+            outfits[0].trouser = TrouserPalette[custTrouser];
+        }
+    }
+
+    private void EnterGame(string accountName)
+    {
+        currentAccount = accountName;
+        loggedIn = true;
+        if (accountName != "游客")
+        {
+            AccountStore.UpdateAppearance(accountName, custCoat, custTrouser);
+        }
+        SetCursorLock(true);
+        ShowToast("欢迎，" + accountName + "　·　按 B 看工具包，G 开商店，N 看日历账目", 7f);
+    }
+
+    private void TryLogin()
+    {
+        if (string.IsNullOrEmpty(loginUser))
+        {
+            loginMessage = "请输入用户名";
+            return;
+        }
+        int coat, trouser;
+        if (AccountStore.TryLoad(loginUser, loginPass, out coat, out trouser))
+        {
+            ApplyAppearance(coat, trouser);
+            EnterGame(loginUser);
+        }
+        else
+        {
+            loginMessage = AccountStore.Exists(loginUser) ? "密码不正确" : "该用户名不存在，请先注册";
+        }
+    }
+
+    private void TryRegister()
+    {
+        if (string.IsNullOrEmpty(loginUser) || loginPass.Length < 3)
+        {
+            loginMessage = "用户名不能为空，密码至少 3 位";
+            return;
+        }
+        if (AccountStore.Exists(loginUser))
+        {
+            loginMessage = "该用户名已被注册";
+            return;
+        }
+        AccountStore.Save(loginUser, loginPass, custCoat, custTrouser);
+        loginMessage = "注册成功，已自动登录";
+        EnterGame(loginUser);
+    }
+
+    private void DrawLogin()
+    {
+        if (loggedIn)
+        {
+            return;
+        }
+
+        Fill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.04f, 0.06f, 0.09f, 0.82f));
+
+        float width = 420f;
+        float height = 330f;
+        Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
+
+        GUI.Label(new Rect(rect.x + 24f, rect.y + 18f, width - 48f, 30f), "焕新家装 · 员工登录", titleStyle);
+        GUI.Label(new Rect(rect.x + 24f, rect.y + 46f, width - 48f, 20f), "本地账户（浏览器保存）　·　未登录无法开工", smallStyle);
+
+        string[] tabs = { "登录", "注册", "外观" };
+        float tabW = (width - 48f - 16f) / 3f;
+        for (int i = 0; i < tabs.Length; i++)
+        {
+            Rect tab = new Rect(rect.x + 24f + i * (tabW + 8f), rect.y + 74f, tabW, 30f);
+            Fill(tab, i == loginTab ? btnBlue : new Color(1f, 1f, 1f, 0.07f));
+            if (GUI.Button(tab, GUIContent.none, GUIStyle.none))
+            {
+                loginTab = i;
+                loginMessage = string.Empty;
+            }
+            GUI.Label(tab, tabs[i], cardButtonStyle);
+        }
+
+        float y = rect.y + 118f;
+        if (loginTab != 2)
+        {
+            GUI.Label(new Rect(rect.x + 24f, y, 70f, 24f), "用户名", bodyStyle);
+            loginUser = GUI.TextField(new Rect(rect.x + 96f, y - 2f, width - 130f, 28f), loginUser, 16);
+            loginPass = GUI.PasswordField(new Rect(rect.x + 96f, y + 34f, width - 130f, 28f), loginPass, '*', 16);
+            GUI.Label(new Rect(rect.x + 24f, y + 36f, 70f, 24f), "密码", bodyStyle);
+
+            Rect action = new Rect(rect.x + 24f, y + 76f, width - 48f, 40f);
+            DrawPanel(action, btnBlue, Color.clear);
+            if (GUI.Button(action, GUIContent.none, GUIStyle.none))
+            {
+                if (loginTab == 0)
+                {
+                    TryLogin();
+                }
+                else
+                {
+                    TryRegister();
+                }
+            }
+            GUI.Label(action, loginTab == 0 ? "登 录" : "注 册", buttonStyle);
+        }
+        else
+        {
+            DrawAppearancePicker(rect, y);
+        }
+
+        GUI.Label(new Rect(rect.x + 24f, rect.y + height - 74f, width - 48f, 20f), loginMessage, smallStyle);
+
+        Rect guest = new Rect(rect.x + 24f, rect.y + height - 50f, width - 48f, 34f);
+        DrawPanel(guest, new Color(0.22f, 0.24f, 0.28f, 0.95f), Color.clear);
+        if (GUI.Button(guest, GUIContent.none, GUIStyle.none))
+        {
+            ApplyAppearance(custCoat, custTrouser);
+            EnterGame("游客");
+        }
+        GUI.Label(guest, "以游客身份进入（不保存进度）", cardButtonStyle);
+    }
+
+    private void DrawAppearancePicker(Rect rect, float y)
+    {
+        // 上衣
+        GUI.Label(new Rect(rect.x + 24f, y - 4f, 200f, 22f), "上衣颜色", bodyStyle);
+        Rect coatLeft = new Rect(rect.x + 24f, y + 20f, 34f, 30f);
+        Rect coatRight = new Rect(rect.x + rect.width - 58f, y + 20f, 34f, 30f);
+        Rect coatSwatch = new Rect(rect.x + 66f, y + 20f, rect.width - 132f, 30f);
+        if (ArrowButton(coatLeft, "<"))
+        {
+            custCoat = (custCoat - 1 + CoatPalette.Length) % CoatPalette.Length;
+            ApplyAppearance(custCoat, custTrouser);
+        }
+        if (ArrowButton(coatRight, ">"))
+        {
+            custCoat = (custCoat + 1) % CoatPalette.Length;
+            ApplyAppearance(custCoat, custTrouser);
+        }
+        Fill(coatSwatch, CoatPalette[custCoat]);
+        GUI.Label(coatSwatch, CoatNames[custCoat], cardButtonStyle);
+
+        // 裤子
+        float y2 = y + 62f;
+        GUI.Label(new Rect(rect.x + 24f, y2 - 4f, 200f, 22f), "裤子颜色", bodyStyle);
+        Rect legLeft = new Rect(rect.x + 24f, y2 + 20f, 34f, 30f);
+        Rect legRight = new Rect(rect.x + rect.width - 58f, y2 + 20f, 34f, 30f);
+        Rect legSwatch = new Rect(rect.x + 66f, y2 + 20f, rect.width - 132f, 30f);
+        if (ArrowButton(legLeft, "<"))
+        {
+            custTrouser = (custTrouser - 1 + TrouserPalette.Length) % TrouserPalette.Length;
+            ApplyAppearance(custCoat, custTrouser);
+        }
+        if (ArrowButton(legRight, ">"))
+        {
+            custTrouser = (custTrouser + 1) % TrouserPalette.Length;
+            ApplyAppearance(custCoat, custTrouser);
+        }
+        Fill(legSwatch, TrouserPalette[custTrouser]);
+        GUI.Label(legSwatch, TrouserNames[custTrouser], cardButtonStyle);
+    }
+
+    private bool ArrowButton(Rect rect, string label)
+    {
+        bool hover = rect.Contains(Event.current.mousePosition);
+        Fill(rect, hover ? Color.Lerp(btnBlue, Color.white, 0.2f) : btnBlue);
+        bool clicked = GUI.Button(rect, GUIContent.none, GUIStyle.none);
+        GUI.Label(rect, label, cardButtonStyle);
+        return clicked;
     }
 
     // ── 玩家 ──────────────────────────────────────────────
@@ -3720,6 +4021,7 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
     private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
+    private Rect LoginRect { get { return new Rect((Screen.width - 420f) * 0.5f, (Screen.height - 330f) * 0.5f, 420f, 330f); } }
 
     private void OnGUI()
     {
@@ -3737,6 +4039,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawToast();
         DrawStartOverlay();
         DrawTransition();
+        DrawLogin();
         DrawStartError();
     }
 
@@ -4456,7 +4759,7 @@ public class KitchenSimulator : MonoBehaviour
         return BudgetRect.Contains(point) || TaskListRect.Contains(point) || MinimapRect.Contains(point)
             || PromptRect.Contains(point) || ToolChipRect.Contains(point)
             || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
-            || (almanacOpen && AlmanacRect.Contains(point));
+            || (almanacOpen && AlmanacRect.Contains(point)) || (!loggedIn);
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
