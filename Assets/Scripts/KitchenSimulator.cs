@@ -77,6 +77,7 @@ public class KitchenSimulator : MonoBehaviour
         public string name;     // 例如 "1号楼 厨房"
         public string type;     // 厨房 / 客厅 / 卧室 / 卫生间
         public Vector3 center;
+        public Vector3 doorPoint;   // 自家入户门口，户主说完要回这里
         public float xMin;
         public float xMax;
         public float zMin;
@@ -215,8 +216,13 @@ public class KitchenSimulator : MonoBehaviour
     }
     private readonly List<DialogueLine> dialogue = new List<DialogueLine>();
     private int dialogueIndex = -1;
+    private bool introStarted;
     private bool introDone;
     private float introDelay = 1.2f;
+    private float typeTimer;
+    private const float DialogueTypeTime = 1e6f;   // 单句最大显示时长（用于逐字进度）
+    private const float TypeCharsPerSecond = 34f;  // 逐字显示速度
+    private Homeowner talkTarget;                  // 对话结束后要登记工单的户主
     private CharacterRig bossRig;
 
     // 小地图
@@ -245,6 +251,8 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle centerStyle;
     private GUIStyle cardTitleStyle;
     private GUIStyle cardButtonStyle;
+    private GUIStyle speakerStyle;
+    private GUIStyle dialogueStyle;
 
     private int Cash { get { return StartCash + income - expenses; } }
 
@@ -838,11 +846,12 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildRoof(tag + " Roof", x0 + 6f, zMid - 1f, 12f, 12f, roofColor);
 
-        // 房间
-        AddRoom(tag + " 客厅", "客厅", x0, x1, z0, zMid);
-        AddRoom(tag + " 厨房", "厨房", x1, x2, z0, zMid);
-        AddRoom(tag + " 卫生间", "卫生间", x0, x1, zMid, z1);
-        AddRoom(tag + " 卧室", "卧室", x1, x2, zMid, z1);
+        // 房间（同一栋楼共用同一个入户门位置）
+        Vector3 doorPoint = new Vector3(x0 + 3.1f, GroundLevel, z0 + 1.6f);
+        AddRoom(tag + " 客厅", "客厅", x0, x1, z0, zMid, doorPoint);
+        AddRoom(tag + " 厨房", "厨房", x1, x2, z0, zMid, doorPoint);
+        AddRoom(tag + " 卫生间", "卫生间", x0, x1, zMid, z1, doorPoint);
+        AddRoom(tag + " 卧室", "卧室", x1, x2, zMid, z1, doorPoint);
 
         BuildLivingRoom(x0 + 3f, z0 + 3f);
         BuildKitchenRoom(x1 + 3f, z0 + 3f);
@@ -862,13 +871,14 @@ public class KitchenSimulator : MonoBehaviour
         CreateWorldLabel(index + "号楼", new Vector3(x0 + 5.4f, 1.75f, z0 - 0.26f), 0.05f, Color.white);   // 0.96 × 0.35
     }
 
-    private void AddRoom(string name, string type, float xMin, float xMax, float zMin, float zMax)
+    private void AddRoom(string name, string type, float xMin, float xMax, float zMin, float zMax, Vector3 doorPoint)
     {
         rooms.Add(new Room
         {
             name = name,
             type = type,
             center = new Vector3((xMin + xMax) * 0.5f, 0f, (zMin + zMax) * 0.5f),
+            doorPoint = doorPoint,
             xMin = xMin,
             xMax = xMax,
             zMin = zMin,
@@ -1755,32 +1765,100 @@ public class KitchenSimulator : MonoBehaviour
 
     private void BuildIntroDialogue()
     {
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那户老房子问题一堆，业主催得紧。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "单子我都派进你系统了 —— 谁家有毛病、在哪个屋，工单上写着。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前按 E 就能开工，修完记得登记费用。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "预算三万，省着点花。去吧！" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那片老小区，问题一堆，业主催得紧。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "各家的户主会自己上门找你，你听他们说完，单子就记下了。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前按 E 就能开工，干完活记得收费。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙。去吧！" });
+    }
+
+    private void BeginLine()
+    {
+        typeTimer = 0f;
+        voiceBurst = 1.4f;
+        SpeakBlip();
+    }
+
+    private bool IsLineFullyShown()
+    {
+        if (dialogueIndex < 0 || dialogueIndex >= dialogue.Count)
+        {
+            return true;
+        }
+        return typeTimer * TypeCharsPerSecond >= dialogue[dialogueIndex].text.Length;
+    }
+
+    private int VisibleCharCount()
+    {
+        if (dialogueIndex < 0 || dialogueIndex >= dialogue.Count)
+        {
+            return 0;
+        }
+        return Mathf.Clamp(Mathf.FloorToInt(typeTimer * TypeCharsPerSecond), 0, dialogue[dialogueIndex].text.Length);
+    }
+
+    private void EndConversation()
+    {
+        dialogueIndex = -1;
+        dialogue.Clear();
+
+        if (talkTarget != null)
+        {
+            // 户主说完 → 登记工单 → 回家
+            FileReport(talkTarget);
+            talkTarget.phase = 2;
+            talkTarget.moving = true;
+            talkTarget = null;
+        }
+        else if (!introDone)
+        {
+            introDone = true;
+            orderTimer = 1.5f;
+            ShowToast("各家户主会陆续上门反映问题，听他们说完就能接单", 7f);
+        }
+    }
+
+    // 户主上门对话（原神式多句对话）
+    private void StartConversation(Homeowner owner)
+    {
+        talkTarget = owner;
+        dialogue.Clear();
+        string who = owner.room.name + " 户主";
+        dialogue.Add(new DialogueLine { speaker = who, text = "师傅，打扰一下，方便说两句吗？" });
+        dialogue.Add(new DialogueLine { speaker = who, text = "我家" + owner.room.type + "有点毛病 —— " + owner.template.title + "。" });
+        dialogue.Add(new DialogueLine { speaker = who, text = owner.template.cause + "。您受累给看看，多少钱我出。" });
+        dialogue.Add(new DialogueLine { speaker = "陈师傅", text = "行，我记下了，这就带上工具过去。" });
+        dialogueIndex = 0;
+        BeginLine();
     }
 
     private void HandleDialogue()
     {
-        if (introDone)
+        // 开场：等玩家站定后再由工头开口
+        if (!introStarted)
         {
+            introDelay -= Time.deltaTime;
+            if (introDelay <= 0f)
+            {
+                introStarted = true;
+                BuildIntroDialogue();
+                BeginLine();
+            }
             return;
         }
 
         if (dialogueIndex < 0)
         {
-            introDelay -= Time.deltaTime;
-            if (introDelay <= 0f)
-            {
-                dialogueIndex = 0;
-                voiceBurst = 1.4f;
-                SpeakBlip();
-            }
             return;
         }
 
-        // 每句只"嘟"一小段（约 1.4 秒）就安静下来，等玩家按键进入下一句再响
+        // 逐字显示
+        typeTimer += Time.deltaTime;
+        if (typeTimer > DialogueTypeTime)
+        {
+            typeTimer = DialogueTypeTime;
+        }
+
+        // 每句只"嘟"一小段就安静下来，按键进入下一句才重新发声
         if (voiceBurst > 0f)
         {
             voiceBurst -= Time.deltaTime;
@@ -1793,16 +1871,20 @@ public class KitchenSimulator : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.E) || Input.GetKeyDown(KeyCode.Space))
         {
+            // 还没显示完先补全，已显示完则进入下一句
+            if (!IsLineFullyShown())
+            {
+                typeTimer = DialogueTypeTime;
+                return;
+            }
+
             dialogueIndex++;
-            voiceBurst = 1.4f;
-            SpeakBlip();
             if (dialogueIndex >= dialogue.Count)
             {
-                dialogueIndex = -1;
-                introDone = true;
-                orderTimer = 1.5f;
-                ShowToast("系统自动派单中：新工单会随机出现在各房间，走近红色感叹号按 E 维修", 7f);
+                EndConversation();
+                return;
             }
+            BeginLine();
         }
     }
 
@@ -1902,6 +1984,12 @@ public class KitchenSimulator : MonoBehaviour
 
     private bool Collides(Vector3 position)
     {
+        return Collides(position, false);
+    }
+
+    // ignoreDoorsAndNpcs：NPC 自己移动时用 true（可以穿过关着的房门，也不会被别的 NPC 挡住）
+    private bool Collides(Vector3 position, bool ignoreDoorsAndNpcs)
+    {
         Vector2 p = new Vector2(position.x, position.z);
         float bodyBottom = position.y;
         float bodyTop = position.y + 1.7f;
@@ -1924,6 +2012,11 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
 
+        if (ignoreDoorsAndNpcs)
+        {
+            return false;
+        }
+
         // 关着的房门也阻挡通行
         for (int i = 0; i < houseDoors.Count; i++)
         {
@@ -1940,6 +2033,25 @@ public class KitchenSimulator : MonoBehaviour
                 return true;
             }
         }
+
+        // NPC 身体也挡人，玩家不能从户主身上穿过去
+        const float npcRadius = 0.46f;
+        for (int i = 0; i < homeowners.Count; i++)
+        {
+            if (homeowners[i].rig == null || homeowners[i].rig.root == null)
+            {
+                continue;
+            }
+            Vector3 npc = homeowners[i].rig.root.position;
+            float dx = position.x - npc.x;
+            float dz = position.z - npc.z;
+            float rr = PlayerRadius + npcRadius;
+            if (dx * dx + dz * dz < rr * rr)
+            {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -2171,11 +2283,13 @@ public class KitchenSimulator : MonoBehaviour
                 delta.y = 0f;
 
                 // 靠得够近，或被墙挡住太久（例如玩家关着门躲在屋里），就地说明情况
-                if (delta.magnitude <= 2.2f || owner.stuck > 3f)
+                // 走到跟前就开始对话（一次只进行一场对话）
+                bool canTalk = dialogueIndex < 0 && introDone && talkTarget == null;
+                if (canTalk && (delta.magnitude <= 2.2f || owner.stuck > 5f))
                 {
                     owner.phase = 1;
-                    owner.timer = 6f;
-                    FileReport(owner);
+                    owner.moving = false;
+                    StartConversation(owner);
                 }
                 else
                 {
@@ -2183,7 +2297,7 @@ public class KitchenSimulator : MonoBehaviour
                     Vector3 next = owner.rig.root.position + step;
 
                     bool moved = false;
-                    if (!Collides(next))
+                    if (!Collides(next, true))
                     {
                         owner.rig.root.position = next;
                         moved = true;
@@ -2192,7 +2306,7 @@ public class KitchenSimulator : MonoBehaviour
                     {
                         // 分离轴滑动，让他贴着墙找路
                         Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
-                        if (!Collides(xOnly))
+                        if (!Collides(xOnly, true))
                         {
                             owner.rig.root.position = xOnly;
                             moved = true;
@@ -2200,7 +2314,7 @@ public class KitchenSimulator : MonoBehaviour
                         else
                         {
                             Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
-                            if (!Collides(zOnly))
+                            if (!Collides(zOnly, true))
                             {
                                 owner.rig.root.position = zOnly;
                                 moved = true;
@@ -2218,33 +2332,29 @@ public class KitchenSimulator : MonoBehaviour
             }
             else if (owner.phase == 1)
             {
-                owner.timer -= Time.deltaTime;
+                // 对话中：站着面向玩家，等对话结束后由 EndConversation 切换到 phase 2
                 owner.moving = false;
                 FacePlayer(owner, 5f);
-                if (owner.bubble != null)
+                owner.timer -= Time.deltaTime;
+                if (owner.timer > 30f)
                 {
-                    Billboard(owner.bubble);
-                }
-                if (owner.timer <= 0f)
-                {
+                    // 兜底：极端情况下避免永远站着
                     owner.phase = 2;
-                    if (owner.bubble != null)
-                    {
-                        Destroy(owner.bubble);
-                        owner.bubble = null;
-                    }
                 }
             }
             else
             {
-                // 离开：先走回公司大门，再走出门外；同样带碰撞
+                // 回家：先走到自家门外对齐门洞，再径直进屋
                 owner.moving = true;
-                bool inside = owner.rig.root.position.z > -6.6f;
-                Vector3 exit = inside
-                    ? new Vector3(-16.4f, owner.rig.root.position.y, -7.5f)
-                    : new Vector3(-16.4f, owner.rig.root.position.y, -21f);
+                Vector3 home = owner.room.doorPoint;
+                float y = owner.rig.root.position.y;
 
-                Vector3 delta = exit - owner.rig.root.position;
+                bool alignedWithDoor = Mathf.Abs(owner.rig.root.position.x - home.x) < 1.0f;
+                Vector3 target = alignedWithDoor
+                    ? home
+                    : new Vector3(home.x, y, -8.8f);   // 门外落客点，先横向对齐
+
+                Vector3 delta = target - owner.rig.root.position;
                 delta.y = 0f;
                 if (delta.sqrMagnitude < 0.01f)
                 {
@@ -2253,21 +2363,21 @@ public class KitchenSimulator : MonoBehaviour
 
                 Vector3 step = delta.normalized * 2.6f * Time.deltaTime;
                 Vector3 next = owner.rig.root.position + step;
-                if (!Collides(next))
+                if (!Collides(next, true))
                 {
                     owner.rig.root.position = next;
                 }
                 else
                 {
-                    Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
-                    if (!Collides(xOnly))
+                    Vector3 xOnly = new Vector3(next.x, y, owner.rig.root.position.z);
+                    if (!Collides(xOnly, true))
                     {
                         owner.rig.root.position = xOnly;
                     }
                     else
                     {
-                        Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
-                        if (!Collides(zOnly))
+                        Vector3 zOnly = new Vector3(owner.rig.root.position.x, y, next.z);
+                        if (!Collides(zOnly, true))
                         {
                             owner.rig.root.position = zOnly;
                         }
@@ -2280,8 +2390,9 @@ public class KitchenSimulator : MonoBehaviour
 
                 owner.rig.root.rotation = Quaternion.Slerp(owner.rig.root.rotation, Quaternion.LookRotation(delta), Time.deltaTime * 6f);
 
-                // 走到门外，或长时间无法脱身，就消失
-                if ((!inside && delta.magnitude < 1.2f) || owner.stuck > 8f)
+                // 进了自家门（玩家看不见屋内，消失很自然），或长时间回不去
+                bool arrived = Mathf.Abs(owner.rig.root.position.z - home.z) < 0.9f && alignedWithDoor;
+                if (arrived || owner.stuck > 12f)
                 {
                     Destroy(owner.rig.root.gameObject);
                     homeowners.RemoveAt(i);
@@ -2332,8 +2443,6 @@ public class KitchenSimulator : MonoBehaviour
         BuildOrderMarker(order);
         orders.Add(order);
 
-        string complaint = "我家" + owner.room.type + "的" + owner.template.title + "，麻烦你来看看";
-        owner.bubble = BuildBubble(owner.rig.root.position + Vector3.up * 2.35f, complaint);
         ShowToast("新工单 " + order.Code + " · " + order.room + " · " + owner.template.title, 5f);
     }
 
@@ -2753,6 +2862,7 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 对话 ──────────────────────────────────────────────
+    // 原神风格对话：上下黑边 + 底部对话框 + 逐字显示
     private void DrawDialogue()
     {
         if (dialogueIndex < 0 || dialogueIndex >= dialogue.Count)
@@ -2761,14 +2871,29 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         DialogueLine line = dialogue[dialogueIndex];
-        float width = Mathf.Min(Screen.width - 120f, 720f);
-        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height - 150f, width, 104f);
-        DrawPanel(rect, panelFill, panelBorder);
-        Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
+        int visible = VisibleCharCount();
+        bool complete = visible >= line.text.Length;
+        string shown = complete ? line.text : line.text.Substring(0, visible);
 
-        GUI.Label(new Rect(rect.x + 28f, rect.y + 12f, rect.width - 56f, 24f), line.speaker, cardTitleStyle);
-        GUI.Label(new Rect(rect.x + 28f, rect.y + 38f, rect.width - 56f, 44f), line.text, bodyStyle);
-        GUI.Label(new Rect(rect.x + rect.width - 150f, rect.y + rect.height - 26f, 130f, 20f), "按 E 继续 (" + (dialogueIndex + 1) + "/" + dialogue.Count + ")", smallStyle);
+        // 电影黑边
+        Fill(new Rect(0f, 0f, Screen.width, 60f), new Color(0f, 0f, 0f, 0.72f));
+        Fill(new Rect(0f, Screen.height - 44f, Screen.width, 44f), new Color(0f, 0f, 0f, 0.72f));
+
+        float width = Mathf.Min(Screen.width - 150f, 1000f);
+        Rect rect = new Rect((Screen.width - width) * 0.5f, Screen.height - 214f, width, 152f);
+        DrawPanel(rect, new Color(0.04f, 0.05f, 0.07f, 0.94f), new Color(1f, 1f, 1f, 0.16f));
+
+        // 说话人
+        Fill(new Rect(rect.x + 16f, rect.y + 18f, 4f, 30f), btnBlue);
+        GUI.Label(new Rect(rect.x + 32f, rect.y + 16f, width - 64f, 32f), line.speaker, speakerStyle);
+        Fill(new Rect(rect.x + 32f, rect.y + 52f, width - 64f, 1f), dividerColor);
+
+        // 正文（逐字）
+        GUI.Label(new Rect(rect.x + 32f, rect.y + 62f, width - 64f, 60f), shown, dialogueStyle);
+
+        // 右下角提示
+        string hint = complete ? "按 E 继续  ▼" : "按 E 跳过";
+        GUI.Label(new Rect(rect.x + width - 170f, rect.y + rect.height - 30f, 150f, 20f), hint, smallStyle);
     }
 
     // ── 点击开始（WebGL 需用户手势才能锁定鼠标）────────────
@@ -3140,6 +3265,8 @@ public class KitchenSimulator : MonoBehaviour
         toastStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleLeft, wordWrap = true, normal = { textColor = new Color(0.88f, 0.92f, 0.91f) } };
         cardTitleStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold, normal = { textColor = Color.white } };
         cardButtonStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+        speakerStyle = new GUIStyle(GUI.skin.label) { fontSize = 19, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.98f, 0.86f, 0.6f) } };
+        dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, wordWrap = true, normal = { textColor = new Color(0.94f, 0.95f, 0.96f) } };
 
         Font font = UiFont;
         if (font != null)
@@ -3153,6 +3280,8 @@ public class KitchenSimulator : MonoBehaviour
             toastStyle.font = font;
             cardTitleStyle.font = font;
             cardButtonStyle.font = font;
+            speakerStyle.font = font;
+            dialogueStyle.font = font;
         }
     }
 
