@@ -1085,7 +1085,7 @@ public class KitchenSimulator : MonoBehaviour
 
     // 传感器实时数据仿真：报警值带噪声波动；改造完成后回落到正常值
     private float sampleTimer;
-    private const float ObserveHours = 1f;   // 验收观察期（游戏小时）
+    private const float ObserveHours = 3f;   // 验收观察期（工程小时，约 21 秒实时）
 
     private void UpdateSensors()
     {
