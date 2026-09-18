@@ -164,6 +164,7 @@ public class KitchenSimulator : MonoBehaviour
     private readonly List<Light> roomLights = new List<Light>();
     private Material cityWindowMaterial;
     private readonly Color cityWindowDayTone = new Color(0.78f, 0.83f, 0.88f);
+    private readonly List<Material> nightLightMaterials = new List<Material>();
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -573,6 +574,7 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), pavement);
 
         BuildCitySkyline();
+        BuildLujiazui();
         BuildStreetLamps();
 
         // 绿化：只放在建筑范围之外
@@ -1068,6 +1070,141 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 小区路灯（天黑自动亮）──────────────────────────────
+    // ══ 远处「陆家嘴」式超高层天际线 ══
+    private Material NightLight(Color c)
+    {
+        Material m = MakeMaterial(c, 0.1f, 0.65f);
+        m.DisableKeyword("_EMISSION");
+        nightLightMaterials.Add(m);
+        return m;
+    }
+
+    private void BuildLujiazui()
+    {
+        Vector3 c = new Vector3(30f, 0f, -92f);
+
+        // 江面（黄浦江）——放在地标正前方、略高于草坪，确保醒目可见
+        CreateDecoCube("River", new Vector3(30f, -0.04f, -42f), new Vector3(320f, 0.2f, 26f), NightLight(new Color(0.14f, 0.35f, 0.55f)));
+
+        BuildOrientalPearl(c + new Vector3(-38f, 0f, 12f));
+        BuildShanghaiTower(c + new Vector3(-10f, 0f, -4f));
+        BuildWorldFinancial(c + new Vector3(10f, 0f, 3f));
+        BuildJinMao(c + new Vector3(28f, 0f, -6f));
+
+        // 周边高层群，形成密集的现代化天际线（置于地标之后）
+        Color[] bodyTones =
+        {
+            new Color(0.34f, 0.4f, 0.5f), new Color(0.28f, 0.34f, 0.44f),
+            new Color(0.4f, 0.44f, 0.52f), new Color(0.24f, 0.3f, 0.4f),
+        };
+        Color[] lightTones =
+        {
+            new Color(0.35f, 0.75f, 1f), new Color(0.75f, 0.45f, 1f),
+            new Color(1f, 0.75f, 0.35f), new Color(1f, 0.4f, 0.45f),
+            new Color(0.4f, 1f, 0.85f),
+        };
+        System.Random rng = new System.Random(2026);
+        for (int i = 0; i < 16; i++)
+        {
+            float x = c.x - 80f + i * 11f + (float)rng.NextDouble() * 5f;
+            float z = c.z - 24f - (float)rng.NextDouble() * 38f;
+            float h = 24f + (float)rng.NextDouble() * 28f;
+            float w = 7f + (float)rng.NextDouble() * 6f;
+            Color body = bodyTones[rng.Next(bodyTones.Length)];
+            CreateDecoCube("LJ Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * 0.85f), body);
+            // 每层亮带
+            Material light = NightLight(lightTones[rng.Next(lightTones.Length)]);
+            for (float y = 8f; y < h; y += 7f)
+            {
+                CreateDecoCube("LJ Band", new Vector3(x, y, z - w * 0.44f), new Vector3(w * 0.86f, 0.5f, 0.12f), light);
+            }
+            // 顶部灯冠
+            CreateDecoCube("LJ Crown", new Vector3(x, h + 0.6f, z), new Vector3(w * 1.05f, 1.2f, w * 0.9f), light);
+        }
+    }
+
+    // 东方明珠：立柱 + 球体 + 天线
+    private void BuildOrientalPearl(Vector3 b)
+    {
+        Material body = MakeMaterial(new Color(0.62f, 0.45f, 0.5f), 0.15f, 0.6f);
+        Material glow = NightLight(new Color(1f, 0.35f, 0.55f));
+        Material glow2 = NightLight(new Color(0.6f, 0.45f, 1f));
+
+        CreateDecoCylinder("Pearl Mast", b + new Vector3(0f, 31f, 0f), 1.6f, 62f, Quaternion.identity, body);
+        CreateDecoSphere("Pearl Ball Low", b + new Vector3(0f, 28f, 0f), 6.5f, glow);
+        CreateDecoSphere("Pearl Ball High", b + new Vector3(0f, 43f, 0f), 5f, glow2);
+        CreateDecoCylinder("Pearl Cabin", b + new Vector3(0f, 52f, 0f), 2.2f, 4f, Quaternion.identity, glow);
+        CreateDecoCylinder("Pearl Spire", b + new Vector3(0f, 59f, 0f), 0.35f, 12f, Quaternion.identity, body);
+        // 三根斜撑（绕立柱 120° 均布，底部略外张）
+        for (int i = 0; i < 3; i++)
+        {
+            float ang = i * 120f;
+            Vector3 offset = Quaternion.Euler(0f, ang, 0f) * new Vector3(2.8f, 0f, 0f);
+            CreateDecoCylinder("Pearl Leg", b + offset + new Vector3(0f, 10f, 0f), 0.9f, 20f, Quaternion.Euler(0f, ang, 10f), body);
+        }
+    }
+
+    // 上海中心：分段微扭转、逐渐收分
+    private void BuildShanghaiTower(Vector3 b)
+    {
+        Material shell = MakeMaterial(new Color(0.42f, 0.5f, 0.6f), 0.35f, 0.7f);
+        Material glow = NightLight(new Color(0.4f, 0.8f, 1f));
+        int segs = 8;
+        float y = 0f;
+        for (int i = 0; i < segs; i++)
+        {
+            float w = 12f - i * 0.8f;
+            float segH = 7.5f;
+            CreateDecoCube("SH Tower", new Vector3(b.x, y + segH * 0.5f, b.z), new Vector3(w, segH, w * 0.82f),
+                Quaternion.Euler(0f, i * 6.5f, 0f), shell);
+            // 每段顶部的玻璃幕墙亮带
+            if (i % 2 == 0)
+            {
+                CreateDecoCube("SH Band", new Vector3(b.x, y + segH - 1.1f, b.z), new Vector3(w * 1.02f, 0.55f, w * 0.84f),
+                    Quaternion.Euler(0f, i * 6.5f, 0f), glow);
+            }
+            y += segH;
+        }
+        CreateDecoCylinder("SH Spire", new Vector3(b.x, y + 5f, b.z), 0.45f, 10f, Quaternion.identity, glow);
+    }
+
+    // 环球金融中心：顶部梯形开口（用两侧立柱 + 顶梁近似）
+    private void BuildWorldFinancial(Vector3 b)
+    {
+        Material body = MakeMaterial(new Color(0.5f, 0.56f, 0.64f), 0.4f, 0.75f);
+        Material glow = NightLight(new Color(1f, 0.85f, 0.45f));
+
+        CreateDecoCube("SWFC Body", new Vector3(b.x, 25f, b.z), new Vector3(15f, 50f, 9f), body);
+        // 顶部两侧立柱，中间留出标志性开口
+        CreateDecoCube("SWFC Pillar L", new Vector3(b.x - 4.6f, 53f, b.z), new Vector3(3.4f, 12f, 9f), body);
+        CreateDecoCube("SWFC Pillar R", new Vector3(b.x + 4.6f, 53f, b.z), new Vector3(3.4f, 12f, 9f), body);
+        CreateDecoCube("SWFC Beam", new Vector3(b.x, 60f, b.z), new Vector3(15f, 2.4f, 9f), body);
+        // 竖向灯光带
+        for (int i = -1; i <= 1; i++)
+        {
+            CreateDecoCube("SWFC Strip", new Vector3(b.x + i * 5.5f, 25f, b.z - 4.6f), new Vector3(0.7f, 48f, 0.16f), glow);
+        }
+        CreateDecoCube("SWFC Crown", new Vector3(b.x, 62f, b.z), new Vector3(15.6f, 1.3f, 9.4f), glow);
+    }
+
+    // 金茂大厦：层叠塔身 + 尖顶
+    private void BuildJinMao(Vector3 b)
+    {
+        Material body = MakeMaterial(new Color(0.55f, 0.5f, 0.44f), 0.3f, 0.7f);
+        Material glow = NightLight(new Color(1f, 0.62f, 0.3f));
+
+        CreateDecoCube("JM T1", new Vector3(b.x, 11f, b.z), new Vector3(16f, 22f, 13.5f), body);
+        CreateDecoCube("JM T2", new Vector3(b.x, 28f, b.z), new Vector3(13f, 12f, 11f), body);
+        CreateDecoCube("JM T3", new Vector3(b.x, 40f, b.z), new Vector3(10.5f, 12f, 8.8f), body);
+        CreateDecoCube("JM T4", new Vector3(b.x, 50f, b.z), new Vector3(8f, 8f, 6.8f), body);
+        CreateDecoCylinder("JM Spire", new Vector3(b.x, 60f, b.z), 0.5f, 12f, Quaternion.identity, glow);
+
+        // 每层收分处的环向灯带
+        CreateDecoCube("JM Ring1", new Vector3(b.x, 22.3f, b.z), new Vector3(16.3f, 0.6f, 13.8f), glow);
+        CreateDecoCube("JM Ring2", new Vector3(b.x, 34.3f, b.z), new Vector3(13.3f, 0.6f, 11.3f), glow);
+        CreateDecoCube("JM Ring3", new Vector3(b.x, 46.3f, b.z), new Vector3(10.8f, 0.6f, 9.1f), glow);
+    }
+
     private void BuildStreetLamps()
     {
         // 灯罩自发光：点光源在灯罩内部，照不到球体外表面，必须靠 emission 才会"亮"
@@ -1178,6 +1315,20 @@ public class KitchenSimulator : MonoBehaviour
             for (int i = 0; i < roomLights.Count; i++)
             {
                 roomLights[i].enabled = lampsOn;
+            }
+            // 陆家嘴式地标灯光
+            for (int i = 0; i < nightLightMaterials.Count; i++)
+            {
+                Material m = nightLightMaterials[i];
+                if (lampsOn)
+                {
+                    m.EnableKeyword("_EMISSION");
+                    m.SetColor("_EmissionColor", m.color * 2.2f);
+                }
+                else
+                {
+                    m.DisableKeyword("_EMISSION");
+                }
             }
             // 远处城市的窗户亮起（假装屋里开着灯）
             if (cityWindowMaterial != null)
@@ -1497,8 +1648,8 @@ public class KitchenSimulator : MonoBehaviour
         for (int i = 0; i < 16; i++)
         {
             float x = -95f + i * 13f + Random.Range(-3.5f, 3.5f);
-            float z = -58f - Random.Range(0f, 26f);
-            BuildCityTower(new Vector3(x, 0f, z), Random.Range(12f, 38f), Random.Range(8f, 15f),
+            float z = -118f - Random.Range(0f, 35f);
+            BuildCityTower(new Vector3(x, 0f, z), Random.Range(8f, 18f), Random.Range(8f, 13f),
                 tones[Random.Range(0, tones.Length)], windowTone, roofTone, metalTone, true);
         }
 
@@ -6893,6 +7044,18 @@ public class KitchenSimulator : MonoBehaviour
     private GameObject CreateDecoCube(string objectName, Vector3 position, Vector3 scale, Material material)
     {
         GameObject instance = CreateCube(objectName, position, scale, material);
+        Collider collider = instance.GetComponent<Collider>();
+        if (collider != null)
+        {
+            collider.enabled = false;
+        }
+        return instance;
+    }
+
+    private GameObject CreateDecoCube(string objectName, Vector3 position, Vector3 scale, Quaternion rotation, Material material)
+    {
+        GameObject instance = CreateCube(objectName, position, scale, material);
+        instance.transform.localRotation = rotation;
         Collider collider = instance.GetComponent<Collider>();
         if (collider != null)
         {
