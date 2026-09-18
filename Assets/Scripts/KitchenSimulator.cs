@@ -5007,7 +5007,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　F 开关门　·　M 地图　·　G 商店　·　N 日历账目　·　R 夜间休息　·　B 工具包　·　Q/滚轮 换工具　·　E 维修", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
     }
 
     private void DrawToast()
