@@ -141,18 +141,18 @@ def build_oriental_pearl(root):
         leg.rotation_euler = d.normalized().to_track_quat('Z', 'Y').to_euler()
         parent_to(leg, root)
 
-    # 下球 + 上球 + 顶球 + 中间柱 + 天线
-    s1 = add_sphere("Pearl_BallLow", (0, 0, 22), 9.0, glow_low)
+    # 下球较低；上球用长细柱拉开距离，避免「洋葱/雪人」感；顶球(太空舱)很小
+    s1 = add_sphere("Pearl_BallLow", (0, 0, 21), 5.5, glow_low)        # 15.5~26.5
     parent_to(s1, root)
-    c1 = add_cylinder("Pearl_ColMid", (0, 0, 32.5), 1.8, 5.0, body)
+    c1 = add_cylinder("Pearl_ColLong", (0, 0, 32), 1.0, 11.0, body)    # 26.5~37.5
     parent_to(c1, root)
-    s2 = add_sphere("Pearl_BallHigh", (0, 0, 38), 6.0, glow_high)
+    s2 = add_sphere("Pearl_BallHigh", (0, 0, 40), 4.2, glow_high)      # 35.8~44.2
     parent_to(s2, root)
-    c2 = add_cylinder("Pearl_ColUpper", (0, 0, 45), 1.2, 4.0, body)
+    c2 = add_cylinder("Pearl_ColShort", (0, 0, 47), 0.6, 5.0, body)    # 44.5~49.5
     parent_to(c2, root)
-    s3 = add_sphere("Pearl_BallSmall", (0, 0, 49.5), 3.2, glow_small)
+    s3 = add_sphere("Pearl_BallSmall", (0, 0, 51), 1.6, glow_small)    # 49.4~52.6
     parent_to(s3, root)
-    ant = add_cylinder("Pearl_Antenna", (0, 0, 60), 0.3, 18.0, body)
+    ant = add_cylinder("Pearl_Antenna", (0, 0, 62), 0.22, 16.0, body)  # 54~70
     parent_to(ant, root)
 
 
