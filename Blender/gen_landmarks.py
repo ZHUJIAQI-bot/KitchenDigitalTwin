@@ -206,7 +206,7 @@ def build_oriental_pearl(root):
 
 # ── 上海中心 ──────────────────────────────────────────
 def build_shanghai_tower(root):
-    glass = make_material("LJ_SH_Glass", (0.32, 0.55, 0.72), metallic=0.35, roughness=0.15)
+    glass = make_material("LJ_SH_Glass", (0.25, 0.58, 0.85), metallic=0.5, roughness=0.06)
     glow = make_material("LJ_Glow_SH", (0.4, 0.85, 1.0), metallic=0.0, roughness=0.3,
                          emissive=(0.3, 0.8, 1.0), emit_strength=5.0)
 
@@ -228,7 +228,7 @@ def build_shanghai_tower(root):
 
 # ── 环球金融中心（开瓶器） ────────────────────────────
 def build_swfc(root):
-    steel = make_material("LJ_SWFC_Steel", (0.55, 0.62, 0.72), metallic=0.6, roughness=0.25)
+    steel = make_material("LJ_SWFC_Steel", (0.72, 0.80, 0.88), metallic=0.7, roughness=0.12)
     glow = make_material("LJ_Glow_SWFC", (1.0, 0.85, 0.4), metallic=0.0, roughness=0.3,
                          emissive=(1.0, 0.8, 0.3), emit_strength=5.0)
 
@@ -251,7 +251,7 @@ def build_swfc(root):
 
 # ── 金茂大厦（层叠塔） ────────────────────────────────
 def build_jinmao(root):
-    glass = make_material("LJ_JM_Glass", (0.60, 0.55, 0.48), metallic=0.5, roughness=0.2)
+    glass = make_material("LJ_JM_Glass", (0.78, 0.62, 0.36), metallic=0.6, roughness=0.10)
     glow = make_material("LJ_Glow_JM", (1.0, 0.65, 0.3), metallic=0.0, roughness=0.3,
                          emissive=(1.0, 0.6, 0.25), emit_strength=5.0)
 

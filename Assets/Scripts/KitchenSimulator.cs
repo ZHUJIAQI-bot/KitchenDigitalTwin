@@ -270,6 +270,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
     private int guideStep;               // 新手引导步骤
+    private float saveTimer;             // 自动存档计时
 
     // 玩家住处与睡眠
     private Vector3 sleepPoint;          // 床前站位
@@ -482,6 +483,14 @@ public class KitchenSimulator : MonoBehaviour
         if (!loggedIn)
         {
             return;
+        }
+
+        // 自动存档：每 20 秒保存一次
+        saveTimer += Time.deltaTime;
+        if (saveTimer >= 20f)
+        {
+            saveTimer = 0f;
+            SaveGame();
         }
 
         HandleMovement();
@@ -1090,14 +1099,16 @@ public class KitchenSimulator : MonoBehaviour
         if (waterShader != null)
         {
             riverMaterial = new Material(waterShader);
-            riverMaterial.SetColor("_DeepColor", new Color(0.04f, 0.16f, 0.30f, 0.82f));
-            riverMaterial.SetColor("_ShallowColor", new Color(0.10f, 0.34f, 0.52f, 0.82f));
+            riverMaterial.SetColor("_DeepColor", new Color(0.04f, 0.16f, 0.30f, 0.96f));
+            riverMaterial.SetColor("_ShallowColor", new Color(0.10f, 0.34f, 0.52f, 0.96f));
         }
         else
         {
             riverMaterial = MakeMaterial(new Color(0.10f, 0.30f, 0.48f), 0.2f, 0.7f);
         }
         CreateWaterSurface("River", new Vector3(30f, 0.02f, -42f), 320f, 26f, riverMaterial);
+        // 江面是不可跨越的边界：加隐形碰撞体，玩家走到江边会被挡下而不是「踩」在水面上
+        obstacles.Add(new Bounds(new Vector3(30f, 1f, -42f), new Vector3(320f, 2f, 26f)));
 
         SpawnLandmark("Models/Lujiazui/OrientalPearl", c + new Vector3(-38f, 0f, 12f));
         SpawnLandmark("Models/Lujiazui/ShanghaiTower", c + new Vector3(-10f, 0f, -4f));
@@ -1167,7 +1178,7 @@ public class KitchenSimulator : MonoBehaviour
         go.transform.SetParent(transform, false);
         go.transform.position = center;
 
-        int segX = 64, segZ = 8;
+        int segX = 128, segZ = 28;
         Vector3[] verts = new Vector3[(segX + 1) * (segZ + 1)];
         Vector2[] uv = new Vector2[verts.Length];
         for (int z = 0; z <= segZ; z++)
@@ -3002,18 +3013,97 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    // ── 存档（按账户保存经营数据）────────────────────────
+    // ── 存档数据（JsonUtility 序列化）────────────────────
+    [System.Serializable]
+    private class SaveData
+    {
+        public int version = 1;
+        public int income;
+        public int expenses;
+        public float gameTime;
+        public int orderSerial;
+        public float playerX;
+        public float playerZ;
+        public int guideStep;
+        public OrderSaveData[] orders;
+    }
+
+    [System.Serializable]
+    private class OrderSaveData
+    {
+        public int id;
+        public string title;
+        public string room;
+        public string cause;
+        public string plan;
+        public int cost;
+        public float siteX, siteY, siteZ;
+        public int state;
+        public float repairProgress;
+        public int schedDay;
+        public int schedHour;
+        public int tool;
+        public string sensorName;
+        public string sensorUnit;
+        public float sensorValue;
+        public float sensorNormal;
+        public float sensorAlarm;
+        public float sensorMax;
+        public float alarmTime;
+        public float fixTime;
+        public float normalSince;
+        public bool verified;
+    }
+
+    // ── 存档（按账户保存经营数据 + 工单 + 位置）─────────
     private void SaveGame()
     {
         if (string.IsNullOrEmpty(currentAccount) || currentAccount == "游客")
         {
             return;
         }
+        SaveData data = new SaveData
+        {
+            income = income,
+            expenses = expenses,
+            gameTime = gameTime,
+            orderSerial = orderSerial,
+            playerX = playerPosition.x,
+            playerZ = playerPosition.z,
+            guideStep = guideStep,
+            orders = new OrderSaveData[orders.Count]
+        };
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Order o = orders[i];
+            data.orders[i] = new OrderSaveData
+            {
+                id = o.id,
+                title = o.title,
+                room = o.room,
+                cause = o.cause,
+                plan = o.plan,
+                cost = o.cost,
+                siteX = o.site.x, siteY = o.site.y, siteZ = o.site.z,
+                state = (int)o.state,
+                repairProgress = o.repairProgress,
+                schedDay = o.schedDay,
+                schedHour = o.schedHour,
+                tool = (int)o.requiredTool,
+                sensorName = o.sensorName,
+                sensorUnit = o.sensorUnit,
+                sensorValue = o.sensorValue,
+                sensorNormal = o.sensorNormal,
+                sensorAlarm = o.sensorAlarm,
+                sensorMax = o.sensorMax,
+                alarmTime = o.alarmTime,
+                fixTime = o.fixTime,
+                normalSince = o.normalSince,
+                verified = o.verified
+            };
+        }
         string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
-        // 格式：收入|支出|游戏时间|工单序号|已消除|已闭环
-        string value = income + "|" + expenses + "|" + gameTime.ToString("F2") + "|" + orderSerial
-            + "|" + CountFixed() + "|" + CountVerified();
-        PlayerPrefs.SetString(key, value);
+        PlayerPrefs.SetString(key, JsonUtility.ToJson(data));
         PlayerPrefs.Save();
     }
 
@@ -3028,31 +3118,68 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        string[] parts = PlayerPrefs.GetString(key).Split('|');
-        if (parts.Length < 6)
+        SaveData data = JsonUtility.FromJson<SaveData>(PlayerPrefs.GetString(key));
+        if (data == null)
         {
             return;
         }
-        int savedIncome, savedExpense, savedSerial;
-        float savedTime;
-        int.TryParse(parts[0], out savedIncome);
-        int.TryParse(parts[1], out savedExpense);
-        float.TryParse(parts[2], out savedTime);
-        int.TryParse(parts[3], out savedSerial);
 
-        income = savedIncome;
-        expenses = savedExpense;
-        if (savedTime > 0f)
+        income = data.income;
+        expenses = data.expenses;
+        if (data.gameTime > 0f)
         {
-            gameTime = savedTime;
+            gameTime = data.gameTime;
             lastDay = DayIndex;
             lastPaidMonth = GameMonth;
         }
-        if (savedSerial > orderSerial)
+        if (data.orderSerial > orderSerial)
         {
-            orderSerial = savedSerial;
+            orderSerial = data.orderSerial;
         }
-        ShowToast("已载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0"), 5f);
+        playerPosition = new Vector3(data.playerX, GroundLevel, data.playerZ);
+        if (player != null)
+        {
+            player.transform.position = playerPosition;
+        }
+        guideStep = data.guideStep;
+
+        // 恢复工单（登录时列表为空，直接重建）
+        if (data.orders != null)
+        {
+            for (int i = 0; i < data.orders.Length; i++)
+            {
+                OrderSaveData sd = data.orders[i];
+                Order o = new Order
+                {
+                    id = sd.id,
+                    title = sd.title,
+                    room = sd.room,
+                    cause = sd.cause,
+                    plan = sd.plan,
+                    cost = sd.cost,
+                    site = new Vector3(sd.siteX, sd.siteY, sd.siteZ),
+                    state = (OrderState)sd.state,
+                    repairProgress = sd.repairProgress,
+                    schedDay = sd.schedDay,
+                    schedHour = sd.schedHour,
+                    requiredTool = (ToolKind)sd.tool,
+                    sensorName = sd.sensorName,
+                    sensorUnit = sd.sensorUnit,
+                    sensorValue = sd.sensorValue,
+                    sensorNormal = sd.sensorNormal,
+                    sensorAlarm = sd.sensorAlarm,
+                    sensorMax = sd.sensorMax,
+                    alarmTime = sd.alarmTime,
+                    fixTime = sd.fixTime,
+                    normalSince = sd.normalSince,
+                    verified = sd.verified
+                };
+                BuildOrderMarker(o);
+                orders.Add(o);
+            }
+        }
+        ShowToast("已载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0")
+            + "，工单 " + orders.Count + " 单", 5f);
     }
 
     private void EnterGame(string accountName)
