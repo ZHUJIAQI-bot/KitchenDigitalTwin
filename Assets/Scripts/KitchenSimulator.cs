@@ -4888,6 +4888,31 @@ public class KitchenSimulator : MonoBehaviour
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙，能接的活才多。去吧！" });
     }
 
+    // 是否看过开场工头嘱托（按账号记录，只第一次强制播放）
+    private string IntroSeenKey
+    {
+        get { return "kitchen_intro_seen_" + (string.IsNullOrEmpty(currentAccount) ? "guest" : currentAccount.ToLowerInvariant()); }
+    }
+    private bool HasSeenIntro()
+    {
+        return PlayerPrefs.GetInt(IntroSeenKey, 0) == 1;
+    }
+    private void SetIntroSeen()
+    {
+        PlayerPrefs.SetInt(IntroSeenKey, 1);
+        PlayerPrefs.Save();
+    }
+
+    // 主动找工头听嘱托
+    private void StartBossBriefing()
+    {
+        talkTarget = null;
+        dialogue.Clear();
+        BuildIntroDialogue();
+        dialogueIndex = 0;
+        BeginLine();
+    }
+
     private void BeginLine()
     {
         typeTimer = 0f;
@@ -4930,6 +4955,7 @@ public class KitchenSimulator : MonoBehaviour
         else if (!introDone)
         {
             introDone = true;
+            SetIntroSeen();
             orderTimer = 1.5f;
             ShowToast("各家户主会陆续上门反映问题，听他们说完就能接单", 7f);
         }
@@ -5014,6 +5040,12 @@ public class KitchenSimulator : MonoBehaviour
             if (introDelay <= 0f)
             {
                 introStarted = true;
+                if (HasSeenIntro())
+                {
+                    // 该账号已看过开场嘱托，跳过；之后可主动找工头听
+                    introDone = true;
+                    return;
+                }
                 BuildIntroDialogue();
                 dialogueIndex = 0;   // 必须置 0，否则对话永远不开始、introDone 也永远不为 true（派单会整个停摆）
                 BeginLine();
@@ -6274,6 +6306,14 @@ public class KitchenSimulator : MonoBehaviour
         if (activeColleague != null && Input.GetKeyDown(KeyCode.E))
         {
             StartColleagueChat(activeColleague);
+            return;
+        }
+
+        // 附近有工头，按 E 主动听嘱托
+        if (bossRig != null && bossRig.root != null
+            && Distance2D(playerPosition, bossRig.root.position) < 2.6f && Input.GetKeyDown(KeyCode.E))
+        {
+            StartBossBriefing();
             return;
         }
 
