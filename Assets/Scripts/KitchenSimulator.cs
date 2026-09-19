@@ -1099,8 +1099,8 @@ public class KitchenSimulator : MonoBehaviour
         if (waterShader != null)
         {
             riverMaterial = new Material(waterShader);
-            riverMaterial.SetColor("_DeepColor", new Color(0.04f, 0.16f, 0.30f, 0.96f));
-            riverMaterial.SetColor("_ShallowColor", new Color(0.10f, 0.34f, 0.52f, 0.96f));
+            riverMaterial.SetColor("_DeepColor", new Color(0.03f, 0.14f, 0.28f, 1.0f));
+            riverMaterial.SetColor("_ShallowColor", new Color(0.08f, 0.30f, 0.50f, 1.0f));
         }
         else
         {
@@ -2833,6 +2833,14 @@ public class KitchenSimulator : MonoBehaviour
         viewCamera.clearFlags = CameraClearFlags.SolidColor;
         viewCamera.backgroundColor = new Color(0.53f, 0.76f, 0.94f); // 蓝天
         viewCamera.transform.position = spawnPosition + Vector3.up * EyeHeight;
+
+        // 全局色调：饱和度/曝光/对比/色阶
+        Shader gradeShader = Shader.Find("Custom/ColorGrade");
+        if (gradeShader != null)
+        {
+            ColorGradeEffect grade = cameraObject.AddComponent<ColorGradeEffect>();
+            grade.gradeMaterial = new Material(gradeShader);
+        }
     }
 
     // ── 第一人称视角 ──────────────────────────────────────

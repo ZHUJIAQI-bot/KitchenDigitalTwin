@@ -106,6 +106,7 @@ public static class KitchenProjectBuilder
         "Custom/Glass",
         "Custom/Water",
         "Custom/BuildingWindows",
+        "Custom/ColorGrade",
         "Unlit/Transparent Cutout",
         "Particles/Standard Unlit",
         "Transparent/Cutout/Diffuse",
