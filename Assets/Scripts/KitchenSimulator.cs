@@ -3274,7 +3274,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         string body = "{\"code\":\"" + code + "\"}";
         string result = null;
-        yield return SupabaseRequest("POST", "/rest/v1/rooms?select=id,code", body, (r) => result = r);
+        yield return SupabaseRequest("POST", "/rest/v1/rooms?select=id,code", body, (r) => result = r, "return=representation");
         if (result == null)
         {
             roomMessage = "创建房间失败";
