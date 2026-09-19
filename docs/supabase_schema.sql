@@ -15,6 +15,7 @@ create table if not exists accounts (
 
 -- 已存在的表补加姓名字段（幂等）
 alter table accounts add column if not exists display_name text not null default '';
+alter table accounts add column if not exists intro_seen boolean not null default false;
 
 -- 存档表：每个账号一行，data 是 JSON 存档（收入/时间/工单/位置等）
 create table if not exists saves (

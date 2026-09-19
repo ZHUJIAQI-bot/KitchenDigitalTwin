@@ -334,6 +334,7 @@ public class KitchenSimulator : MonoBehaviour
     private int dialogueIndex = -1;
     private bool introStarted;
     private bool introDone;
+    private bool introSeenCloud;   // 云端记录的「是否看过开场嘱托」
     private float introDelay = 1.2f;
     private float typeTimer;
     private const float DialogueTypeTime = 1e6f;   // 单句最大显示时长（用于逐字进度）
@@ -3100,6 +3101,7 @@ public class KitchenSimulator : MonoBehaviour
         public string username;
         public string password_hash;
         public string display_name;
+        public bool intro_seen;
         public int coat;
         public int trouser;
     }
@@ -3178,6 +3180,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         ApplyAppearance(row.coat, row.trouser);
         displayName = row.display_name;
+        introSeenCloud = row.intro_seen;
         EnterGame(user);
         authBusy = false;
     }
@@ -3214,6 +3217,7 @@ public class KitchenSimulator : MonoBehaviour
             yield break;
         }
         displayName = loginName;
+        introSeenCloud = false;
         loginMessage = "注册成功，已自动登录";
         EnterGame(user);
         authBusy = false;
@@ -4903,6 +4907,17 @@ public class KitchenSimulator : MonoBehaviour
         PlayerPrefs.Save();
     }
 
+    // 把「看过开场嘱托」标记到云端账号，跨设备/清缓存也有效
+    private void MarkIntroSeenCloud()
+    {
+        if (string.IsNullOrEmpty(currentAccount) || currentAccount == "游客" || !CloudEnabled)
+        {
+            return;
+        }
+        string body = "{\"intro_seen\":true}";
+        StartCoroutine(SupabaseRequest("PATCH", "/rest/v1/accounts?username=eq." + UnityWebRequest.EscapeURL(currentAccount), body, null));
+    }
+
     // 主动找工头听嘱托
     private void StartBossBriefing()
     {
@@ -5039,13 +5054,15 @@ public class KitchenSimulator : MonoBehaviour
             if (introDelay <= 0f)
             {
                 introStarted = true;
-                if (HasSeenIntro())
+                if (introSeenCloud || HasSeenIntro())
                 {
                     // 已看过开场嘱托，跳过；之后可主动找工头听
                     introDone = true;
                     return;
                 }
-                SetIntroSeen();   // 一开始就标记，避免中途刷新下次又弹
+                SetIntroSeen();   // 本地也标记一份
+                introSeenCloud = true;
+                MarkIntroSeenCloud();
                 BuildIntroDialogue();
                 dialogueIndex = 0;   // 必须置 0，否则对话永远不开始、introDone 也永远不为 true（派单会整个停摆）
                 BeginLine();
