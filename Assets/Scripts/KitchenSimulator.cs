@@ -220,7 +220,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool cursorLocked;
     private const float EyeHeight = 1.52f;
     private const float MouseSensitivity = 2.6f;
-    private const float WallHeight = 2.75f;
+    private const float WallHeight = 3.2f;
     private const float DoorHeight = 2.1f;
 
     // 跳跃：参考地球重力加速度
@@ -3267,8 +3267,10 @@ public class KitchenSimulator : MonoBehaviour
         return "{\"room_id\":\"" + roomId + "\",\"username\":\"" + currentAccount
             + "\",\"display_name\":\"" + (string.IsNullOrEmpty(displayName) ? currentAccount : displayName)
             + "\",\"coat\":" + custCoat + ",\"trouser\":" + custTrouser
-            + ",\"pos_x\":" + playerPosition.x.ToString("F2") + ",\"pos_y\":" + playerPosition.y.ToString("F2")
-            + ",\"pos_z\":" + playerPosition.z.ToString("F2") + ",\"rot_y\":" + lookYaw.ToString("F2") + "}";
+            + ",\"pos_x\":" + playerPosition.x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+            + ",\"pos_y\":" + playerPosition.y.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+            + ",\"pos_z\":" + playerPosition.z.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)
+            + ",\"rot_y\":" + lookYaw.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) + "}";
     }
 
     private void CreateRoom()
@@ -5247,8 +5249,27 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        // 左键点击触发挥动动作（无论是否维修，第一/第三人称都生效）
+        if (Input.GetMouseButtonDown(0) && cursorLocked && loggedIn && !IsPointerOverGui(Input.mousePosition))
+        {
+            toolStrike = 1f;
+        }
+
         float t = Time.time * (running_ ? 12.5f : 9f);
-        if (!grounded)
+        if (repairingOrder != null || toolStrike > 0f)
+        {
+            // 施工/点击：双臂前伸摆动
+            float s = toolStrike * toolStrike;
+            float idle = repairingOrder != null ? 30f : 0f;
+            float push = s * 42f;
+            float shake = toolStrike * Mathf.Sin(Time.time * 58f) * 6f;
+            leftArmPivot.localRotation = Quaternion.Euler(-idle - push + shake, 0f, 0f);
+            rightArmPivot.localRotation = Quaternion.Euler(-idle - push - shake, 0f, 0f);
+            leftLegPivot.localRotation = Quaternion.identity;
+            rightLegPivot.localRotation = Quaternion.identity;
+            playerBody.localPosition = new Vector3(0f, 0.85f, 0f);
+        }
+        else if (!grounded)
         {
             // 腾空：收腿抬臂
             leftArmPivot.localRotation = Quaternion.Euler(-38f, 0f, 0f);
