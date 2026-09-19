@@ -390,6 +390,21 @@ public class KitchenSimulator : MonoBehaviour
     private const string SupabaseKey = "sb_publishable_yGVYNaSVQPQCgL3bCTZkbw_q8ZhqONI";
     private bool authBusy;   // 登录/注册请求进行中，防重复提交
     private static bool CloudEnabled { get { return !SupabaseUrl.Contains("YOUR-PROJECT"); } }
+
+    // ── 联机房间 + 聊天 ────────────────────────────────
+    private bool inRoom;
+    private string roomId = "";
+    private string roomCode = "";
+    private string joinCode = "";
+    private string chatInput = "";
+    private string roomMessage = "";
+    private readonly List<string> chatMessages = new List<string>();
+    private long lastChatId;
+    private float presenceTimer;
+    private float chatTimer;
+    private bool lobbyOpen;
+    private class RemotePlayer { public GameObject root; public TextMesh nameLabel; public Vector3 target; public float targetYaw; }
+    private readonly Dictionary<string, RemotePlayer> remotePlayers = new Dictionary<string, RemotePlayer>();
     private int loginTab;                 // 0 登录 1 注册 2 外观
     private int custCoat;
     private int custTrouser;
@@ -502,6 +517,38 @@ public class KitchenSimulator : MonoBehaviour
         {
             saveTimer = 0f;
             SaveGame();
+        }
+
+        // 联机：房间面板开关
+        if (Input.GetKeyDown(KeyCode.L) && loggedIn)
+        {
+            lobbyOpen = !lobbyOpen;
+        }
+
+        // 联机轮询：上传我的位置 + 拉取队友位置 + 拉取聊天
+        if (inRoom && loggedIn)
+        {
+            presenceTimer += Time.deltaTime;
+            if (presenceTimer >= 1f)
+            {
+                presenceTimer = 0f;
+                UpdatePresence();
+                PollPresence();
+            }
+            chatTimer += Time.deltaTime;
+            if (chatTimer >= 1f)
+            {
+                chatTimer = 0f;
+                PollChat();
+            }
+            foreach (var kv in remotePlayers)
+            {
+                if (kv.Value.root != null)
+                {
+                    kv.Value.root.transform.position = Vector3.Lerp(kv.Value.root.transform.position, kv.Value.target, Time.deltaTime * 8f);
+                    kv.Value.root.transform.rotation = Quaternion.Slerp(kv.Value.root.transform.rotation, Quaternion.Euler(0f, kv.Value.targetYaw, 0f), Time.deltaTime * 8f);
+                }
+            }
         }
 
         HandleMovement();
@@ -3072,7 +3119,10 @@ public class KitchenSimulator : MonoBehaviour
         req.downloadHandler = new DownloadHandlerBuffer();
         yield return req.SendWebRequest();
         string text = req.downloadHandler != null ? req.downloadHandler.text : "";
-        onResult(req.result == UnityWebRequest.Result.Success && !string.IsNullOrEmpty(text) ? text : null);
+        if (onResult != null)
+        {
+            onResult(req.result == UnityWebRequest.Result.Success && !string.IsNullOrEmpty(text) ? text : null);
+        }
         req.Dispose();
     }
 
@@ -3184,6 +3234,283 @@ public class KitchenSimulator : MonoBehaviour
         ApplySaveData(rows.items[0].data);
         ShowToast("已从云端载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0")
             + "，工单 " + orders.Count + " 单", 5f);
+    }
+
+    // ── 联机房间 / 聊天 DTO ──────────────────────────────
+    [System.Serializable] private class RoomRow { public string id; public string code; }
+    [System.Serializable] private class RoomRows { public RoomRow[] items; }
+    [System.Serializable] private class RoomPlayerRow { public string username; public string display_name; public int coat; public int trouser; public double pos_x; public double pos_y; public double pos_z; public double rot_y; }
+    [System.Serializable] private class RoomPlayerRows { public RoomPlayerRow[] items; }
+    [System.Serializable] private class MessageRow { public long id; public string username; public string display_name; public string text; }
+    [System.Serializable] private class MessageRows { public MessageRow[] items; }
+
+    private string GenerateRoomCode()
+    {
+        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        char[] c = new char[6];
+        for (int i = 0; i < 6; i++)
+        {
+            c[i] = chars[UnityEngine.Random.Range(0, chars.Length)];
+        }
+        return new string(c);
+    }
+
+    private string BuildPlayerBody()
+    {
+        return "{\"room_id\":\"" + roomId + "\",\"username\":\"" + currentAccount
+            + "\",\"display_name\":\"" + (string.IsNullOrEmpty(displayName) ? currentAccount : displayName)
+            + "\",\"coat\":" + custCoat + ",\"trouser\":" + custTrouser
+            + ",\"pos_x\":" + playerPosition.x.ToString("F2") + ",\"pos_y\":" + playerPosition.y.ToString("F2")
+            + ",\"pos_z\":" + playerPosition.z.ToString("F2") + ",\"rot_y\":" + lookYaw.ToString("F2") + "}";
+    }
+
+    private void CreateRoom()
+    {
+        roomCode = GenerateRoomCode();
+        StartCoroutine(CreateRoomRoutine(roomCode));
+    }
+
+    private System.Collections.IEnumerator CreateRoomRoutine(string code)
+    {
+        string body = "{\"code\":\"" + code + "\"}";
+        string result = null;
+        yield return SupabaseRequest("POST", "/rest/v1/rooms?select=id,code", body, (r) => result = r);
+        if (result == null)
+        {
+            roomMessage = "创建房间失败";
+            yield break;
+        }
+        RoomRows rows = JsonUtility.FromJson<RoomRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null || rows.items.Length == 0)
+        {
+            roomMessage = "创建房间失败";
+            yield break;
+        }
+        roomId = rows.items[0].id;
+        roomCode = code;
+        inRoom = true;
+        roomMessage = "房间已创建，房间号 " + code + "（按 L 关闭面板）";
+        yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
+    }
+
+    private void JoinRoom()
+    {
+        if (string.IsNullOrEmpty(joinCode))
+        {
+            roomMessage = "请输入房间号";
+            return;
+        }
+        StartCoroutine(JoinRoomRoutine(joinCode.Trim().ToUpperInvariant()));
+    }
+
+    private System.Collections.IEnumerator JoinRoomRoutine(string code)
+    {
+        string path = "/rest/v1/rooms?code=eq." + UnityWebRequest.EscapeURL(code) + "&select=id,code";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null || result == "[]")
+        {
+            roomMessage = "房间不存在";
+            yield break;
+        }
+        RoomRows rows = JsonUtility.FromJson<RoomRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null || rows.items.Length == 0)
+        {
+            roomMessage = "房间不存在";
+            yield break;
+        }
+        roomId = rows.items[0].id;
+        roomCode = code;
+        inRoom = true;
+        roomMessage = "已加入房间 " + code;
+        yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
+    }
+
+    private void LeaveRoom()
+    {
+        inRoom = false;
+        roomId = "";
+        roomCode = "";
+        foreach (var kv in remotePlayers)
+        {
+            if (kv.Value.root != null)
+            {
+                Destroy(kv.Value.root);
+            }
+        }
+        remotePlayers.Clear();
+        roomMessage = "已离开房间";
+    }
+
+    private void UpdatePresence()
+    {
+        if (!inRoom || string.IsNullOrEmpty(currentAccount) || currentAccount == "游客")
+        {
+            return;
+        }
+        StartCoroutine(SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates"));
+    }
+
+    private void PollPresence()
+    {
+        if (!inRoom)
+        {
+            return;
+        }
+        StartCoroutine(PollPresenceRoutine());
+    }
+
+    private System.Collections.IEnumerator PollPresenceRoutine()
+    {
+        string path = "/rest/v1/room_players?room_id=eq." + roomId + "&select=*";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null)
+        {
+            yield break;
+        }
+        RoomPlayerRows rows = JsonUtility.FromJson<RoomPlayerRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null)
+        {
+            yield break;
+        }
+        HashSet<string> alive = new HashSet<string>();
+        for (int i = 0; i < rows.items.Length; i++)
+        {
+            RoomPlayerRow r = rows.items[i];
+            if (r.username == currentAccount)
+            {
+                continue;   // 跳过自己
+            }
+            alive.Add(r.username);
+            Vector3 target = new Vector3((float)r.pos_x, (float)r.pos_y, (float)r.pos_z);
+            RemotePlayer rp;
+            if (!remotePlayers.TryGetValue(r.username, out rp))
+            {
+                rp = CreateRemoteAvatar(r.display_name, r.coat, r.trouser, target);
+                remotePlayers[r.username] = rp;
+            }
+            rp.target = target;
+            rp.targetYaw = (float)r.rot_y;
+            if (rp.nameLabel != null && rp.nameLabel.text != r.display_name)
+            {
+                rp.nameLabel.text = r.display_name;
+            }
+        }
+        // 清理离线玩家
+        var toRemove = new List<string>();
+        foreach (var kv in remotePlayers)
+        {
+            if (!alive.Contains(kv.Key))
+            {
+                if (kv.Value.root != null)
+                {
+                    Destroy(kv.Value.root);
+                }
+                toRemove.Add(kv.Key);
+            }
+        }
+        for (int i = 0; i < toRemove.Count; i++)
+        {
+            remotePlayers.Remove(toRemove[i]);
+        }
+    }
+
+    private RemotePlayer CreateRemoteAvatar(string name, int coat, int trouser, Vector3 pos)
+    {
+        GameObject root = new GameObject("Remote_" + name);
+        root.transform.SetParent(transform, false);
+        root.transform.position = pos;
+        Color coatC = coat >= 0 && coat < CoatPalette.Length ? CoatPalette[coat] : CoatPalette[0];
+        GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        body.name = "Body";
+        body.transform.SetParent(root.transform, false);
+        body.transform.localPosition = new Vector3(0f, 1.0f, 0f);
+        body.transform.localScale = new Vector3(0.5f, 0.7f, 0.5f);
+        body.GetComponent<Renderer>().sharedMaterial = SimpleMaterial(coatC);
+        Collider c = body.GetComponent<Collider>();
+        if (c != null) Destroy(c);
+        GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        head.name = "Head";
+        head.transform.SetParent(root.transform, false);
+        head.transform.localPosition = new Vector3(0f, 1.7f, 0f);
+        head.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
+        head.GetComponent<Renderer>().sharedMaterial = SimpleMaterial(new Color(0.84f, 0.66f, 0.5f));
+        Collider hc = head.GetComponent<Collider>();
+        if (hc != null) Destroy(hc);
+        GameObject nl = new GameObject("Name");
+        nl.transform.SetParent(root.transform, false);
+        nl.transform.localPosition = new Vector3(0f, 2.15f, 0f);
+        TextMesh tm = nl.AddComponent<TextMesh>();
+        tm.font = UiFont;
+        tm.fontSize = 48;
+        tm.characterSize = 0.09f;
+        tm.anchor = TextAnchor.MiddleCenter;
+        tm.alignment = TextAlignment.Center;
+        tm.color = Color.white;
+        tm.text = name;
+        if (tm.font != null)
+        {
+            nl.GetComponent<Renderer>().sharedMaterial = GetLabelMaterial(Color.white);
+        }
+        return new RemotePlayer { root = root, nameLabel = tm, target = pos };
+    }
+
+    private void SendChat()
+    {
+        if (!inRoom || string.IsNullOrEmpty(chatInput.Trim()))
+        {
+            return;
+        }
+        string text = chatInput.Trim();
+        chatInput = "";
+        StartCoroutine(SendChatRoutine(text));
+    }
+
+    private System.Collections.IEnumerator SendChatRoutine(string text)
+    {
+        string body = "{\"room_id\":\"" + roomId + "\",\"username\":\"" + currentAccount
+            + "\",\"display_name\":\"" + (string.IsNullOrEmpty(displayName) ? currentAccount : displayName)
+            + "\",\"text\":\"" + text + "\"}";
+        yield return SupabaseRequest("POST", "/rest/v1/messages", body, null);
+    }
+
+    private void PollChat()
+    {
+        if (!inRoom)
+        {
+            return;
+        }
+        StartCoroutine(PollChatRoutine());
+    }
+
+    private System.Collections.IEnumerator PollChatRoutine()
+    {
+        string path = "/rest/v1/messages?room_id=eq." + roomId + "&order=id.asc&id=gt." + lastChatId + "&select=id,username,display_name,text&limit=50";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (string.IsNullOrEmpty(result) || result == "[]")
+        {
+            yield break;
+        }
+        MessageRows rows = JsonUtility.FromJson<MessageRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null)
+        {
+            yield break;
+        }
+        for (int i = 0; i < rows.items.Length; i++)
+        {
+            MessageRow m = rows.items[i];
+            chatMessages.Add(m.display_name + "：" + m.text);
+            if (m.id > lastChatId)
+            {
+                lastChatId = m.id;
+            }
+            if (chatMessages.Count > 40)
+            {
+                chatMessages.RemoveAt(0);
+            }
+        }
     }
 
     // ── 存档数据（JsonUtility 序列化）────────────────────
@@ -3459,6 +3786,89 @@ public class KitchenSimulator : MonoBehaviour
         authBusy = true;
         loginMessage = "注册中…";
         StartCoroutine(RegisterRoutine(loginUser, loginPass));
+    }
+
+    private void DrawLobby()
+    {
+        if (!loggedIn || !lobbyOpen)
+        {
+            return;
+        }
+        float width = 360f;
+        float height = 300f;
+        Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 40f, 26f), "联机大厅（最多 4 人）", titleStyle);
+
+        if (inRoom)
+        {
+            GUI.Label(new Rect(rect.x + 20f, rect.y + 52f, width - 40f, 22f), "当前房间号：" + roomCode + "（告诉队友这个号）", bodyStyle);
+            GUI.Label(new Rect(rect.x + 20f, rect.y + 82f, width - 40f, 22f), "在线人数：" + (remotePlayers.Count + 1) + " / 4", bodyStyle);
+            Rect leave = new Rect(rect.x + 20f, rect.y + 116f, width - 40f, 38f);
+            DrawPanel(leave, new Color(0.55f, 0.2f, 0.2f, 0.95f), Color.clear);
+            if (GUI.Button(leave, GUIContent.none, GUIStyle.none))
+            {
+                LeaveRoom();
+            }
+            GUI.Label(leave, "离开房间", buttonStyle);
+        }
+        else
+        {
+            Rect create = new Rect(rect.x + 20f, rect.y + 52f, width - 40f, 44f);
+            DrawPanel(create, btnBlue, Color.clear);
+            if (GUI.Button(create, GUIContent.none, GUIStyle.none))
+            {
+                CreateRoom();
+            }
+            GUI.Label(create, "创建房间", buttonStyle);
+
+            GUI.Label(new Rect(rect.x + 20f, rect.y + 108f, width - 40f, 20f), "输入房间号加入：", bodyStyle);
+            joinCode = GUI.TextField(new Rect(rect.x + 20f, rect.y + 130f, width - 120f, 30f), joinCode, 8);
+            Rect join = new Rect(rect.x + width - 92f, rect.y + 130f, 72f, 30f);
+            DrawPanel(join, btnBlue, Color.clear);
+            if (GUI.Button(join, GUIContent.none, GUIStyle.none))
+            {
+                JoinRoom();
+            }
+            GUI.Label(join, "加入", cardButtonStyle);
+        }
+
+        GUI.Label(new Rect(rect.x + 20f, rect.y + height - 44f, width - 40f, 20f), roomMessage, smallStyle);
+    }
+
+    private void DrawChat()
+    {
+        if (!loggedIn || !inRoom)
+        {
+            return;
+        }
+        float width = 320f;
+        float height = 200f;
+        Rect rect = new Rect(16f, Screen.height - height - 16f, width, height);
+        DrawPanel(new Rect(rect.x, rect.y, width, height - 34f), new Color(0.04f, 0.06f, 0.09f, 0.75f), Color.clear);
+        float y = rect.y + height - 42f;
+        for (int i = chatMessages.Count - 1; i >= 0; i--)
+        {
+            GUI.Label(new Rect(rect.x + 8f, y, width - 16f, 18f), chatMessages[i], smallStyle);
+            y -= 18f;
+            if (y < rect.y + 6f)
+            {
+                break;
+            }
+        }
+        Rect inputRect = new Rect(rect.x, rect.y + height - 30f, width - 62f, 28f);
+        GUI.SetNextControlName("chatInput");
+        chatInput = GUI.TextField(inputRect, chatInput, 40);
+        bool enterPressed = Event.current.type == EventType.KeyDown
+            && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)
+            && GUI.GetNameOfFocusedControl() == "chatInput";
+        Rect send = new Rect(rect.x + width - 58f, rect.y + height - 30f, 54f, 28f);
+        DrawPanel(send, btnBlue, Color.clear);
+        if (GUI.Button(send, GUIContent.none, GUIStyle.none) || enterPressed)
+        {
+            SendChat();
+        }
+        GUI.Label(send, "发送", cardButtonStyle);
     }
 
     private void DrawLogin()
@@ -5932,6 +6342,8 @@ public class KitchenSimulator : MonoBehaviour
         DrawStartOverlay();
         DrawTransition();
         DrawLogin();
+        DrawLobby();
+        DrawChat();
         DrawStartError();
     }
 

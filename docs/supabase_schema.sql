@@ -37,6 +37,51 @@ create trigger trg_saves_updated_at
 before update on saves
 for each row execute function set_updated_at();
 
+-- =============================================================
+-- 联机：房间 + 成员 + 聊天
+-- =============================================================
+create table if not exists rooms (
+  id         uuid primary key default gen_random_uuid(),
+  code       text not null unique,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists room_players (
+  room_id      uuid not null references rooms(id) on delete cascade,
+  username     text not null,
+  display_name text not null default '',
+  coat         integer not null default 0,
+  trouser      integer not null default 0,
+  pos_x        double precision not null default 0,
+  pos_y        double precision not null default 0,
+  pos_z        double precision not null default 0,
+  rot_y        double precision not null default 0,
+  updated_at   timestamptz not null default now(),
+  primary key (room_id, username)
+);
+
+create table if not exists messages (
+  id           bigint generated always as identity primary key,
+  room_id      uuid not null references rooms(id) on delete cascade,
+  username     text not null,
+  display_name text not null default '',
+  text         text not null,
+  created_at   timestamptz not null default now()
+);
+
+-- 联机表的 RLS 策略（公开读写，同前）
+alter table rooms enable row level security;
+alter table room_players enable row level security;
+alter table messages enable row level security;
+
+drop policy if exists "public_rooms" on rooms;
+drop policy if exists "public_room_players" on room_players;
+drop policy if exists "public_messages" on messages;
+
+create policy "public_rooms" on rooms for all using (true) with check (true);
+create policy "public_room_players" on room_players for all using (true) with check (true);
+create policy "public_messages" on messages for all using (true) with check (true);
+
 -- 简易鉴权辅助函数（可选）：供 RPC 调用做注册/登录校验。
 -- 密码哈希沿用客户端算法（见 KitchenSimulator 的 AccountStore.Hash），
 -- 这里只做存储，校验在客户端完成，因此默认关闭 RLS 以简化接入。
