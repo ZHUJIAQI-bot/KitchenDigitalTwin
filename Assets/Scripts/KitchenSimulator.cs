@@ -141,10 +141,10 @@ public class KitchenSimulator : MonoBehaviour
     private readonly Color woodLightColor = new Color(0.62f, 0.44f, 0.27f);
     private readonly Color companyColor = new Color(0.22f, 0.42f, 0.58f);
 
-    private readonly Color panelFill = new Color(0.055f, 0.075f, 0.095f, 0.97f);
-    private readonly Color panelBorder = new Color(1f, 1f, 1f, 0.10f);
-    private readonly Color dividerColor = new Color(1f, 1f, 1f, 0.08f);
-    private readonly Color btnBlue = new Color(0.18f, 0.47f, 0.63f);
+    private readonly Color panelFill = new Color(0.07f, 0.10f, 0.14f, 0.97f);
+    private readonly Color panelBorder = new Color(1f, 1f, 1f, 0.16f);
+    private readonly Color dividerColor = new Color(1f, 1f, 1f, 0.10f);
+    private readonly Color btnBlue = new Color(0.22f, 0.60f, 0.90f);
 
     // ── 运行时状态 ────────────────────────────────────────
     private readonly List<Order> orders = new List<Order>();
