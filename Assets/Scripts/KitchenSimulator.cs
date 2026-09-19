@@ -403,6 +403,8 @@ public class KitchenSimulator : MonoBehaviour
     private float presenceTimer;
     private float chatTimer;
     private bool lobbyOpen;
+    private bool isHost;
+    private float roomSyncTimer;
     private class RemotePlayer { public GameObject root; public TextMesh nameLabel; public Vector3 target; public float targetYaw; }
     private readonly Dictionary<string, RemotePlayer> remotePlayers = new Dictionary<string, RemotePlayer>();
     private int loginTab;                 // 0 登录 1 注册 2 外观
@@ -540,6 +542,12 @@ public class KitchenSimulator : MonoBehaviour
             {
                 chatTimer = 0f;
                 PollChat();
+            }
+            roomSyncTimer += Time.deltaTime;
+            if (roomSyncTimer >= 2f)
+            {
+                roomSyncTimer = 0f;
+                SyncRoomOrders();
             }
             foreach (var kv in remotePlayers)
             {
@@ -3283,6 +3291,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         roomId = rows.items[0].id;
         roomCode = code;
+        isHost = true;
         inRoom = true;
         roomMessage = "房间已创建，房间号 " + code + "（按 L 关闭面板）";
         yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
@@ -3316,6 +3325,24 @@ public class KitchenSimulator : MonoBehaviour
         }
         roomId = rows.items[0].id;
         roomCode = code;
+
+        // 检查人数上限（最多 4 人）
+        string countPath = "/rest/v1/room_players?room_id=eq." + roomId + "&select=username";
+        string countResult = null;
+        yield return SupabaseRequest("GET", countPath, null, (r) => countResult = r);
+        if (countResult != null)
+        {
+            RoomPlayerRows pr = JsonUtility.FromJson<RoomPlayerRows>("{\"items\":" + countResult + "}");
+            int existing = pr != null && pr.items != null ? pr.items.Length : 0;
+            bool selfIn = pr != null && pr.items != null && System.Array.Exists(pr.items, x => x.username == currentAccount);
+            if (!selfIn && existing >= 4)
+            {
+                roomMessage = "房间已满（最多 4 人）";
+                yield break;
+            }
+        }
+
+        isHost = false;
         inRoom = true;
         roomMessage = "已加入房间 " + code;
         yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
@@ -3506,6 +3533,111 @@ public class KitchenSimulator : MonoBehaviour
                 chatMessages.RemoveAt(0);
             }
         }
+    }
+
+    // ── 联机共享工单（房主上传、其他玩家拉取并合并）──────
+    [System.Serializable] private class OrderArray { public OrderSaveData[] items; }
+    [System.Serializable] private class RoomStateRow { public OrderArray orders; }
+    [System.Serializable] private class RoomStateRows { public RoomStateRow[] items; }
+
+    private string SerializeOrdersJson()
+    {
+        OrderSaveData[] arr = new OrderSaveData[orders.Count];
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Order o = orders[i];
+            arr[i] = new OrderSaveData
+            {
+                id = o.id, title = o.title, room = o.room, cause = o.cause, plan = o.plan, cost = o.cost,
+                siteX = o.site.x, siteY = o.site.y, siteZ = o.site.z, state = (int)o.state,
+                repairProgress = o.repairProgress, schedDay = o.schedDay, schedHour = o.schedHour,
+                tool = (int)o.requiredTool, sensorName = o.sensorName, sensorUnit = o.sensorUnit,
+                sensorValue = o.sensorValue, sensorNormal = o.sensorNormal, sensorAlarm = o.sensorAlarm,
+                sensorMax = o.sensorMax, alarmTime = o.alarmTime, fixTime = o.fixTime, normalSince = o.normalSince, verified = o.verified
+            };
+        }
+        return JsonUtility.ToJson(new OrderArray { items = arr });
+    }
+
+    private void ApplyRemoteOrders(OrderSaveData[] remote)
+    {
+        if (remote == null)
+        {
+            return;
+        }
+        Dictionary<int, Order> local = new Dictionary<int, Order>();
+        for (int i = 0; i < orders.Count; i++)
+        {
+            local[orders[i].id] = orders[i];
+        }
+        for (int i = 0; i < remote.Length; i++)
+        {
+            OrderSaveData sd = remote[i];
+            Order o;
+            if (local.TryGetValue(sd.id, out o))
+            {
+                o.state = (OrderState)sd.state;
+                o.repairProgress = sd.repairProgress;
+                o.sensorValue = sd.sensorValue;
+                o.fixTime = sd.fixTime;
+                o.normalSince = sd.normalSince;
+                o.verified = sd.verified;
+                o.needsRebuild = true;
+            }
+            else
+            {
+                o = new Order
+                {
+                    id = sd.id, title = sd.title, room = sd.room, cause = sd.cause, plan = sd.plan, cost = sd.cost,
+                    site = new Vector3(sd.siteX, sd.siteY, sd.siteZ), state = (OrderState)sd.state,
+                    repairProgress = sd.repairProgress, schedDay = sd.schedDay, schedHour = sd.schedHour,
+                    requiredTool = (ToolKind)sd.tool, sensorName = sd.sensorName, sensorUnit = sd.sensorUnit,
+                    sensorValue = sd.sensorValue, sensorNormal = sd.sensorNormal, sensorAlarm = sd.sensorAlarm,
+                    sensorMax = sd.sensorMax, alarmTime = sd.alarmTime, fixTime = sd.fixTime, normalSince = sd.normalSince, verified = sd.verified
+                };
+                BuildOrderMarker(o);
+                orders.Add(o);
+            }
+        }
+    }
+
+    private void SyncRoomOrders()
+    {
+        if (!inRoom || !loggedIn)
+        {
+            return;
+        }
+        if (isHost)
+        {
+            StartCoroutine(UploadRoomOrders());
+        }
+        else
+        {
+            StartCoroutine(DownloadRoomOrders());
+        }
+    }
+
+    private System.Collections.IEnumerator UploadRoomOrders()
+    {
+        string body = "{\"room_id\":\"" + roomId + "\",\"orders\":" + SerializeOrdersJson() + "}";
+        yield return SupabaseRequest("POST", "/rest/v1/room_state", body, null, "resolution=merge-duplicates");
+    }
+
+    private System.Collections.IEnumerator DownloadRoomOrders()
+    {
+        string path = "/rest/v1/room_state?room_id=eq." + roomId + "&select=orders";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null || result == "[]")
+        {
+            yield break;
+        }
+        RoomStateRows rows = JsonUtility.FromJson<RoomStateRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null || rows.items.Length == 0 || rows.items[0].orders == null)
+        {
+            yield break;
+        }
+        ApplyRemoteOrders(rows.items[0].orders.items);
     }
 
     // ── 存档数据（JsonUtility 序列化）────────────────────

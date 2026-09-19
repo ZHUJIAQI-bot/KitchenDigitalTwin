@@ -82,6 +82,17 @@ create policy "public_rooms" on rooms for all using (true) with check (true);
 create policy "public_room_players" on room_players for all using (true) with check (true);
 create policy "public_messages" on messages for all using (true) with check (true);
 
+-- 房间共享游戏状态（工单列表 JSON），用于联机一起修
+create table if not exists room_state (
+  room_id    uuid primary key references rooms(id) on delete cascade,
+  orders     jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table room_state enable row level security;
+drop policy if exists "public_room_state" on room_state;
+create policy "public_room_state" on room_state for all using (true) with check (true);
+
 -- 简易鉴权辅助函数（可选）：供 RPC 调用做注册/登录校验。
 -- 密码哈希沿用客户端算法（见 KitchenSimulator 的 AccountStore.Hash），
 -- 这里只做存储，校验在客户端完成，因此默认关闭 RLS 以简化接入。
