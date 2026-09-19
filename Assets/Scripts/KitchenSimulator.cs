@@ -4891,7 +4891,7 @@ public class KitchenSimulator : MonoBehaviour
     // 是否看过开场工头嘱托（按账号记录，只第一次强制播放）
     private string IntroSeenKey
     {
-        get { return "kitchen_intro_seen_" + (string.IsNullOrEmpty(currentAccount) ? "guest" : currentAccount.ToLowerInvariant()); }
+        get { return "kitchen_intro_seen"; }   // 全局只播一次，不按账号区分
     }
     private bool HasSeenIntro()
     {
@@ -4955,7 +4955,6 @@ public class KitchenSimulator : MonoBehaviour
         else if (!introDone)
         {
             introDone = true;
-            SetIntroSeen();
             orderTimer = 1.5f;
             ShowToast("各家户主会陆续上门反映问题，听他们说完就能接单", 7f);
         }
@@ -5042,10 +5041,11 @@ public class KitchenSimulator : MonoBehaviour
                 introStarted = true;
                 if (HasSeenIntro())
                 {
-                    // 该账号已看过开场嘱托，跳过；之后可主动找工头听
+                    // 已看过开场嘱托，跳过；之后可主动找工头听
                     introDone = true;
                     return;
                 }
+                SetIntroSeen();   // 一开始就标记，避免中途刷新下次又弹
                 BuildIntroDialogue();
                 dialogueIndex = 0;   // 必须置 0，否则对话永远不开始、introDone 也永远不为 true（派单会整个停摆）
                 BeginLine();
