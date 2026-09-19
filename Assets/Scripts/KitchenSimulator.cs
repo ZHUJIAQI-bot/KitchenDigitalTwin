@@ -12,8 +12,8 @@ public class KitchenSimulator : MonoBehaviour
     private const string ProjectSubtitle = "装修公司 · 上门维修";
     private const int StartCash = 600;
 
-    // ── 时间系统：1 游戏小时 = 2.5 秒真实时间；7 天为一个月 ──
-    private const float RealSecondsPerGameHour = 7f;
+    // ── 时间系统：白天(6:00~20:00 共 14 游戏小时)≈ 5 分钟真实时间；7 天为一个月 ──
+    private const float RealSecondsPerGameHour = 21.4f;
     private const int HoursPerDay = 24;
     private const int MonthDays = 7;
     private const int MonthSalary = 2200;
