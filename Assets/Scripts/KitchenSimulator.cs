@@ -280,6 +280,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool thirdPerson;            // 第三人称视角
     private Transform playerHead;
     private Renderer[] playerHeadRenderers;
+    private TextMesh playerNameLabel;
     private bool headVisible = true;
     private const float ThirdPersonDistance = 3.8f;
     private float panelFade;             // 面板展开动效
@@ -378,8 +379,10 @@ public class KitchenSimulator : MonoBehaviour
     private bool loggedIn;
     private string loginUser = "";
     private string loginPass = "";
+    private string loginName = "";     // 注册时填写的显示姓名
     private string loginMessage = "";
     private string currentAccount = "";
+    private string displayName = "";   // 当前玩家的显示姓名
 
     // ── Supabase 云端后端 ────────────────────────────────
     // 部署前把这两个常量改成你自己的 Supabase 项目值（控制台 → Project Settings → API）
@@ -736,15 +739,16 @@ public class KitchenSimulator : MonoBehaviour
             return h.ToString("X8");
         }
 
-        public static void Save(string user, string password, int coat, int trouser)
+        public static void Save(string user, string password, string name, int coat, int trouser)
         {
-            string value = Hash(password) + "|" + coat + "|" + trouser;
+            string value = Hash(password) + "|" + coat + "|" + trouser + "|" + name;
             PlayerPrefs.SetString(Prefix + user.ToLowerInvariant(), value);
             PlayerPrefs.Save();
         }
 
-        public static bool TryLoad(string user, string password, out int coat, out int trouser)
+        public static bool TryLoad(string user, string password, out string name, out int coat, out int trouser)
         {
+            name = "";
             coat = 0;
             trouser = 0;
             string key = Prefix + user.ToLowerInvariant();
@@ -763,6 +767,7 @@ public class KitchenSimulator : MonoBehaviour
             }
             int.TryParse(parts[1], out coat);
             int.TryParse(parts[2], out trouser);
+            name = parts.Length > 3 ? parts[3] : "";
             return true;
         }
 
@@ -3035,6 +3040,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         public string username;
         public string password_hash;
+        public string display_name;
         public int coat;
         public int trouser;
     }
@@ -3078,10 +3084,12 @@ public class KitchenSimulator : MonoBehaviour
         if (result == null)
         {
             // 云端不可用：回退本地登录，保证游戏不被卡死
+            string name;
             int coat, trouser;
-            if (AccountStore.TryLoad(user, pass, out coat, out trouser))
+            if (AccountStore.TryLoad(user, pass, out name, out coat, out trouser))
             {
                 ApplyAppearance(coat, trouser);
+                displayName = name;
                 EnterGame(user);
                 loginMessage = "云端不可用，已用本地存档登录";
             }
@@ -3107,6 +3115,7 @@ public class KitchenSimulator : MonoBehaviour
             yield break;
         }
         ApplyAppearance(row.coat, row.trouser);
+        displayName = row.display_name;
         EnterGame(user);
         authBusy = false;
     }
@@ -3123,7 +3132,7 @@ public class KitchenSimulator : MonoBehaviour
             yield break;
         }
         string body = "{\"username\":\"" + user + "\",\"password_hash\":\"" + AccountStore.Hash(pass)
-            + "\",\"coat\":" + custCoat + ",\"trouser\":" + custTrouser + "}";
+            + "\",\"display_name\":\"" + loginName + "\",\"coat\":" + custCoat + ",\"trouser\":" + custTrouser + "}";
         string result2 = null;
         yield return SupabaseRequest("POST", "/rest/v1/accounts", body, (r) => result2 = r);
         if (result2 == null)
@@ -3135,12 +3144,14 @@ public class KitchenSimulator : MonoBehaviour
                 authBusy = false;
                 yield break;
             }
-            AccountStore.Save(user, pass, custCoat, custTrouser);
+            AccountStore.Save(user, pass, loginName, custCoat, custTrouser);
+            displayName = loginName;
             loginMessage = "云端不可用，已本地注册并登录";
             EnterGame(user);
             authBusy = false;
             yield break;
         }
+        displayName = loginName;
         loginMessage = "注册成功，已自动登录";
         EnterGame(user);
         authBusy = false;
@@ -3380,8 +3391,13 @@ public class KitchenSimulator : MonoBehaviour
         {
             LoadGame();   // 游客用本地存档
         }
+        string shown = string.IsNullOrEmpty(displayName) ? accountName : displayName;
+        if (playerNameLabel != null)
+        {
+            playerNameLabel.text = shown;
+        }
         SetCursorLock(true);
-        ShowToast("欢迎，" + accountName + "　·　按 T 打开数字孪生监测平台", 6f);
+        ShowToast("欢迎，" + shown + "　·　按 T 打开数字孪生监测平台", 6f);
     }
 
     private void TryLogin()
@@ -3397,10 +3413,12 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (!CloudEnabled)
         {
+            string name;
             int coat, trouser;
-            if (AccountStore.TryLoad(loginUser, loginPass, out coat, out trouser))
+            if (AccountStore.TryLoad(loginUser, loginPass, out name, out coat, out trouser))
             {
                 ApplyAppearance(coat, trouser);
+                displayName = name;
                 EnterGame(loginUser);
             }
             else
@@ -3432,7 +3450,8 @@ public class KitchenSimulator : MonoBehaviour
                 loginMessage = "该用户名已被注册";
                 return;
             }
-            AccountStore.Save(loginUser, loginPass, custCoat, custTrouser);
+            AccountStore.Save(loginUser, loginPass, loginName, custCoat, custTrouser);
+            displayName = loginName;
             loginMessage = "注册成功，已自动登录";
             EnterGame(loginUser);
             return;
@@ -3457,7 +3476,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
 
         GUI.Label(new Rect(rect.x + 24f, rect.y + 18f, width - 48f, 30f), "焕新家装 · 员工登录", titleStyle);
-        GUI.Label(new Rect(rect.x + 24f, rect.y + 46f, width - 48f, 20f), "本地账户（浏览器保存）　·　未登录无法开工", smallStyle);
+        GUI.Label(new Rect(rect.x + 24f, rect.y + 46f, width - 48f, 20f), "云端账户（Supabase）　·　未登录无法开工", smallStyle);
 
         string[] tabs = { "登录", "注册", "外观" };
         float tabW = (width - 48f - 16f) / 3f;
@@ -3476,12 +3495,23 @@ public class KitchenSimulator : MonoBehaviour
         float y = rect.y + 118f;
         if (loginTab != 2)
         {
+            bool isRegister = loginTab == 1;
+            float passY = y + (isRegister ? 68f : 34f);
+            float actionY = y + (isRegister ? 110f : 76f);
+
             GUI.Label(new Rect(rect.x + 24f, y, 70f, 24f), "用户名", bodyStyle);
             loginUser = GUI.TextField(new Rect(rect.x + 96f, y - 2f, width - 130f, 28f), loginUser, 16);
-            loginPass = GUI.PasswordField(new Rect(rect.x + 96f, y + 34f, width - 130f, 28f), loginPass, '*', 16);
-            GUI.Label(new Rect(rect.x + 24f, y + 36f, 70f, 24f), "密码", bodyStyle);
 
-            Rect action = new Rect(rect.x + 24f, y + 76f, width - 48f, 40f);
+            if (isRegister)
+            {
+                GUI.Label(new Rect(rect.x + 24f, y + 34f, 70f, 24f), "姓名", bodyStyle);
+                loginName = GUI.TextField(new Rect(rect.x + 96f, y + 32f, width - 130f, 28f), loginName, 12);
+            }
+
+            loginPass = GUI.PasswordField(new Rect(rect.x + 96f, passY - 2f, width - 130f, 28f), loginPass, '*', 16);
+            GUI.Label(new Rect(rect.x + 24f, passY + 2f, 70f, 24f), "密码", bodyStyle);
+
+            Rect action = new Rect(rect.x + 24f, actionY, width - 48f, 40f);
             DrawPanel(action, btnBlue, Color.clear);
             if (GUI.Button(action, GUIContent.none, GUIStyle.none))
             {
@@ -3620,6 +3650,24 @@ public class KitchenSimulator : MonoBehaviour
             torso.GetComponent<Renderer>()
         };
         SetHeadVisible(false);
+
+        // 头顶姓名标签（跟随玩家，第三人称可见）
+        GameObject nameObj = new GameObject("Player Name");
+        nameObj.transform.SetParent(player.transform, false);
+        nameObj.transform.localPosition = new Vector3(0f, 1.85f, 0f);
+        nameObj.transform.localRotation = Quaternion.identity;
+        playerNameLabel = nameObj.AddComponent<TextMesh>();
+        playerNameLabel.font = UiFont;
+        playerNameLabel.fontSize = 48;
+        playerNameLabel.characterSize = 0.09f;
+        playerNameLabel.anchor = TextAnchor.MiddleCenter;
+        playerNameLabel.alignment = TextAlignment.Center;
+        playerNameLabel.color = Color.white;
+        Renderer nameRenderer = nameObj.GetComponent<Renderer>();
+        if (playerNameLabel.font != null)
+        {
+            nameRenderer.sharedMaterial = GetLabelMaterial(Color.white);
+        }
 
         BuildOutfits();
         BuildViewmodel();

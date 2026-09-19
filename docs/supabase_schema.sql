@@ -7,10 +7,14 @@
 create table if not exists accounts (
   username      text primary key,
   password_hash text not null,
+  display_name  text not null default '',
   coat          integer not null default 0,
   trouser       integer not null default 0,
   created_at    timestamptz not null default now()
 );
+
+-- 已存在的表补加姓名字段（幂等）
+alter table accounts add column if not exists display_name text not null default '';
 
 -- 存档表：每个账号一行，data 是 JSON 存档（收入/时间/工单/位置等）
 create table if not exists saves (
