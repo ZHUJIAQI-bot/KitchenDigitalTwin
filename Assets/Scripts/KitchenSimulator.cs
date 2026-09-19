@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Networking;
 
 /// <summary>
 /// 焕新家装 · 装修公司上门维修仿真
@@ -379,6 +380,13 @@ public class KitchenSimulator : MonoBehaviour
     private string loginPass = "";
     private string loginMessage = "";
     private string currentAccount = "";
+
+    // ── Supabase 云端后端 ────────────────────────────────
+    // 部署前把这两个常量改成你自己的 Supabase 项目值（控制台 → Project Settings → API）
+    private const string SupabaseUrl = "https://YOUR-PROJECT.supabase.co";
+    private const string SupabaseKey = "YOUR-ANON-KEY";
+    private bool authBusy;   // 登录/注册请求进行中，防重复提交
+    private static bool CloudEnabled { get { return !SupabaseUrl.Contains("YOUR-PROJECT"); } }
     private int loginTab;                 // 0 登录 1 注册 2 外观
     private int custCoat;
     private int custTrouser;
@@ -718,7 +726,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // 简易散列：仅用于避免明文存储，演示项目不做真实加密
-        private static string Hash(string input)
+        public static string Hash(string input)
         {
             int h = 17;
             for (int i = 0; i < input.Length; i++)
@@ -3021,6 +3029,133 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
+    // ── Supabase 云端接口 ────────────────────────────────
+    [System.Serializable]
+    private class AccountRow
+    {
+        public string username;
+        public string password_hash;
+        public int coat;
+        public int trouser;
+    }
+
+    [System.Serializable]
+    private class AccountRows { public AccountRow[] items; }
+
+    [System.Serializable]
+    private class SaveRow { public SaveData data; }
+
+    [System.Serializable]
+    private class SaveRows { public SaveRow[] items; }
+
+    private System.Collections.IEnumerator SupabaseRequest(string method, string path, string bodyJson, System.Action<string> onResult, string prefer = null)
+    {
+        UnityWebRequest req = method == "GET"
+            ? UnityWebRequest.Get(SupabaseUrl + path)
+            : new UnityWebRequest(SupabaseUrl + path, method);
+        req.SetRequestHeader("apikey", SupabaseKey);
+        req.SetRequestHeader("Authorization", "Bearer " + SupabaseKey);
+        req.SetRequestHeader("Content-Type", "application/json");
+        if (!string.IsNullOrEmpty(prefer))
+        {
+            req.SetRequestHeader("Prefer", prefer);
+        }
+        if (!string.IsNullOrEmpty(bodyJson))
+        {
+            req.uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(bodyJson));
+        }
+        req.downloadHandler = new DownloadHandlerBuffer();
+        yield return req.SendWebRequest();
+        string text = req.downloadHandler != null ? req.downloadHandler.text : "";
+        onResult(req.result == UnityWebRequest.Result.Success && !string.IsNullOrEmpty(text) ? text : null);
+        req.Dispose();
+    }
+
+    private System.Collections.IEnumerator LoginRoutine(string user, string pass)
+    {
+        string path = "/rest/v1/accounts?username=eq." + UnityWebRequest.EscapeURL(user) + "&select=*";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null)
+        {
+            loginMessage = "无法连接服务器，请检查网络";
+            authBusy = false;
+            yield break;
+        }
+        AccountRows rows = JsonUtility.FromJson<AccountRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null || rows.items.Length == 0)
+        {
+            loginMessage = "该用户名不存在，请先注册";
+            authBusy = false;
+            yield break;
+        }
+        AccountRow row = rows.items[0];
+        if (row.password_hash != AccountStore.Hash(pass))
+        {
+            loginMessage = "密码不正确";
+            authBusy = false;
+            yield break;
+        }
+        ApplyAppearance(row.coat, row.trouser);
+        EnterGame(user);
+        authBusy = false;
+    }
+
+    private System.Collections.IEnumerator RegisterRoutine(string user, string pass)
+    {
+        string path = "/rest/v1/accounts?username=eq." + UnityWebRequest.EscapeURL(user) + "&select=username";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result != null && result != "[]")
+        {
+            loginMessage = "该用户名已被注册";
+            authBusy = false;
+            yield break;
+        }
+        string body = "{\"username\":\"" + user + "\",\"password_hash\":\"" + AccountStore.Hash(pass)
+            + "\",\"coat\":" + custCoat + ",\"trouser\":" + custTrouser + "}";
+        string result2 = null;
+        yield return SupabaseRequest("POST", "/rest/v1/accounts", body, (r) => result2 = r);
+        if (result2 == null)
+        {
+            loginMessage = "注册失败，无法连接服务器";
+            authBusy = false;
+            yield break;
+        }
+        loginMessage = "注册成功，已自动登录";
+        EnterGame(user);
+        authBusy = false;
+    }
+
+    private System.Collections.IEnumerator SaveToCloud(string username, string saveJson)
+    {
+        string body = "{\"username\":\"" + username + "\",\"data\":" + saveJson + "}";
+        string result = null;
+        yield return SupabaseRequest("POST", "/rest/v1/saves", body, (r) => result = r, "resolution=merge-duplicates");
+        // 自动存档失败静默，避免打断游戏
+    }
+
+    private System.Collections.IEnumerator LoadFromCloud(string username)
+    {
+        string path = "/rest/v1/saves?username=eq." + UnityWebRequest.EscapeURL(username) + "&select=data";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null || result == "[]")
+        {
+            LoadGame();   // 云端无数据，回退本地缓存
+            yield break;
+        }
+        SaveRows rows = JsonUtility.FromJson<SaveRows>("{\"items\":" + result + "}");
+        if (rows == null || rows.items == null || rows.items.Length == 0 || rows.items[0].data == null)
+        {
+            LoadGame();
+            yield break;
+        }
+        ApplySaveData(rows.items[0].data);
+        ShowToast("已从云端载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0")
+            + "，工单 " + orders.Count + " 单", 5f);
+    }
+
     // ── 存档数据（JsonUtility 序列化）────────────────────
     [System.Serializable]
     private class SaveData
@@ -3111,8 +3246,14 @@ public class KitchenSimulator : MonoBehaviour
             };
         }
         string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
-        PlayerPrefs.SetString(key, JsonUtility.ToJson(data));
+        string json = JsonUtility.ToJson(data);
+        PlayerPrefs.SetString(key, json);
         PlayerPrefs.Save();
+        // 云端存档（Supabase，异步不阻塞）
+        if (CloudEnabled)
+        {
+            StartCoroutine(SaveToCloud(currentAccount, json));
+        }
     }
 
     private void LoadGame()
@@ -3132,6 +3273,18 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        ApplySaveData(data);
+        ShowToast("已载入本地存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0")
+            + "，工单 " + orders.Count + " 单", 5f);
+    }
+
+    // 把存档数据恢复到游戏状态（本地/云端共用）
+    private void ApplySaveData(SaveData data)
+    {
+        if (data == null)
+        {
+            return;
+        }
         income = data.income;
         expenses = data.expenses;
         if (data.gameTime > 0f)
@@ -3186,8 +3339,6 @@ public class KitchenSimulator : MonoBehaviour
                 orders.Add(o);
             }
         }
-        ShowToast("已载入存档：累计收入 ¥" + income.ToString("N0") + "，成本 ¥" + expenses.ToString("N0")
-            + "，工单 " + orders.Count + " 单", 5f);
     }
 
     private void EnterGame(string accountName)
@@ -3197,46 +3348,79 @@ public class KitchenSimulator : MonoBehaviour
         if (accountName != "游客")
         {
             AccountStore.UpdateAppearance(accountName, custCoat, custTrouser);
+            if (CloudEnabled)
+            {
+                StartCoroutine(LoadFromCloud(accountName));   // 云端存档，失败自动回退本地
+            }
+            else
+            {
+                LoadGame();
+            }
         }
-        LoadGame();
+        else
+        {
+            LoadGame();   // 游客用本地存档
+        }
         SetCursorLock(true);
         ShowToast("欢迎，" + accountName + "　·　按 T 打开数字孪生监测平台", 6f);
     }
 
     private void TryLogin()
     {
+        if (authBusy)
+        {
+            return;
+        }
         if (string.IsNullOrEmpty(loginUser))
         {
             loginMessage = "请输入用户名";
             return;
         }
-        int coat, trouser;
-        if (AccountStore.TryLoad(loginUser, loginPass, out coat, out trouser))
+        if (!CloudEnabled)
         {
-            ApplyAppearance(coat, trouser);
-            EnterGame(loginUser);
+            int coat, trouser;
+            if (AccountStore.TryLoad(loginUser, loginPass, out coat, out trouser))
+            {
+                ApplyAppearance(coat, trouser);
+                EnterGame(loginUser);
+            }
+            else
+            {
+                loginMessage = AccountStore.Exists(loginUser) ? "密码不正确" : "该用户名不存在，请先注册";
+            }
+            return;
         }
-        else
-        {
-            loginMessage = AccountStore.Exists(loginUser) ? "密码不正确" : "该用户名不存在，请先注册";
-        }
+        authBusy = true;
+        loginMessage = "登录中…";
+        StartCoroutine(LoginRoutine(loginUser, loginPass));
     }
 
     private void TryRegister()
     {
+        if (authBusy)
+        {
+            return;
+        }
         if (string.IsNullOrEmpty(loginUser) || loginPass.Length < 3)
         {
             loginMessage = "用户名不能为空，密码至少 3 位";
             return;
         }
-        if (AccountStore.Exists(loginUser))
+        if (!CloudEnabled)
         {
-            loginMessage = "该用户名已被注册";
+            if (AccountStore.Exists(loginUser))
+            {
+                loginMessage = "该用户名已被注册";
+                return;
+            }
+            AccountStore.Save(loginUser, loginPass, custCoat, custTrouser);
+            loginMessage = "注册成功，已自动登录";
+            EnterGame(loginUser);
             return;
         }
-        AccountStore.Save(loginUser, loginPass, custCoat, custTrouser);
-        loginMessage = "注册成功，已自动登录";
-        EnterGame(loginUser);
+        authBusy = true;
+        loginMessage = "注册中…";
+        StartCoroutine(RegisterRoutine(loginUser, loginPass));
     }
 
     private void DrawLogin()
