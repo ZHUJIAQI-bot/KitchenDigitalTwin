@@ -39,6 +39,13 @@ for each row execute function set_updated_at();
 alter table accounts enable row level security;
 alter table saves enable row level security;
 
+drop policy if exists "public_read_accounts" on accounts;
+drop policy if exists "public_write_accounts" on accounts;
+drop policy if exists "public_update_accounts" on accounts;
+drop policy if exists "public_read_saves" on saves;
+drop policy if exists "public_write_saves" on saves;
+drop policy if exists "public_update_saves" on saves;
+
 create policy "public_read_accounts" on accounts for select using (true);
 create policy "public_write_accounts" on accounts for insert with check (true);
 create policy "public_update_accounts" on accounts for update using (true);

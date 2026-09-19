@@ -383,8 +383,8 @@ public class KitchenSimulator : MonoBehaviour
 
     // ── Supabase 云端后端 ────────────────────────────────
     // 部署前把这两个常量改成你自己的 Supabase 项目值（控制台 → Project Settings → API）
-    private const string SupabaseUrl = "https://cjzjdeojwgpxpttffoxt.supabase.co";
-    private const string SupabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqempkZW9qd2dweHB0dGZmb3h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3ODgwNjQsImV4cCI6MjEwNTM2NDA2NH0.nOzBlEBOgLKs16VDC2ieBET1KZtKU5isWGmFvZ3h1kI";
+    private const string SupabaseUrl = "https://cjzjdeojwgpxptfcfoxt.supabase.co";
+    private const string SupabaseKey = "sb_publishable_yGVYNaSVQPQCgL3bCTZkbw_q8ZhqONI";
     private bool authBusy;   // 登录/注册请求进行中，防重复提交
     private static bool CloudEnabled { get { return !SupabaseUrl.Contains("YOUR-PROJECT"); } }
     private int loginTab;                 // 0 登录 1 注册 2 外观
@@ -3054,7 +3054,6 @@ public class KitchenSimulator : MonoBehaviour
             ? UnityWebRequest.Get(SupabaseUrl + path)
             : new UnityWebRequest(SupabaseUrl + path, method);
         req.SetRequestHeader("apikey", SupabaseKey);
-        req.SetRequestHeader("Authorization", "Bearer " + SupabaseKey);
         req.SetRequestHeader("Content-Type", "application/json");
         if (!string.IsNullOrEmpty(prefer))
         {
