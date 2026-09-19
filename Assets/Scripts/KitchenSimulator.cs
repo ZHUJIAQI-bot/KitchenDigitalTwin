@@ -316,6 +316,10 @@ public class KitchenSimulator : MonoBehaviour
     private bool audioMuted;
     private AudioSource workSource;
     private AudioClip workClip;   // 当前这句还剩多久发声，到 0 就安静下来
+    private AudioSource uiSource;
+    private AudioSource notifySource;
+    private AudioClip uiClickClip;
+    private AudioClip notifyClip;
     private float stepTimer;
 
     private readonly Vector3 spawnPosition = new Vector3(-14.8f, GroundLevel, 0.15f);
@@ -3269,6 +3273,7 @@ public class KitchenSimulator : MonoBehaviour
 
     private void CreateRoom()
     {
+        PlayUiClick();
         roomCode = GenerateRoomCode();
         StartCoroutine(CreateRoomRoutine(roomCode));
     }
@@ -3299,6 +3304,7 @@ public class KitchenSimulator : MonoBehaviour
 
     private void JoinRoom()
     {
+        PlayUiClick();
         if (string.IsNullOrEmpty(joinCode))
         {
             roomMessage = "请输入房间号";
@@ -3484,6 +3490,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
+        PlayUiClick();
         string text = chatInput.Trim();
         chatInput = "";
         StartCoroutine(SendChatRoutine(text));
@@ -4499,6 +4506,51 @@ public class KitchenSimulator : MonoBehaviour
         {
             voiceBlips[i] = CreateBlipClip(freqs[i], 0.11f);
         }
+
+        uiSource = gameObject.AddComponent<AudioSource>();
+        uiSource.playOnAwake = false;
+        uiSource.spatialBlend = 0f;
+        uiSource.volume = 0.5f;
+        uiClickClip = CreateBlipClip(880f, 0.07f);
+
+        notifySource = gameObject.AddComponent<AudioSource>();
+        notifySource.playOnAwake = false;
+        notifySource.spatialBlend = 0f;
+        notifySource.volume = 0.6f;
+        notifyClip = CreateChimeClip();
+    }
+
+    private void PlayUiClick()
+    {
+        if (uiSource != null && uiClickClip != null)
+        {
+            uiSource.PlayOneShot(uiClickClip, 0.5f);
+        }
+    }
+
+    private void PlayNotify()
+    {
+        if (notifySource != null && notifyClip != null)
+        {
+            notifySource.PlayOneShot(notifyClip, 0.6f);
+        }
+    }
+
+    private AudioClip CreateChimeClip()
+    {
+        int rate = 44100;
+        float duration = 0.45f;
+        float[] data = new float[(int)(rate * duration)];
+        for (int i = 0; i < data.Length; i++)
+        {
+            float t = i / (float)rate;
+            float freq = t < 0.18f ? 659f : 880f;
+            float env = Mathf.Exp(-5f * t);
+            data[i] = Mathf.Sin(2f * Mathf.PI * freq * t) * env * 0.45f;
+        }
+        AudioClip clip = AudioClip.Create("Chime", data.Length, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
     }
 
     // 施工特效：粉尘/碎屑粒子，每次点击左键迸发
@@ -5688,6 +5740,7 @@ public class KitchenSimulator : MonoBehaviour
         };
         BuildOrderMarker(order);
         orders.Add(order);
+        PlayNotify();
         ShowToast(channel + " 新工单 " + order.Code + " · " + order.room + " · " + order.title + "　预约 " + order.ScheduleText, 6f);
     }
 
@@ -6268,6 +6321,7 @@ public class KitchenSimulator : MonoBehaviour
         repairingOrder.repairProgress = 1f;
         repairingOrder.state = OrderState.Fixed;
         AddIncome(repairingOrder.cost);
+        PlayNotify();
         ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（业主支付 ¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
 
         repairingOrder = null;
@@ -6624,7 +6678,7 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText, smallStyle);
         Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 290f, 22f), "累计收入 ¥" + income.ToString("N0") + "    成本 ¥" + expenses.ToString("N0"), bodyStyle);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 290f, 22f), "净利 ¥" + (income - expenses).ToString("N0") + "    现金 ¥" + Cash.ToString("N0"), bodyStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 290f, 22f), "财富值 ¥" + Cash.ToString("N0") + "　·　净利 ¥" + (income - expenses).ToString("N0"), bodyStyle);
     }
 
     private void DrawTaskList()
