@@ -3246,13 +3246,8 @@ public class KitchenSimulator : MonoBehaviour
 
     private string GenerateRoomCode()
     {
-        const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-        char[] c = new char[6];
-        for (int i = 0; i < 6; i++)
-        {
-            c[i] = chars[UnityEngine.Random.Range(0, chars.Length)];
-        }
-        return new string(c);
+        // 纯 6 位数字房间号，避免字母/数字看混（5/S、2/Z、0/O 等）
+        return UnityEngine.Random.Range(100000, 1000000).ToString();
     }
 
     private string BuildPlayerBody()
