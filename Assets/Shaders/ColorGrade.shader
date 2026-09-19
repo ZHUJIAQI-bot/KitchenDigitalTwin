@@ -5,11 +5,11 @@ Shader "Custom/ColorGrade"
     Properties
     {
         _MainTex ("Texture", 2D) = "white" {}
-        _Saturation ("饱和度", Range(0, 2)) = 1.15
-        _Exposure ("曝光", Range(0.5, 2)) = 1.12
-        _Contrast ("对比度", Range(0.5, 1.5)) = 0.88
-        _WhiteLevel ("白色色阶", Range(0, 0.5)) = 0.02
-        _BlackLevel ("黑色色阶", Range(0, 0.5)) = 0.04
+        _Saturation ("饱和度", Range(0, 2)) = 1.4
+        _Exposure ("曝光", Range(0.5, 2)) = 1.22
+        _Contrast ("对比度", Range(0.5, 1.5)) = 0.82
+        _WhiteLevel ("白色色阶", Range(0, 0.5)) = 0.03
+        _BlackLevel ("黑色色阶", Range(0, 0.5)) = 0.08
     }
 
     SubShader

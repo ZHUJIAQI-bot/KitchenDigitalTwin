@@ -1270,7 +1270,7 @@ public class KitchenSimulator : MonoBehaviour
         // 6 点日出、18 点日落
         float dayFactor = Mathf.Clamp01(Mathf.Sin((GameHourFloat - 6f) / 12f * Mathf.PI));
         Color nightSky = new Color(0.06f, 0.09f, 0.17f);
-        Color daySky = new Color(0.53f, 0.76f, 0.94f);
+        Color daySky = new Color(0.40f, 0.68f, 0.98f);
         Color duskSky = new Color(0.86f, 0.52f, 0.32f);
 
         // 黄昏/清晨的暖色过渡：日出前后与日落前后各约 1.5 小时
@@ -1294,7 +1294,7 @@ public class KitchenSimulator : MonoBehaviour
             sunLight.transform.rotation = Quaternion.Euler(sunPitch, -38f, 0f);
         }
         // 夜间环境光不能压太暗，否则合批后的大网格几乎全黑
-        RenderSettings.ambientLight = Color.Lerp(new Color(0.25f, 0.28f, 0.37f), new Color(0.62f, 0.63f, 0.64f), dayFactor);
+        RenderSettings.ambientLight = Color.Lerp(new Color(0.34f, 0.38f, 0.48f), new Color(0.78f, 0.80f, 0.82f), dayFactor);
         RenderSettings.ambientIntensity = Mathf.Lerp(0.78f, 1.1f, dayFactor);
 
         // 昼夜切换 → 转场画面
