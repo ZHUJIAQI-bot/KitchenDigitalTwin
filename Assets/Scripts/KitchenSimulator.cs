@@ -220,8 +220,8 @@ public class KitchenSimulator : MonoBehaviour
     private bool cursorLocked;
     private const float EyeHeight = 1.52f;
     private const float MouseSensitivity = 2.6f;
-    private const float WallHeight = 3.2f;
-    private const float DoorHeight = 2.1f;
+    private const float WallHeight = 3.6f;
+    private const float DoorHeight = 2.6f;
 
     // 跳跃：参考地球重力加速度
     private const float Gravity = 9.81f;
@@ -969,7 +969,7 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildRoomFloor(x0, x1, z0, z1, new Color(0.82f, 0.72f, 0.58f), true);
 
-        BuildWallWithOpenings("Home Front Wall", true, z0, x0, x1, 0.24f, wall, doorA, doorB, 0f, 2.2f);
+        BuildWallWithOpenings("Home Front Wall", true, z0, x0, x1, 0.24f, wall, doorA, doorB, 0f, DoorHeight);
         BuildWallWithOpenings("Home Back Wall", true, z1, x0, x1, 0.24f, wall, -30.2f, -27.6f, 0.95f, 2.15f);
         BuildWallWithOpenings("Home Left Wall", false, x0, z0, z1, 0.24f, wall, -3.6f, -1.2f, 0.95f, 2.15f);
         BuildWallWithOpenings("Home Right Wall", false, x1, z0, z1, 0.24f, wall, -3.6f, -1.2f, 0.95f, 2.15f);
@@ -2226,7 +2226,7 @@ public class KitchenSimulator : MonoBehaviour
         float doorW = Mathf.Min(2.2f, L.splitX - 1.2f);
         float doorC = (x0 + x1) * 0.5f;
         float ws, we;
-        List<float> front = new List<float> { doorC - doorW * 0.5f, doorC + doorW * 0.5f, 0f, 2.2f };
+        List<float> front = new List<float> { doorC - doorW * 0.5f, doorC + doorW * 0.5f, 0f, DoorHeight };
         if (x2 - x1 > 3.0f)
         {
             WindowRange(x1, x2, 0.9f, 2.4f, out ws, out we);
