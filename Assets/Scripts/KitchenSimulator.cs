@@ -353,6 +353,7 @@ public class KitchenSimulator : MonoBehaviour
     private int orderSerial;
     private float orderTimer;
     private bool taskListExpanded = true;
+    private Vector2 taskScroll;
     private int income;     // 完工收入（客户支付）
     private int expenses;   // 购置道具支出
     private string toastText = string.Empty;
@@ -6563,7 +6564,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
-            float height = taskListExpanded ? (104f + BuildDisplayList().Count * 66f) : 60f;
+            // 展开=固定高度页面内部滚动；折叠=只显示任务栏(1-2条)
+            float height = taskListExpanded ? 400f : 205f;
             return new Rect(Screen.width - 348f, 16f, 332f, height);
         }
     }
@@ -6777,11 +6779,6 @@ public class KitchenSimulator : MonoBehaviour
         }
         GUI.Label(toggle, taskListExpanded ? "收起" : "展开", cardButtonStyle);
 
-        if (!taskListExpanded)
-        {
-            return;
-        }
-
         float y = rect.y + 64f;
         Fill(new Rect(rect.x + 18f, y, rect.width - 36f, 1f), dividerColor);
         y += 10f;
@@ -6793,10 +6790,32 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        if (!taskListExpanded)
+        {
+            // 任务栏：只显示当前进行中的 1-2 条
+            int show = Mathf.Min(2, display.Count);
+            for (int i = 0; i < show; i++)
+            {
+                DrawOrderCard(new Rect(rect.x + 12f, y + i * 66f, rect.width - 24f, 58f), display[i]);
+            }
+            if (display.Count > show)
+            {
+                GUI.Label(new Rect(rect.x + 18f, y + show * 66f + 4f, rect.width - 36f, 18f),
+                    "还有 " + (display.Count - show) + " 条工单 · 点「展开」查看", smallStyle);
+            }
+            return;
+        }
+
+        // 展开：固定高度内上下滚动（参考原神式滚动列表）
+        float viewH = rect.height - 74f;
+        float contentH = Mathf.Max(viewH, display.Count * 66f + 8f);
+        taskScroll = GUI.BeginScrollView(new Rect(rect.x, y, rect.width, viewH), taskScroll,
+            new Rect(0f, 0f, rect.width - 22f, contentH));
         for (int i = 0; i < display.Count; i++)
         {
-            DrawOrderCard(new Rect(rect.x + 12f, y + i * 66f, rect.width - 24f, 58f), display[i]);
+            DrawOrderCard(new Rect(0f, i * 66f, rect.width - 24f, 58f), display[i]);
         }
+        GUI.EndScrollView();
     }
 
     private void DrawOrderCard(Rect card, Order order)
