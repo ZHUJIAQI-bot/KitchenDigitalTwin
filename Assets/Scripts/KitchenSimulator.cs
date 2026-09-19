@@ -383,8 +383,8 @@ public class KitchenSimulator : MonoBehaviour
 
     // ── Supabase 云端后端 ────────────────────────────────
     // 部署前把这两个常量改成你自己的 Supabase 项目值（控制台 → Project Settings → API）
-    private const string SupabaseUrl = "https://YOUR-PROJECT.supabase.co";
-    private const string SupabaseKey = "YOUR-ANON-KEY";
+    private const string SupabaseUrl = "https://cjzjdeojwgpxpttffoxt.supabase.co";
+    private const string SupabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNqempkZW9qd2dweHB0dGZmb3h0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk3ODgwNjQsImV4cCI6MjEwNTM2NDA2NH0.nOzBlEBOgLKs16VDC2ieBET1KZtKU5isWGmFvZ3h1kI";
     private bool authBusy;   // 登录/注册请求进行中，防重复提交
     private static bool CloudEnabled { get { return !SupabaseUrl.Contains("YOUR-PROJECT"); } }
     private int loginTab;                 // 0 登录 1 注册 2 外观
@@ -3078,7 +3078,18 @@ public class KitchenSimulator : MonoBehaviour
         yield return SupabaseRequest("GET", path, null, (r) => result = r);
         if (result == null)
         {
-            loginMessage = "无法连接服务器，请检查网络";
+            // 云端不可用：回退本地登录，保证游戏不被卡死
+            int coat, trouser;
+            if (AccountStore.TryLoad(user, pass, out coat, out trouser))
+            {
+                ApplyAppearance(coat, trouser);
+                EnterGame(user);
+                loginMessage = "云端不可用，已用本地存档登录";
+            }
+            else
+            {
+                loginMessage = "无法连接服务器，请检查网络或稍后再试";
+            }
             authBusy = false;
             yield break;
         }
@@ -3118,7 +3129,16 @@ public class KitchenSimulator : MonoBehaviour
         yield return SupabaseRequest("POST", "/rest/v1/accounts", body, (r) => result2 = r);
         if (result2 == null)
         {
-            loginMessage = "注册失败，无法连接服务器";
+            // 云端不可用：回退本地注册，保证游戏不被卡死
+            if (AccountStore.Exists(user))
+            {
+                loginMessage = "该用户名已被注册";
+                authBusy = false;
+                yield break;
+            }
+            AccountStore.Save(user, pass, custCoat, custTrouser);
+            loginMessage = "云端不可用，已本地注册并登录";
+            EnterGame(user);
             authBusy = false;
             yield break;
         }
