@@ -57,7 +57,7 @@ def add_sphere(name, location, radius, mat, segments=64, ring_count=32):
 
 def add_torus(name, location, major_r, minor_r, mat, rotation=(0, 0, 0)):
     bpy.ops.mesh.primitive_torus_add(major_radius=major_r, minor_radius=minor_r,
-                                    major_segments=32, minor_segments=8, location=location)
+                                    major_segments=20, minor_segments=5, location=location)
     obj = bpy.context.object
     obj.name = name
     obj.rotation_euler = rotation
@@ -131,13 +131,13 @@ def build_twisted_tower(name, base_r, top_r, height, twist_deg, sides, mat):
 def build_sphere_grid(root, name, center_z, radius, grid_mat):
     """球面几何窗格：24 条经线 + 8 条纬线（线框，非贴图）"""
     fr = 0.32  # 窗框线径（游戏单位，略夸张保证远景可见）
-    for i in range(1, 8):
-        lat = math.radians(-70.0 + i * 20.0)
+    for i in range(1, 6):
+        lat = math.radians(-60.0 + i * 30.0)
         r = radius * math.cos(lat)
         z = center_z + radius * math.sin(lat)
         parent_to(add_torus(name + "_Lat%02d" % i, (0, 0, z), r, fr, grid_mat), root)
-    for i in range(24):
-        lon = math.radians(i * 15.0)
+    for i in range(12):
+        lon = math.radians(i * 30.0)
         parent_to(add_torus(name + "_Mer%02d" % i, (0, 0, center_z), radius, fr, grid_mat,
                             rotation=(math.pi * 0.5, 0, lon)), root)
 

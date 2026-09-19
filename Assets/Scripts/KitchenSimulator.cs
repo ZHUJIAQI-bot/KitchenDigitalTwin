@@ -895,7 +895,7 @@ public class KitchenSimulator : MonoBehaviour
             Transform t = filter.transform;
             while (t != null)
             {
-                if (protectedRoots.Contains(t))
+                if (protectedRoots.Contains(t) || t.name.StartsWith("Models/"))
                 {
                     isProtected = true;
                     break;
