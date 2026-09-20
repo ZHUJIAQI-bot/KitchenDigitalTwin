@@ -6559,7 +6559,7 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 界面 ──────────────────────────────────────────────
-    private Rect BudgetRect { get { return new Rect(16f, 16f, 320f, 116f); } }
+    private Rect BudgetRect { get { return new Rect(16f, 16f, 320f, 140f); } }
     private Rect TaskListRect
     {
         get
@@ -6757,8 +6757,8 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 300f, 18f), ProjectSubtitle + "　·　" + currentRoomName, smallStyle);
         GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText, smallStyle);
         Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 290f, 22f), "累计收入 ¥" + income.ToString("N0") + "    成本 ¥" + expenses.ToString("N0"), bodyStyle);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 290f, 22f), "财富值 ¥" + Cash.ToString("N0") + "　·　净利 ¥" + (income - expenses).ToString("N0"), bodyStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 288f, 20f), "收入 ¥" + income.ToString("N0") + " · 成本 ¥" + expenses.ToString("N0"), smallStyle);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 288f, 20f), "财富值 ¥" + Cash.ToString("N0") + " · 净利 ¥" + (income - expenses).ToString("N0"), smallStyle);
     }
 
     private void DrawTaskList()
