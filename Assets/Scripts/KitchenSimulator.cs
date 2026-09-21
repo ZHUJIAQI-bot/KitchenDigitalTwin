@@ -531,6 +531,10 @@ public class KitchenSimulator : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.L) && loggedIn)
         {
             lobbyOpen = !lobbyOpen;
+            if (lobbyOpen)
+            {
+                SetCursorLock(false);   // 打开大厅时召唤鼠标，方便点按钮
+            }
         }
 
         // 联机轮询：上传我的位置 + 拉取队友位置 + 拉取聊天
@@ -2978,22 +2982,18 @@ public class KitchenSimulator : MonoBehaviour
             RestUntilMorning();
         }
 
-        // 按住 Tab 唤出鼠标（松开自动收回），Esc 也可释放
-        bool wantMouse = Input.GetKey(KeyCode.Tab);
-        if (Input.GetKeyDown(KeyCode.Escape))
+        // 按 Tab 切换鼠标（改按一下切换，比按住更可靠），Esc 释放鼠标
+        if (Input.GetKeyDown(KeyCode.Tab))
+        {
+            SetCursorLock(!cursorLocked);
+        }
+        else if (Input.GetKeyDown(KeyCode.Escape))
         {
             SetCursorLock(false);
         }
-        if (wantMouse)
-        {
-            if (cursorLocked)
-            {
-                SetCursorLock(false);
-            }
-        }
         else if (loggedIn && !cursorLocked && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
         {
-            // WebGL 需要一次点击才能锁定鼠标
+            // 点击非 UI 区域重新锁定鼠标
             SetCursorLock(true);
         }
 
