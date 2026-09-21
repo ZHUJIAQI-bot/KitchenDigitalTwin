@@ -2982,7 +2982,8 @@ public class KitchenSimulator : MonoBehaviour
             RestUntilMorning();
         }
 
-        // 按 Tab 切换鼠标（改按一下切换，比按住更可靠），Esc 释放鼠标
+        // 鼠标模式：按 Tab 切换（显示/锁定），Esc 释放；界面开着时不自动锁回去
+        bool mouseNeeded = lobbyOpen || shopOpen || bagOpen || almanacOpen || twinPanelOpen;
         if (Input.GetKeyDown(KeyCode.Tab))
         {
             SetCursorLock(!cursorLocked);
@@ -2991,9 +2992,10 @@ public class KitchenSimulator : MonoBehaviour
         {
             SetCursorLock(false);
         }
-        else if (loggedIn && !cursorLocked && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
+        else if (loggedIn && !cursorLocked && !mouseNeeded
+            && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
         {
-            // 点击非 UI 区域重新锁定鼠标
+            // 没有界面打开时，点非 UI 区域才重新锁定鼠标
             SetCursorLock(true);
         }
 
@@ -3960,6 +3962,9 @@ public class KitchenSimulator : MonoBehaviour
         StartCoroutine(RegisterRoutine(loginUser, loginPass));
     }
 
+    private Rect LobbyRect { get { return new Rect((Screen.width - 360f) * 0.5f, (Screen.height - 300f) * 0.5f, 360f, 300f); } }
+    private Rect ChatRect { get { return new Rect(16f, Screen.height - 216f, 320f, 200f); } }
+
     private void DrawLobby()
     {
         if (!loggedIn || !lobbyOpen)
@@ -3968,9 +3973,9 @@ public class KitchenSimulator : MonoBehaviour
         }
         float width = 360f;
         float height = 300f;
-        Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        Rect rect = LobbyRect;
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
-        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 40f, 26f), "联机大厅（最多 4 人）", titleStyle);
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 108f, 26f), "联机大厅（最多 4 人）", titleStyle);
 
         if (inRoom)
         {
@@ -4009,6 +4014,16 @@ public class KitchenSimulator : MonoBehaviour
             }
             GUI.Label(join, "加入", cardButtonStyle);
         }
+
+        // 关闭按钮（不依赖键盘，避免输入框吃掉按键）
+        Rect close = new Rect(rect.x + width - 84f, rect.y + 12f, 68f, 26f);
+        DrawPanel(close, new Color(0.3f, 0.32f, 0.36f, 0.95f), Color.clear);
+        if (GUI.Button(close, GUIContent.none, GUIStyle.none))
+        {
+            lobbyOpen = false;
+            SetCursorLock(true);
+        }
+        GUI.Label(close, "关闭", cardButtonStyle);
 
         GUI.Label(new Rect(rect.x + 20f, rect.y + height - 44f, width - 40f, 20f), roomMessage, smallStyle);
     }
@@ -7862,7 +7877,9 @@ public class KitchenSimulator : MonoBehaviour
             || PromptRect.Contains(point) || ToolChipRect.Contains(point)
             || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
             || (almanacOpen && AlmanacRect.Contains(point))
-            || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point)) || (!loggedIn);
+            || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point))
+            || (lobbyOpen && LobbyRect.Contains(point)) || (inRoom && ChatRect.Contains(point))
+            || (!loggedIn);
     }
 
     // ── 材质/几何工具 ─────────────────────────────────────
