@@ -411,8 +411,9 @@ public class KitchenSimulator : MonoBehaviour
     private bool lobbyOpen;
     private bool isHost;
     private float roomSyncTimer;
-    private class RemotePlayer { public GameObject root; public TextMesh nameLabel; public Vector3 target; public float targetYaw; }
-    private readonly Dictionary<string, RemotePlayer> remotePlayers = new Dictionary<string, RemotePlayer>();
+    private int lastUploadedSignature = int.MinValue;
+    private readonly Dictionary<string, RemoteAvatar> remotePlayers = new Dictionary<string, RemoteAvatar>();
+    private readonly Dictionary<string, float> remoteAvatarAnim = new Dictionary<string, float>();
     private int loginTab;                 // 0 登录 1 注册 2 外观
     private int custCoat;
     private int custTrouser;
@@ -561,11 +562,29 @@ public class KitchenSimulator : MonoBehaviour
             }
             foreach (var kv in remotePlayers)
             {
-                if (kv.Value.root != null)
+                RemoteAvatar av = kv.Value;
+                if (av.root == null)
                 {
-                    kv.Value.root.transform.position = Vector3.Lerp(kv.Value.root.transform.position, kv.Value.target, Time.deltaTime * 8f);
-                    kv.Value.root.transform.rotation = Quaternion.Slerp(kv.Value.root.transform.rotation, Quaternion.Euler(0f, kv.Value.targetYaw, 0f), Time.deltaTime * 8f);
+                    continue;
                 }
+                Vector3 before = av.root.transform.position;
+                av.root.transform.position = Vector3.Lerp(before, av.target, Time.deltaTime * 8f);
+                av.root.transform.rotation = Quaternion.Slerp(av.root.transform.rotation, Quaternion.Euler(0f, av.targetYaw, 0f), Time.deltaTime * 8f);
+                // 走动动画：位置变化就摆臂迈腿
+                float moved = Vector3.Distance(before, av.root.transform.position);
+                if (moved > 0.004f)
+                {
+                    av.animTime += Time.deltaTime * 9f;
+                }
+                else
+                {
+                    av.animTime = 0f;
+                }
+                float swing = Mathf.Sin(av.animTime) * 26f;
+                SetAvatarLimb(av, "ArmL", Quaternion.Euler(swing, 0f, 0f));
+                SetAvatarLimb(av, "ArmR", Quaternion.Euler(-swing, 0f, 0f));
+                SetAvatarLimb(av, "LegL", Quaternion.Euler(-swing, 0f, 0f));
+                SetAvatarLimb(av, "LegR", Quaternion.Euler(swing, 0f, 0f));
             }
         }
 
@@ -3263,6 +3282,39 @@ public class KitchenSimulator : MonoBehaviour
     [System.Serializable] private class MessageRow { public long id; public string username; public string display_name; public string text; }
     [System.Serializable] private class MessageRows { public MessageRow[] items; }
 
+    // JSON 字符串转义（中文保持原样，只转义引号/反斜杠/控制符，避免破坏 JSON 结构）
+    private static string JsonEscape(string s)
+    {
+        if (string.IsNullOrEmpty(s))
+        {
+            return "";
+        }
+        System.Text.StringBuilder sb = new System.Text.StringBuilder(s.Length + 8);
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            switch (c)
+            {
+                case '"': sb.Append("\\\""); break;
+                case '\\': sb.Append("\\\\"); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default:
+                    if (c < 0x20)
+                    {
+                        sb.Append("\\u").Append(((int)c).ToString("x4"));
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
     private string GenerateRoomCode()
     {
         // 纯 6 位数字房间号，避免字母/数字看混（5/S、2/Z、0/O 等）
@@ -3306,6 +3358,7 @@ public class KitchenSimulator : MonoBehaviour
         roomId = rows.items[0].id;
         roomCode = code;
         isHost = true;
+        lastUploadedSignature = int.MinValue;
         inRoom = true;
         roomMessage = "房间已创建，房间号 " + code + "（按 L 关闭面板）";
         yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
@@ -3358,6 +3411,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         isHost = false;
+        lastUploadedSignature = int.MinValue;
         inRoom = true;
         roomMessage = "已加入房间 " + code;
         yield return SupabaseRequest("POST", "/rest/v1/room_players", BuildPlayerBody(), null, "resolution=merge-duplicates");
@@ -3421,7 +3475,7 @@ public class KitchenSimulator : MonoBehaviour
             }
             alive.Add(r.username);
             Vector3 target = new Vector3((float)r.pos_x, (float)r.pos_y, (float)r.pos_z);
-            RemotePlayer rp;
+            RemoteAvatar rp;
             if (!remotePlayers.TryGetValue(r.username, out rp))
             {
                 rp = CreateRemoteAvatar(r.display_name, r.coat, r.trouser, target);
@@ -3432,6 +3486,11 @@ public class KitchenSimulator : MonoBehaviour
             if (rp.nameLabel != null && rp.nameLabel.text != r.display_name)
             {
                 rp.nameLabel.text = r.display_name;
+            }
+            // 换装同步：颜色变了就刷新
+            if (rp.coat != r.coat || rp.trouser != r.trouser)
+            {
+                ApplyAvatarOutfit(rp, r.coat, r.trouser);
             }
         }
         // 清理离线玩家
@@ -3453,28 +3512,74 @@ public class KitchenSimulator : MonoBehaviour
         }
     }
 
-    private RemotePlayer CreateRemoteAvatar(string name, int coat, int trouser, Vector3 pos)
+    // 远程玩家外观部件（便于换装时刷新颜色）
+    private class RemoteAvatar
+    {
+        public GameObject root;
+        public TextMesh nameLabel;
+        public Vector3 target;
+        public float targetYaw;
+        public int coat;
+        public int trouser;
+        public readonly List<Renderer> coatRenderers = new List<Renderer>();
+        public readonly List<Renderer> trouserRenderers = new List<Renderer>();
+        public float animTime;
+        public Vector3 lastPos;
+    }
+
+    private void AddAvatarPart(RemoteAvatar av, PrimitiveType type, string partName, Vector3 localPos, Vector3 localScale, bool isCoat, bool isTrouser)
+    {
+        GameObject part = GameObject.CreatePrimitive(type);
+        part.name = partName;
+        part.transform.SetParent(av.root.transform, false);
+        part.transform.localPosition = localPos;
+        part.transform.localScale = localScale;
+        Collider col = part.GetComponent<Collider>();
+        if (col != null)
+        {
+            Destroy(col);
+        }
+        Renderer r = part.GetComponent<Renderer>();
+        if (isCoat)
+        {
+            av.coatRenderers.Add(r);
+        }
+        else if (isTrouser)
+        {
+            av.trouserRenderers.Add(r);
+        }
+        else
+        {
+            r.sharedMaterial = SimpleMaterial(new Color(0.84f, 0.66f, 0.5f));   // 皮肤
+        }
+    }
+
+    private RemoteAvatar CreateRemoteAvatar(string name, int coat, int trouser, Vector3 pos)
     {
         GameObject root = new GameObject("Remote_" + name);
         root.transform.SetParent(transform, false);
         root.transform.position = pos;
-        Color coatC = coat >= 0 && coat < CoatPalette.Length ? CoatPalette[coat] : CoatPalette[0];
-        GameObject body = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-        body.name = "Body";
-        body.transform.SetParent(root.transform, false);
-        body.transform.localPosition = new Vector3(0f, 1.0f, 0f);
-        body.transform.localScale = new Vector3(0.5f, 0.7f, 0.5f);
-        body.GetComponent<Renderer>().sharedMaterial = SimpleMaterial(coatC);
-        Collider c = body.GetComponent<Collider>();
-        if (c != null) Destroy(c);
-        GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        head.name = "Head";
-        head.transform.SetParent(root.transform, false);
-        head.transform.localPosition = new Vector3(0f, 1.7f, 0f);
-        head.transform.localScale = new Vector3(0.3f, 0.3f, 0.3f);
-        head.GetComponent<Renderer>().sharedMaterial = SimpleMaterial(new Color(0.84f, 0.66f, 0.5f));
-        Collider hc = head.GetComponent<Collider>();
-        if (hc != null) Destroy(hc);
+
+        RemoteAvatar av = new RemoteAvatar { root = root, target = pos, coat = coat, trouser = trouser };
+
+        // 方块人：躯干 + 四肢 + 头 + 安全帽（和玩家同款造型）
+        AddAvatarPart(av, PrimitiveType.Cube, "Torso", new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "Waist", new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "ShoulderL", new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "ShoulderR", new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "ArmL", new Vector3(-0.32f, 0.82f, 0f), new Vector3(0.14f, 0.56f, 0.14f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "ArmR", new Vector3(0.32f, 0.82f, 0f), new Vector3(0.14f, 0.56f, 0.14f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "HandL", new Vector3(-0.32f, 0.5f, 0f), new Vector3(0.13f, 0.12f, 0.13f), false, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "HandR", new Vector3(0.32f, 0.5f, 0f), new Vector3(0.13f, 0.12f, 0.13f), false, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "LegL", new Vector3(-0.13f, 0.4f, 0f), new Vector3(0.16f, 0.56f, 0.16f), false, true);
+        AddAvatarPart(av, PrimitiveType.Cube, "LegR", new Vector3(0.13f, 0.4f, 0f), new Vector3(0.16f, 0.56f, 0.16f), false, true);
+        AddAvatarPart(av, PrimitiveType.Cube, "Neck", new Vector3(0f, 1.24f, 0f), new Vector3(0.12f, 0.1f, 0.12f), false, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "Head", new Vector3(0f, 1.36f, 0f), new Vector3(0.32f, 0.32f, 0.32f), false, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "Helmet", new Vector3(0f, 1.56f, 0f), new Vector3(0.4f, 0.1f, 0.4f), true, false);
+        AddAvatarPart(av, PrimitiveType.Cube, "Vest", new Vector3(0f, 0.92f, -0.19f), new Vector3(0.36f, 0.6f, 0.05f), true, false);
+
+        ApplyAvatarOutfit(av, coat, trouser);
+
         GameObject nl = new GameObject("Name");
         nl.transform.SetParent(root.transform, false);
         nl.transform.localPosition = new Vector3(0f, 2.15f, 0f);
@@ -3490,7 +3595,44 @@ public class KitchenSimulator : MonoBehaviour
         {
             nl.GetComponent<Renderer>().sharedMaterial = GetLabelMaterial(Color.white);
         }
-        return new RemotePlayer { root = root, nameLabel = tm, target = pos };
+        av.nameLabel = tm;
+        return av;
+    }
+
+    private void SetAvatarLimb(RemoteAvatar av, string limbName, Quaternion rot)
+    {
+        if (av.root == null)
+        {
+            return;
+        }
+        Transform t = av.root.transform.Find(limbName);
+        if (t != null)
+        {
+            t.localRotation = rot;
+        }
+    }
+
+    // 刷新远程玩家衣服颜色（换装同步）
+    private void ApplyAvatarOutfit(RemoteAvatar av, int coat, int trouser)
+    {
+        av.coat = coat;
+        av.trouser = trouser;
+        Color coatC = coat >= 0 && coat < CoatPalette.Length ? CoatPalette[coat] : CoatPalette[0];
+        Color trouserC = trouser >= 0 && trouser < TrouserPalette.Length ? TrouserPalette[trouser] : TrouserPalette[0];
+        for (int i = 0; i < av.coatRenderers.Count; i++)
+        {
+            if (av.coatRenderers[i] != null)
+            {
+                av.coatRenderers[i].sharedMaterial = SimpleMaterial(coatC);
+            }
+        }
+        for (int i = 0; i < av.trouserRenderers.Count; i++)
+        {
+            if (av.trouserRenderers[i] != null)
+            {
+                av.trouserRenderers[i].sharedMaterial = SimpleMaterial(trouserC);
+            }
+        }
     }
 
     private void SendChat()
@@ -3507,9 +3649,9 @@ public class KitchenSimulator : MonoBehaviour
 
     private System.Collections.IEnumerator SendChatRoutine(string text)
     {
-        string body = "{\"room_id\":\"" + roomId + "\",\"username\":\"" + currentAccount
-            + "\",\"display_name\":\"" + (string.IsNullOrEmpty(displayName) ? currentAccount : displayName)
-            + "\",\"text\":\"" + text + "\"}";
+        string body = "{\"room_id\":\"" + roomId + "\",\"username\":\"" + JsonEscape(currentAccount)
+            + "\",\"display_name\":\"" + JsonEscape(string.IsNullOrEmpty(displayName) ? currentAccount : displayName)
+            + "\",\"text\":\"" + JsonEscape(text) + "\"}";
         yield return SupabaseRequest("POST", "/rest/v1/messages", body, null);
     }
 
@@ -3592,13 +3734,23 @@ public class KitchenSimulator : MonoBehaviour
             Order o;
             if (local.TryGetValue(sd.id, out o))
             {
-                o.state = (OrderState)sd.state;
-                o.repairProgress = sd.repairProgress;
-                o.sensorValue = sd.sensorValue;
-                o.fixTime = sd.fixTime;
-                o.normalSince = sd.normalSince;
-                o.verified = sd.verified;
-                o.needsRebuild = true;
+                // 合并策略：取「更靠前」的状态，避免别人的旧状态把自己的进度冲掉
+                bool remoteAdvanced = (int)sd.state > (int)o.state
+                    || (sd.state == (int)o.state && sd.repairProgress > o.repairProgress);
+                if (remoteAdvanced)
+                {
+                    o.state = (OrderState)sd.state;
+                    o.repairProgress = sd.repairProgress;
+                    o.fixTime = sd.fixTime;
+                    o.normalSince = sd.normalSince;
+                    o.verified = o.verified || sd.verified;
+                    o.needsRebuild = true;
+                }
+                else if (sd.verified && !o.verified)
+                {
+                    o.verified = true;
+                    o.needsRebuild = true;
+                }
             }
             else
             {
@@ -3623,14 +3775,47 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        if (isHost)
+        // 先拉取合并，若本地进度更靠前再上传（避免旧状态覆盖新状态）
+        StartCoroutine(SyncRoomOrdersRoutine());
+    }
+
+    private System.Collections.IEnumerator SyncRoomOrdersRoutine()
+    {
+        string path = "/rest/v1/room_state?room_id=eq." + roomId + "&select=orders";
+        string result = null;
+        yield return SupabaseRequest("GET", path, null, (r) => result = r);
+        if (result == null)
         {
-            StartCoroutine(UploadRoomOrders());
+            yield break;
         }
-        else
+        if (result != "[]")
         {
-            StartCoroutine(DownloadRoomOrders());
+            RoomStateRows rows = JsonUtility.FromJson<RoomStateRows>("{\"items\":" + result + "}");
+            if (rows != null && rows.items != null && rows.items.Length > 0 && rows.items[0].orders != null)
+            {
+                ApplyRemoteOrders(rows.items[0].orders.items);
+            }
         }
+        // 本地进度若有推进，推送到云端
+        int sig = LocalProgressSignature();
+        if (sig != lastUploadedSignature)
+        {
+            yield return UploadRoomOrders();
+            lastUploadedSignature = sig;
+        }
+    }
+
+    // 本地工单进度指纹：状态 + 维修进度 + 验收
+    private int LocalProgressSignature()
+    {
+        int sig = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Order o = orders[i];
+            sig += o.id * 7919 + (int)o.state * 1000 + Mathf.RoundToInt(o.repairProgress * 100f)
+                + (o.verified ? 500000 : 0);
+        }
+        return sig + orders.Count;
     }
 
     private System.Collections.IEnumerator UploadRoomOrders()
