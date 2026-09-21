@@ -3666,6 +3666,7 @@ public class KitchenSimulator : MonoBehaviour
         public float playerX;
         public float playerZ;
         public int guideStep;
+        public int[] unlockedTools;
         public OrderSaveData[] orders;
     }
 
@@ -3743,6 +3744,16 @@ public class KitchenSimulator : MonoBehaviour
                 verified = o.verified
             };
         }
+        // 已解锁工具（kind 枚举值）
+        List<int> unlockedKinds = new List<int>();
+        for (int i = 0; i < tools.Count; i++)
+        {
+            if (tools[i].unlocked)
+            {
+                unlockedKinds.Add((int)tools[i].kind);
+            }
+        }
+        data.unlockedTools = unlockedKinds.ToArray();
         string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
         string json = JsonUtility.ToJson(data);
         PlayerPrefs.SetString(key, json);
@@ -3801,6 +3812,26 @@ public class KitchenSimulator : MonoBehaviour
             player.transform.position = playerPosition;
         }
         guideStep = data.guideStep;
+
+        // 恢复已解锁工具
+        if (data.unlockedTools != null)
+        {
+            for (int i = 0; i < tools.Count; i++)
+            {
+                tools[i].unlocked = tools[i].kind == ToolKind.Wrench;
+            }
+            for (int j = 0; j < data.unlockedTools.Length; j++)
+            {
+                ToolKind kind = (ToolKind)data.unlockedTools[j];
+                for (int i = 0; i < tools.Count; i++)
+                {
+                    if (tools[i].kind == kind)
+                    {
+                        tools[i].unlocked = true;
+                    }
+                }
+            }
+        }
 
         // 恢复工单（登录时列表为空，直接重建）
         if (data.orders != null)
@@ -3963,11 +3994,16 @@ public class KitchenSimulator : MonoBehaviour
             }
             GUI.Label(create, "创建房间", buttonStyle);
 
-            GUI.Label(new Rect(rect.x + 20f, rect.y + 108f, width - 40f, 20f), "输入房间号加入：", bodyStyle);
-            joinCode = GUI.TextField(new Rect(rect.x + 20f, rect.y + 130f, width - 120f, 30f), joinCode, 8);
-            Rect join = new Rect(rect.x + width - 92f, rect.y + 130f, 72f, 30f);
+            GUI.Label(new Rect(rect.x + 20f, rect.y + 108f, width - 40f, 20f), "输入房间号加入（回车确认）：", bodyStyle);
+            GUI.SetNextControlName("joinCodeField");
+            joinCode = GUI.TextField(new Rect(rect.x + 20f, rect.y + 130f, width - 130f, 30f), joinCode, 8);
+            Rect join = new Rect(rect.x + width - 100f, rect.y + 130f, 80f, 30f);
             DrawPanel(join, btnBlue, Color.clear);
-            if (GUI.Button(join, GUIContent.none, GUIStyle.none))
+            bool joinClicked = GUI.Button(join, GUIContent.none, GUIStyle.none);
+            bool joinEnter = Event.current.type == EventType.KeyDown
+                && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)
+                && GUI.GetNameOfFocusedControl() == "joinCodeField";
+            if (joinClicked || joinEnter)
             {
                 JoinRoom();
             }
