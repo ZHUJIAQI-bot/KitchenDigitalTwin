@@ -68,6 +68,7 @@ public class KitchenSimulator : MonoBehaviour
         public float fixTime;          // 数据回归正常的时刻
         public float normalSince;      // 读数持续正常的起点
         public bool verified;          // 是否通过验收观察期（闭环）
+        public bool selfRepairable;    // 是否居民可自修（否则须物业/专业）
 
         public string Code { get { return "#" + id.ToString("D3"); } }
         public string ScheduleText { get { return "第" + schedDay + "天 " + schedHour.ToString("D2") + ":00"; } }
@@ -91,9 +92,10 @@ public class KitchenSimulator : MonoBehaviour
         public float sensorNormal;   // 改造后的正常值
         public float sensorAlarm;    // 报警阈值
         public float sensorMax;      // 量程上限（用于进度条）
+        public bool selfRepairable;  // 是否居民可自修（否则须物业/专业）
 
         public OrderTemplate(string roomType, string title, string cause, string plan, int costMin, int costMax, float dx, float dz, ToolKind tool,
-            string sensorName, string sensorUnit, float sensorNormal, float sensorAlarm, float sensorMax)
+            string sensorName, string sensorUnit, float sensorNormal, float sensorAlarm, float sensorMax, bool selfRepairable = true)
         {
             this.tool = tool;
             this.sensorName = sensorName;
@@ -101,6 +103,7 @@ public class KitchenSimulator : MonoBehaviour
             this.sensorNormal = sensorNormal;
             this.sensorAlarm = sensorAlarm;
             this.sensorMax = sensorMax;
+            this.selfRepairable = selfRepairable;
             this.roomType = roomType;
             this.title = title;
             this.cause = cause;
@@ -115,6 +118,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         public string name;     // 例如 "1号楼 厨房"
         public string type;     // 厨房 / 客厅 / 卧室 / 卫生间
+        public int building;    // 住宅楼号 1..N；公司=0；宿舍=-1
         public Vector3 center;
         public Vector3 doorPoint;   // 自家入户门口，户主说完要回这里
         public float xMin;
@@ -150,6 +154,7 @@ public class KitchenSimulator : MonoBehaviour
     private readonly List<Order> orders = new List<Order>();
     private readonly List<OrderTemplate> templates = new List<OrderTemplate>();
     private readonly List<Room> rooms = new List<Room>();
+    private readonly Dictionary<int, float[]> buildingBounds = new Dictionary<int, float[]>();   // 楼栋号 → [xMin,xMax,zMin,zMax]
     private readonly List<Bounds> obstacles = new List<Bounds>();
     private readonly List<GameObject> generatedObjects = new List<GameObject>();
 
@@ -270,6 +275,9 @@ public class KitchenSimulator : MonoBehaviour
     private bool shopOpen;
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
+    private int twinTab;                 // 0 实时数据 / 1 小区俯视图
+    private int twinSelectedBuilding;    // 俯视图选中的楼栋（0=未选）
+    private Vector2 twinMapScroll;       // 楼栋详情滚动位置
     private int guideStep;               // 新手引导步骤
     private float saveTimer;             // 自动存档计时
 
@@ -1028,7 +1036,7 @@ public class KitchenSimulator : MonoBehaviour
         CreateWorldLabel("员工宿舍", new Vector3(-24.3f, 1.75f, z0 - 0.34f), 0.055f, Color.white);
 
         sleepPoint = new Vector3(-28.4f, GroundLevel, z1 - 3.1f);
-        AddRoom("员工宿舍", "宿舍", x0, x1, z0, z1, new Vector3((doorA + doorB) * 0.5f, GroundLevel, z0 + 1.6f));
+        AddRoom("员工宿舍", "宿舍", -1, x0, x1, z0, z1, new Vector3((doorA + doorB) * 0.5f, GroundLevel, z0 + 1.6f));
     }
 
     private void BuildColleagues()
@@ -1659,6 +1667,45 @@ public class KitchenSimulator : MonoBehaviour
     private float LegacyResponseHours() { return 26f; } // 平均处置时长
     private float LegacyCostFactor() { return 1.28f; }  // 成本系数
 
+    // ── 逐级解锁：完成工单数驱动楼栋扩张与职称晋升 ──────
+    private const int OrdersPerBuilding = 3;   // 每完成 3 单解锁下一栋楼
+    private const int ResidenceCount = 5;      // 住宅总栋数（须与 BuildHouse 一致）
+
+    // 当前已解锁的住宅楼栋数（一栋起步）
+    private int UnlockedBuildingCount()
+    {
+        return Mathf.Clamp(1 + CountFixed() / OrdersPerBuilding, 1, ResidenceCount);
+    }
+
+    private bool IsBuildingUnlocked(int building)
+    {
+        return building <= UnlockedBuildingCount();
+    }
+
+    // 职称：随累计完工数晋升
+    private string RankTitle()
+    {
+        int done = CountFixed();
+        if (done >= 12) return "首席技师";
+        if (done >= 9) return "维修专家";
+        if (done >= 6) return "高级技师";
+        if (done >= 3) return "熟练维修工";
+        return "学徒维修工";
+    }
+
+    // 工单归属：优先按标题查模板（权威值），旧存档缺字段时兜底
+    private bool OrderSelfRepairable(Order order)
+    {
+        for (int i = 0; i < templates.Count; i++)
+        {
+            if (templates[i].title == order.title)
+            {
+                return templates[i].selfRepairable;
+            }
+        }
+        return order.selfRepairable;
+    }
+
     // ── 新手引导：按步骤提示，评审可快速理解系统逻辑 ──
     private void UpdateGuide()
     {
@@ -1678,6 +1725,9 @@ public class KitchenSimulator : MonoBehaviour
                 if (CountVerified() > 0) guideStep = 3;
                 break;
             case 3:
+                if (UnlockedBuildingCount() > 1) guideStep = 4;
+                break;
+            case 4:
                 break;
         }
 
@@ -1688,7 +1738,7 @@ public class KitchenSimulator : MonoBehaviour
 
     private void DrawGuide()
     {
-        if (!loggedIn || guideStep > 3)
+        if (!loggedIn || guideStep > 4)
         {
             return;
         }
@@ -1699,13 +1749,14 @@ public class KitchenSimulator : MonoBehaviour
             "② 走到报警点位（场景中的数据牌），连点左键完成处置",
             "③ 改造后读数回落，保持正常 1 小时即通过闭环验收",
             "④ 在监测平台点「导出验收报告」，生成 KPI 对比报告",
+            "⑤ 每完成 " + OrdersPerBuilding + " 单晋升一级并解锁一栋楼，从 1 号楼起步逐级扩张到 " + ResidenceCount + " 栋",
         };
 
         float width = 520f;
         Rect rect = new Rect(16f, Screen.height - 236f, width, 38f);
         DrawPanel(rect, new Color(0.05f, 0.09f, 0.13f, 0.94f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
         Fill(new Rect(rect.x + 12f, rect.y + 9f, 4f, 20f), btnBlue);
-        GUI.Label(new Rect(rect.x + 26f, rect.y + 9f, width - 40f, 22f), steps[Mathf.Clamp(guideStep, 0, 3)], smallStyle);
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 9f, width - 40f, 22f), steps[Mathf.Clamp(guideStep, 0, 4)], smallStyle);
     }
 
     private void UpdateFade()
@@ -1951,7 +2002,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildCeilingLight(-12f, 3f);
         AddRoomLight(-14f, -1f, 18f);
 
-        rooms.Add(new Room { name = "装修公司", type = "公司", center = new Vector3(-14f, 0f, -1f), xMin = x0, xMax = x1, zMin = z0, zMax = z1 });
+        rooms.Add(new Room { name = "装修公司", type = "公司", building = 0, center = new Vector3(-14f, 0f, -1f), xMin = x0, xMax = x1, zMin = z0, zMax = z1 });
 
         BuildSensorDoor(doorStart, doorEnd, z0);
     }
@@ -2157,11 +2208,9 @@ public class KitchenSimulator : MonoBehaviour
         BuildResidence(1, 2f, -7f, roofColors[0]);
         BuildResidence(2, 18f, -7f, roofColors[1]);
         BuildResidence(3, 34f, -7f, roofColors[2]);
-        BuildResidence(4, 50f, -7f, roofColors[3]);
         // 第二排（错开半格，形成小区内街）
-        BuildResidence(5, 10f, 13f, roofColors[4]);
-        BuildResidence(6, 26f, 13f, roofColors[5]);
-        BuildResidence(7, 42f, 13f, roofColors[6]);
+        BuildResidence(4, 10f, 13f, roofColors[4]);
+        BuildResidence(5, 26f, 13f, roofColors[5]);
     }
 
     // 单层住宅：12×12，四个 6×6 房间
@@ -2323,7 +2372,7 @@ public class KitchenSimulator : MonoBehaviour
         Vector3 doorPoint = new Vector3(doorC, GroundLevel, z0 + 1.6f);
         for (int i = 0; i < 4; i++)
         {
-            AddRoom(tag + " " + types[i], types[i], rects[i, 0], rects[i, 1], rects[i, 2], rects[i, 3], doorPoint);
+            AddRoom(tag + " " + types[i], types[i], index, rects[i, 0], rects[i, 1], rects[i, 2], rects[i, 3], doorPoint);
         }
 
         for (int i = 0; i < 4; i++)
@@ -2353,12 +2402,13 @@ public class KitchenSimulator : MonoBehaviour
         CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.32f), 0.05f, Color.white);
     }
 
-    private void AddRoom(string name, string type, float xMin, float xMax, float zMin, float zMax, Vector3 doorPoint)
+    private void AddRoom(string name, string type, int building, float xMin, float xMax, float zMin, float zMax, Vector3 doorPoint)
     {
         rooms.Add(new Room
         {
             name = name,
             type = type,
+            building = building,
             center = new Vector3((xMin + xMax) * 0.5f, 0f, (zMin + zMax) * 0.5f),
             doorPoint = doorPoint,
             xMin = xMin,
@@ -2994,6 +3044,10 @@ public class KitchenSimulator : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.T))
         {
             twinPanelOpen = !twinPanelOpen;
+            if (twinPanelOpen)
+            {
+                SetCursorLock(false);   // 俯视图要点楼栋，打开面板时召唤鼠标
+            }
         }
         if (Input.GetKeyDown(KeyCode.P))
         {
@@ -3720,7 +3774,8 @@ public class KitchenSimulator : MonoBehaviour
                 repairProgress = o.repairProgress, schedDay = o.schedDay, schedHour = o.schedHour,
                 tool = (int)o.requiredTool, sensorName = o.sensorName, sensorUnit = o.sensorUnit,
                 sensorValue = o.sensorValue, sensorNormal = o.sensorNormal, sensorAlarm = o.sensorAlarm,
-                sensorMax = o.sensorMax, alarmTime = o.alarmTime, fixTime = o.fixTime, normalSince = o.normalSince, verified = o.verified
+                sensorMax = o.sensorMax, alarmTime = o.alarmTime, fixTime = o.fixTime, normalSince = o.normalSince, verified = o.verified,
+                selfRepairable = o.selfRepairable
             };
         }
         return JsonUtility.ToJson(new OrderArray { items = arr });
@@ -3770,7 +3825,8 @@ public class KitchenSimulator : MonoBehaviour
                     repairProgress = sd.repairProgress, schedDay = sd.schedDay, schedHour = sd.schedHour,
                     requiredTool = (ToolKind)sd.tool, sensorName = sd.sensorName, sensorUnit = sd.sensorUnit,
                     sensorValue = sd.sensorValue, sensorNormal = sd.sensorNormal, sensorAlarm = sd.sensorAlarm,
-                    sensorMax = sd.sensorMax, alarmTime = sd.alarmTime, fixTime = sd.fixTime, normalSince = sd.normalSince, verified = sd.verified
+                    sensorMax = sd.sensorMax, alarmTime = sd.alarmTime, fixTime = sd.fixTime, normalSince = sd.normalSince, verified = sd.verified,
+                    selfRepairable = sd.selfRepairable
                 };
                 BuildOrderMarker(o);
                 orders.Add(o);
@@ -3891,6 +3947,7 @@ public class KitchenSimulator : MonoBehaviour
         public float fixTime;
         public float normalSince;
         public bool verified;
+        public bool selfRepairable;
     }
 
     // ── 存档（按账户保存经营数据 + 工单 + 位置）─────────
@@ -3937,7 +3994,8 @@ public class KitchenSimulator : MonoBehaviour
                 alarmTime = o.alarmTime,
                 fixTime = o.fixTime,
                 normalSince = o.normalSince,
-                verified = o.verified
+                verified = o.verified,
+                selfRepairable = o.selfRepairable
             };
         }
         // 已解锁工具（kind 枚举值）
@@ -4058,7 +4116,8 @@ public class KitchenSimulator : MonoBehaviour
                     alarmTime = sd.alarmTime,
                     fixTime = sd.fixTime,
                     normalSince = sd.normalSince,
-                    verified = sd.verified
+                    verified = sd.verified,
+                    selfRepairable = sd.selfRepairable
                 };
                 BuildOrderMarker(o);
                 orders.Add(o);
@@ -5821,7 +5880,7 @@ public class KitchenSimulator : MonoBehaviour
         templates.Add(new OrderTemplate("厨房", "水槽下方渗漏", "水槽柜内给水角阀老化，柜底板见渗水痕迹", "更换角阀与存水弯，柜底增设防水托盘", 3200, 4200, -1.5f, 1.7f, ToolKind.Wrench,
             "柜内湿度", "%RH", 45f, 80f, 100f));
         templates.Add(new OrderTemplate("厨房", "灶台燃气管老化", "燃气软管超期服役，接口处有轻微泄漏", "更换不锈钢波纹管并做气密性检测", 2800, 3800, 1.4f, 1.7f, ToolKind.Wrench,
-            "可燃气体浓度", "%LEL", 2f, 10f, 25f));
+            "可燃气体浓度", "%LEL", 2f, 10f, 25f, false));
         templates.Add(new OrderTemplate("厨房", "橱柜门板变形", "地柜门板受潮变形，开合卡顿异响", "更换门板并调整铰链，柜体做防潮处理", 1200, 2000, 0f, 1.1f, ToolKind.Drill,
             "门板形变量", "mm", 0.5f, 3f, 8f));
         templates.Add(new OrderTemplate("厨房", "冰箱插座接触不良", "冰箱专用插座松动，插头发热变色", "更换 16A 插座面板并紧固线路", 900, 1600, 1.9f, -1.6f, ToolKind.Tester,
@@ -5841,7 +5900,7 @@ public class KitchenSimulator : MonoBehaviour
         templates.Add(new OrderTemplate("卧室", "木门变形关不严", "木门受潮膨胀变形，闭合困难漏风", "刨修门边并调整铰链，门扇做防潮封边", 1200, 2000, -1.9f, 1.7f, ToolKind.Screwdriver,
             "门缝宽度", "mm", 1f, 4f, 10f));
         templates.Add(new OrderTemplate("卧室", "墙面返潮发霉", "外墙渗水导致内墙返潮霉变", "外墙迎水面重做防水，铲除霉变层后批耐水腻子", 2800, 3800, 1.9f, 0.5f, ToolKind.Hammer,
-            "墙体含水率", "%", 8f, 18f, 35f));
+            "墙体含水率", "%", 8f, 18f, 35f, false));
         templates.Add(new OrderTemplate("卧室", "衣柜滑轨卡顿", "衣柜推拉门滑轨变形积尘，推拉困难", "拆下滑轨清理并重新固定，调整门扇垂直度", 600, 1200, 1.9f, 1.7f, ToolKind.Screwdriver,
             "推拉阻力", "N", 20f, 80f, 150f));
         templates.Add(new OrderTemplate("卧室", "床头插座松动", "床头插座面板松动，插拔打火", "更换面板并加固暗盒", 800, 1400, 0f, -1.7f, ToolKind.Tester,
@@ -6171,6 +6230,10 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
+            if (room.building > 0 && !IsBuildingUnlocked(room.building))
+            {
+                continue;   // 未解锁的楼栋不派单
+            }
             for (int t = 0; t < templates.Count; t++)
             {
                 if (templates[t].roomType != room.type)
@@ -6281,6 +6344,7 @@ public class KitchenSimulator : MonoBehaviour
             site = site,
             state = OrderState.Pending,
             requiredTool = template.tool,
+            selfRepairable = template.selfRepairable,
             sensorName = template.sensorName,
             sensorUnit = template.sensorUnit,
             sensorNormal = template.sensorNormal,
@@ -6646,6 +6710,10 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
+            if (room.building > 0 && !IsBuildingUnlocked(room.building))
+            {
+                continue;   // 未解锁的楼栋不派单
+            }
             for (int t = 0; t < templates.Count; t++)
             {
                 if (templates[t].roomType != room.type)
@@ -6685,7 +6753,8 @@ public class KitchenSimulator : MonoBehaviour
             plan = template.plan,
             cost = cost,
             site = spot,
-            state = OrderState.Pending
+            state = OrderState.Pending,
+            selfRepairable = template.selfRepairable
         };
 
         BuildOrderMarker(order);
@@ -6880,11 +6949,18 @@ public class KitchenSimulator : MonoBehaviour
 
     private void CompleteRepair()
     {
+        int unlockedBefore = UnlockedBuildingCount();
         repairingOrder.repairProgress = 1f;
         repairingOrder.state = OrderState.Fixed;
         AddIncome(repairingOrder.cost);
         PlayNotify();
         ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（业主支付 ¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
+
+        int unlockedAfter = UnlockedBuildingCount();
+        if (unlockedAfter > unlockedBefore)
+        {
+            ShowToast("晋升为「" + RankTitle() + "」！解锁 " + unlockedAfter + "号楼", 6f);
+        }
 
         repairingOrder = null;
         activeOrder = null;
@@ -6942,7 +7018,8 @@ public class KitchenSimulator : MonoBehaviour
             {
                 bool over = order.state != OrderState.Fixed && order.sensorValue >= order.sensorAlarm;
                 string mark = order.state == OrderState.Fixed ? "OK" : (over ? "超标" : "预警");
-                order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark;
+                order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark
+                    + (OrderSelfRepairable(order) ? "" : " ·须物业");
                 order.tag.color = stateColors[(int)order.state];
             }
 
@@ -7238,7 +7315,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 44f), pendingColor);
         GUI.Label(new Rect(rect.x + 26f, rect.y + 16f, 280f, 28f), ProjectName, titleStyle);
-        GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 300f, 18f), ProjectSubtitle + "　·　" + currentRoomName, smallStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 300f, 18f), ProjectSubtitle + "　·　" + RankTitle(), smallStyle);
         GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText, smallStyle);
         Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 288f, 20f), "收入 ¥" + income.ToString("N0") + " · 成本 ¥" + expenses.ToString("N0"), smallStyle);
@@ -7251,7 +7328,8 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), fixedColor);
         GUI.Label(new Rect(rect.x + 26f, rect.y + 14f, 180f, 26f), "维修工单", titleStyle);
-        GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 200f, 18f), CountActive() + " 进行中 · " + CountFixed() + " 已完工", smallStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 38f, 215f, 18f),
+            "楼栋 " + UnlockedBuildingCount() + "/" + ResidenceCount + " · " + CountActive() + "进行中 · " + CountFixed() + "完工", smallStyle);
 
         // 折叠 / 展开
         Rect toggle = new Rect(rect.x + rect.width - 86f, rect.y + 16f, 70f, 28f);
@@ -7308,8 +7386,15 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(card, isActive ? new Color(1f, 1f, 1f, 0.11f) : new Color(1f, 1f, 1f, 0.04f), Color.clear);
         Fill(new Rect(card.x + 9f, card.y + 8f, 4f, card.height - 16f), stateColors[(int)order.state]);
 
-        GUI.Label(new Rect(card.x + 22f, card.y + 4f, card.width - 32f, 20f),
+        GUI.Label(new Rect(card.x + 22f, card.y + 4f, card.width - 98f, 20f),
             order.Code + "  " + order.room + " · " + order.title, cardTitleStyle);
+
+        // 归属角标：居民自修（绿）/ 须物业（橙）
+        bool selfRep = OrderSelfRepairable(order);
+        Rect badge = new Rect(card.x + card.width - 72f, card.y + 4f, 60f, 18f);
+        Color ownColor = selfRep ? fixedColor : workingColor;
+        Fill(badge, new Color(ownColor.r, ownColor.g, ownColor.b, 0.30f));
+        GUI.Label(badge, selfRep ? "居民自修" : "须物业", cardButtonStyle);
 
         Color previous = GUI.color;
         GUI.color = StateTextColor(order);
@@ -7736,6 +7821,370 @@ public class KitchenSimulator : MonoBehaviour
         return count;
     }
 
+    // ── 小区俯视图：楼栋聚合、着色、点击选楼 ──────────────
+    private void RebuildBuildingBounds()
+    {
+        buildingBounds.Clear();
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Room r = rooms[i];
+            float[] bb;
+            if (!buildingBounds.TryGetValue(r.building, out bb))
+            {
+                bb = new float[] { r.xMin, r.xMax, r.zMin, r.zMax };
+                buildingBounds[r.building] = bb;
+            }
+            else
+            {
+                if (r.xMin < bb[0]) bb[0] = r.xMin;
+                if (r.xMax > bb[1]) bb[1] = r.xMax;
+                if (r.zMin < bb[2]) bb[2] = r.zMin;
+                if (r.zMax > bb[3]) bb[3] = r.zMax;
+            }
+        }
+    }
+
+    private Vector2 WorldToTwinMap(Vector3 world, Rect map)
+    {
+        float u = Mathf.InverseLerp(WorldMinX, WorldMaxX, world.x);
+        float v = Mathf.InverseLerp(WorldMinZ, WorldMaxZ, world.z);
+        return new Vector2(map.x + u * map.width, map.y + (1f - v) * map.height);
+    }
+
+    private string BuildingLabel(int b)
+    {
+        if (b == -1) return "员工宿舍";
+        if (b == 0) return "装修公司";
+        return b + "号楼";
+    }
+
+    private int BuildingOfOrder(Order o)
+    {
+        foreach (KeyValuePair<int, float[]> kv in buildingBounds)
+        {
+            float[] bb = kv.Value;
+            if (o.site.x >= bb[0] - 0.5f && o.site.x <= bb[1] + 0.5f
+                && o.site.z >= bb[2] - 0.5f && o.site.z <= bb[3] + 0.5f)
+            {
+                return kv.Key;
+            }
+        }
+        return 0;
+    }
+
+    private Color BuildingColor(int b)
+    {
+        if (b > 0 && !IsBuildingUnlocked(b))
+        {
+            return new Color(1f, 1f, 1f, 0.10f);   // 未解锁：灰
+        }
+        bool alarm = false, active = false;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Order o = orders[i];
+            if (o.state == OrderState.Fixed || BuildingOfOrder(o) != b)
+            {
+                continue;
+            }
+            if (o.sensorValue >= o.sensorAlarm) alarm = true;
+            else active = true;
+        }
+        if (alarm) return new Color(0.94f, 0.26f, 0.22f, 0.55f);
+        if (active) return new Color(1f, 0.76f, 0.18f, 0.50f);
+        return new Color(0.26f, 0.82f, 0.52f, 0.45f);
+    }
+
+    private bool TryHitBuilding(Vector2 mouse, Rect map, out int building)
+    {
+        building = 0;
+        float u = (mouse.x - map.x) / map.width;
+        float v = 1f - (mouse.y - map.y) / map.height;
+        if (u < 0f || u > 1f || v < 0f || v > 1f)
+        {
+            return false;
+        }
+        float wx = Mathf.Lerp(WorldMinX, WorldMaxX, u);
+        float wz = Mathf.Lerp(WorldMinZ, WorldMaxZ, v);
+        foreach (KeyValuePair<int, float[]> kv in buildingBounds)
+        {
+            float[] bb = kv.Value;
+            if (wx >= bb[0] && wx <= bb[1] && wz >= bb[2] && wz <= bb[3])
+            {
+                building = kv.Key;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool DrawTwinTab(Rect r, string label, bool active)
+    {
+        Fill(r, active ? btnBlue : new Color(1f, 1f, 1f, 0.06f));
+        bool clicked = GUI.Button(r, GUIContent.none, GUIStyle.none);
+        Color prev = GUI.color;
+        GUI.color = active ? Color.white : new Color(0.72f, 0.79f, 0.78f);
+        GUI.Label(r, label, cardButtonStyle);
+        GUI.color = prev;
+        return clicked;
+    }
+
+    // 俯视图画布：保持世界坐标比例（否则楼栋被拉长变形）
+    private Rect TwinMapRect(Rect rect)
+    {
+        const float boxW = 420f;
+        float top = rect.y + 70f;
+        float aspect = (WorldMaxX - WorldMinX) / (WorldMaxZ - WorldMinZ);
+        float w = boxW;
+        float h = w / aspect;
+        return new Rect(rect.x + 20f, top, w, h);
+    }
+
+    private void DrawTwinMap(Rect rect)
+    {
+        RebuildBuildingBounds();
+        float top = rect.y + 70f;
+        GUI.Label(new Rect(rect.x + 20f, top - 24f, rect.width - 40f, 18f),
+            "小区俯视图　·　已解锁 " + UnlockedBuildingCount() + "/" + ResidenceCount + " 栋（每 " + OrdersPerBuilding + " 单解锁一栋）", cardTitleStyle);
+
+        Rect map = TwinMapRect(rect);
+        Fill(map, new Color(0f, 0f, 0f, 0.35f));
+
+        // 楼栋色块
+        foreach (KeyValuePair<int, float[]> kv in buildingBounds)
+        {
+            int b = kv.Key;
+            float[] bb = kv.Value;
+            Vector2 a = WorldToTwinMap(new Vector3(bb[0], 0f, bb[3]), map);
+            Vector2 c = WorldToTwinMap(new Vector3(bb[1], 0f, bb[2]), map);
+            Rect br = new Rect(Mathf.Min(a.x, c.x), Mathf.Min(a.y, c.y), Mathf.Abs(c.x - a.x), Mathf.Abs(c.y - a.y));
+            Fill(br, BuildingColor(b));
+            Fill(new Rect(br.x, br.y, br.width, 1f), new Color(1f, 1f, 1f, 0.25f));
+            Fill(new Rect(br.x, br.yMax, br.width, 1f), new Color(1f, 1f, 1f, 0.25f));
+            Fill(new Rect(br.x, br.y, 1f, br.height), new Color(1f, 1f, 1f, 0.25f));
+            Fill(new Rect(br.xMax, br.y, 1f, br.height), new Color(1f, 1f, 1f, 0.25f));
+
+            string label = BuildingLabel(b);
+            if (b > 0 && !IsBuildingUnlocked(b))
+            {
+                label += "　未解锁";
+            }
+            GUI.Label(new Rect(br.x + 4f, br.y + 4f, br.width - 8f, 16f), label, smallStyle);
+        }
+
+        // 工单点位
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Vector2 p = WorldToTwinMap(orders[i].site, map);
+            Fill(new Rect(p.x - 3f, p.y - 3f, 6f, 6f), stateColors[(int)orders[i].state]);
+        }
+
+        // 玩家
+        Vector2 me = WorldToTwinMap(playerPosition, map);
+        Fill(new Rect(me.x - 3.5f, me.y - 3.5f, 7f, 7f), Color.white);
+
+        // 点击选楼
+        if (Event.current.type == EventType.MouseDown && map.Contains(Event.current.mousePosition))
+        {
+            int hit;
+            if (TryHitBuilding(Event.current.mousePosition, map, out hit))
+            {
+                if (hit > 0)
+                {
+                    if (IsBuildingUnlocked(hit))
+                    {
+                        twinSelectedBuilding = hit;
+                    }
+                    else
+                    {
+                        ShowToast(hit + "号楼尚未解锁（累计完成 " + ((hit - 1) * OrdersPerBuilding) + " 单后解锁）", 3.5f);
+                    }
+                }
+            }
+        }
+
+        DrawTwinMapLegend(map);
+        DrawBuildingRoster(map);
+        DrawTwinMapSidebar(rect, top);
+    }
+
+    // 图例与进度：说明色块含义，并给出距下一栋解锁还差几单
+    private void DrawTwinMapLegend(Rect map)
+    {
+        float y = map.yMax + 10f;
+        float x = map.x;
+        DrawLegendChip(x, y, pendingColor, "报警");
+        DrawLegendChip(x + 74f, y, workingColor, "有工单");
+        DrawLegendChip(x + 166f, y, fixedColor, "已消除");
+        DrawLegendChip(x + 248f, y, new Color(1f, 1f, 1f, 0.18f), "未解锁");
+        Fill(new Rect(x + 326f, y + 4f, 7f, 7f), Color.white);
+        GUI.Label(new Rect(x + 338f, y, 80f, 16f), "你", smallStyle);
+
+        int unlocked = UnlockedBuildingCount();
+        string next = unlocked >= ResidenceCount
+            ? "全部 " + ResidenceCount + " 栋已解锁"
+            : "距解锁 " + (unlocked + 1) + "号楼还差 " + (OrdersPerBuilding - CountFixed() % OrdersPerBuilding) + " 单";
+        GUI.Label(new Rect(map.x, y + 20f, map.width, 18f), next, smallStyle);
+    }
+
+    private void DrawLegendChip(float x, float y, Color color, string label)
+    {
+        Fill(new Rect(x, y + 4f, 8f, 8f), color);
+        GUI.Label(new Rect(x + 12f, y, 64f, 16f), label, smallStyle);
+    }
+
+    // 楼栋名册：地图之外的第二入口，直接点名字也能查指标
+    private void DrawBuildingRoster(Rect map)
+    {
+        float y = map.yMax + 48f;
+        GUI.Label(new Rect(map.x, y, map.width, 18f), "楼栋名册（点击查看）", cardTitleStyle);
+        y += 20f;
+
+        for (int b = 1; b <= ResidenceCount; b++)
+        {
+            Rect row = new Rect(map.x, y, map.width, 20f);
+            bool unlocked = IsBuildingUnlocked(b);
+            int active = 0, alarm = 0, fixedCount = 0;
+            for (int i = 0; i < orders.Count; i++)
+            {
+                Order o = orders[i];
+                if (BuildingOfOrder(o) != b)
+                {
+                    continue;
+                }
+                if (o.state == OrderState.Fixed)
+                {
+                    fixedCount++;
+                }
+                else
+                {
+                    active++;
+                    if (o.sensorValue >= o.sensorAlarm)
+                    {
+                        alarm++;
+                    }
+                }
+            }
+
+            bool selected = twinSelectedBuilding == b;
+            if (selected || row.Contains(Event.current.mousePosition))
+            {
+                Fill(row, new Color(1f, 1f, 1f, selected ? 0.12f : 0.06f));
+            }
+            if (GUI.Button(row, GUIContent.none, GUIStyle.none))
+            {
+                if (unlocked)
+                {
+                    twinSelectedBuilding = b;
+                }
+                else
+                {
+                    ShowToast(b + "号楼尚未解锁（累计完成 " + ((b - 1) * OrdersPerBuilding) + " 单后解锁）", 3.5f);
+                }
+            }
+
+            Fill(new Rect(row.x + 4f, row.y + 5f, 10f, 10f), BuildingColor(b));
+            GUI.Label(new Rect(row.x + 22f, row.y + 1f, 90f, 18f), b + "号楼", smallStyle);
+            GUI.Label(new Rect(row.x + 116f, row.y + 1f, row.width - 122f, 18f),
+                unlocked
+                    ? (alarm > 0 ? "报警 " + alarm : (active > 0 ? "监测中 " + active : "全部正常")) + "　·　已消除 " + fixedCount
+                    : "未解锁（完成 " + ((b - 1) * OrdersPerBuilding) + " 单开放）",
+                smallStyle);
+            y += 22f;
+        }
+    }
+
+    // 楼栋详情内容高度（与 DrawTwinMapSidebar 的排版增量保持一致）
+    private float BuildingContentHeight(int b)
+    {
+        float h = 6f;
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Room r = rooms[i];
+            if (r.building != b)
+            {
+                continue;
+            }
+            h += 20f;
+            bool any = false;
+            for (int j = 0; j < orders.Count; j++)
+            {
+                if (orders[j].room != r.name)
+                {
+                    continue;
+                }
+                any = true;
+                h += 36f;
+            }
+            if (!any)
+            {
+                h += 18f;
+            }
+        }
+        return h;
+    }
+
+    private void DrawTwinMapSidebar(Rect rect, float top)
+    {
+        Rect side = new Rect(rect.x + 452f, top, rect.width - 472f, rect.height - 140f);
+        DrawPanel(side, new Color(0f, 0f, 0f, 0.25f), dividerColor);
+
+        int b = twinSelectedBuilding;
+        if (b <= 0)
+        {
+            GUI.Label(new Rect(side.x + 14f, side.y + 12f, side.width - 28f, 20f), "点击左侧楼栋或名册，查看该楼各户实时指标", smallStyle);
+            return;
+        }
+
+        GUI.Label(new Rect(side.x + 14f, side.y + 10f, side.width - 28f, 20f),
+            BuildingLabel(b) + (IsBuildingUnlocked(b) ? "（已解锁）" : "（未解锁）"), cardTitleStyle);
+
+        // 楼内工单会随经营不断累积，内容区滚动避免溢出面板
+        float viewY = side.y + 36f;
+        float viewH = side.height - 48f;
+        float contentH = Mathf.Max(viewH, BuildingContentHeight(b));
+        twinMapScroll = GUI.BeginScrollView(new Rect(side.x + 8f, viewY, side.width - 16f, viewH), twinMapScroll,
+            new Rect(0f, 0f, side.width - 34f, contentH));
+
+        float y = 4f;
+        float cw = side.width - 34f;
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            Room r = rooms[i];
+            if (r.building != b)
+            {
+                continue;
+            }
+            GUI.Label(new Rect(6f, y, cw - 12f, 18f), r.name, bodyStyle);
+            y += 20f;
+            bool any = false;
+            for (int j = 0; j < orders.Count; j++)
+            {
+                Order o = orders[j];
+                if (o.room != r.name)
+                {
+                    continue;
+                }
+                any = true;
+                Color prev = GUI.color;
+                GUI.color = StateTextColor(o);
+                GUI.Label(new Rect(18f, y, cw - 24f, 18f), o.Code + " " + o.title + "　" + StateText(o), smallStyle);
+                GUI.color = prev;
+                y += 18f;
+                GUI.Label(new Rect(18f, y, cw - 24f, 16f),
+                    o.sensorName + " " + o.sensorValue.ToString("F1") + o.sensorUnit + "　·　"
+                    + (OrderSelfRepairable(o) ? "居民自修" : "须物业"), smallStyle);
+                y += 18f;
+            }
+            if (!any)
+            {
+                GUI.Label(new Rect(18f, y, cw - 24f, 18f), "无工单", smallStyle);
+                y += 18f;
+            }
+        }
+
+        GUI.EndScrollView();
+    }
+
     private void DrawTwinPanel()
     {
         // 收起状态：只显示一条紧凑状态条，不遮挡视野
@@ -7770,8 +8219,8 @@ public class KitchenSimulator : MonoBehaviour
         GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(0.35f + ease * 0.65f));
         DrawPanel(rect, new Color(0.04f, 0.07f, 0.1f, 0.96f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
 
-        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 420f, 28f), "数字孪生监测平台　·　厨房改造工程", titleStyle);
-        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 420f, 18f), ClockText + "　·　监测点位 " + orders.Count + " 个", smallStyle);
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 400f, 28f), "数字孪生监测平台　·　厨房改造工程", titleStyle);
+        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 560f, 18f), ClockText + "　·　监测点位 " + orders.Count + " 个　·　" + RankTitle() + "　·　楼栋 " + UnlockedBuildingCount() + "/" + ResidenceCount, smallStyle);
 
         Rect collapse = new Rect(rect.x + rect.width - 96f, rect.y + 16f, 76f, 30f);
         bool hoverCollapse = collapse.Contains(Event.current.mousePosition);
@@ -7781,6 +8230,18 @@ public class KitchenSimulator : MonoBehaviour
             twinPanelOpen = false;
         }
         GUI.Label(collapse, "收起 T", cardButtonStyle);
+
+        // ── 页签：实时数据 / 小区俯视图 ──
+        Rect tabLive = new Rect(rect.x + 428f, rect.y + 16f, 96f, 26f);
+        Rect tabMap = new Rect(rect.x + 530f, rect.y + 16f, 96f, 26f);
+        if (DrawTwinTab(tabLive, "实时数据", twinTab == 0)) { twinTab = 0; twinSelectedBuilding = 0; }
+        if (DrawTwinTab(tabMap, "小区俯视图", twinTab == 1)) { twinTab = 1; }
+
+        if (twinTab == 1)
+        {
+            DrawTwinMap(rect);
+            return;
+        }
 
         // ── 实时数据表 ──
         float top = rect.y + 70f;
@@ -7844,8 +8305,15 @@ public class KitchenSimulator : MonoBehaviour
         if (focus != null)
         {
             float dy = kpi + 30f;
-            GUI.Label(new Rect(rect.x + 20f, dy, 400f, 18f),
+            GUI.Label(new Rect(rect.x + 20f, dy, 220f, 18f),
                 focus.Code + "　" + focus.room + "　·　" + focus.sensorName, bodyStyle);
+
+            // 归属：居民自修 / 须物业
+            bool focusSelfRep = OrderSelfRepairable(focus);
+            Color focusPrev = GUI.color;
+            GUI.color = focusSelfRep ? fixedColor : workingColor;
+            GUI.Label(new Rect(rect.x + 244f, dy, 72f, 18f), focusSelfRep ? "居民自修" : "须物业", smallStyle);
+            GUI.color = focusPrev;
 
             // 趋势曲线
             float chartW = 300f;
@@ -8178,7 +8646,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　R 夜间休息　·　回宿舍按 E 睡觉　·　Tab 唤出鼠标", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　K 知识手册　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　L 联机　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
     }
 
     private void DrawToast()
