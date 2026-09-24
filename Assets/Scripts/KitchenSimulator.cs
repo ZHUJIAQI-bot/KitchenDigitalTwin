@@ -258,9 +258,10 @@ public class KitchenSimulator : MonoBehaviour
     private Transform toolPivot;
     private float toolAnim;
     private float toolStrike;   // 每次点击左键触发的工具挥动
-    private int repairClicks;
-    private const int RepairClicks = 4;
     private bool walking;
+
+    // 已掌握处置流程的故障（按 OrderTemplate.title），驱动手册打勾与报告统计
+    private readonly HashSet<string> masteredFaults = new HashSet<string>();
 
     // 跳跃
     private float verticalVelocity;
@@ -1746,7 +1747,7 @@ public class KitchenSimulator : MonoBehaviour
         string[] steps =
         {
             "① 按 T 打开「数字孪生监测平台」，查看现场传感器实时数据",
-            "② 走到报警点位（场景中的数据牌），连点左键完成处置",
+            "② 走到报警点位按左键处置：先判断成因，再按真实作业顺序点工序（拿不准就按 K 查手册）",
             "③ 改造后读数回落，保持正常 1 小时即通过闭环验收",
             "④ 在监测平台点「导出验收报告」，生成 KPI 对比报告",
             "⑤ 每完成 " + OrdersPerBuilding + " 单晋升一级并解锁一栋楼，从 1 号楼起步逐级扩张到 " + ResidenceCount + " 栋",
@@ -3065,13 +3066,14 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // 鼠标模式：按 Tab 切换（显示/锁定），Esc 释放；界面开着时不自动锁回去
-        bool mouseNeeded = lobbyOpen || shopOpen || bagOpen || almanacOpen || twinPanelOpen || faultManualOpen;
+        bool mouseNeeded = lobbyOpen || shopOpen || bagOpen || almanacOpen || twinPanelOpen || faultManualOpen || repairPanelOpen;
         if (Input.GetKeyDown(KeyCode.Tab))
         {
             SetCursorLock(!cursorLocked);
         }
-        else if (Input.GetKeyDown(KeyCode.Escape))
+        else if (Input.GetKeyDown(KeyCode.Escape) && !repairPanelOpen)
         {
+            // 处置面板打开时 Esc 交给 UpdateRepair 处理（放弃处置并锁回鼠标）
             SetCursorLock(false);
         }
         else if (loggedIn && !cursorLocked && !mouseNeeded
@@ -3920,6 +3922,8 @@ public class KitchenSimulator : MonoBehaviour
         public int guideStep;
         public int[] unlockedTools;
         public OrderSaveData[] orders;
+        public string[] masteredFaults;   // 已掌握处置流程的故障名
+        public int accidentCount;         // 累计操作事故次数
     }
 
     [System.Serializable]
@@ -4008,6 +4012,11 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
         data.unlockedTools = unlockedKinds.ToArray();
+        // 已掌握的处置流程 + 事故次数
+        string[] mastered = new string[masteredFaults.Count];
+        masteredFaults.CopyTo(mastered);
+        data.masteredFaults = mastered;
+        data.accidentCount = accidentCount;
         string key = "kitchen_save_" + currentAccount.ToLowerInvariant();
         string json = JsonUtility.ToJson(data);
         PlayerPrefs.SetString(key, json);
@@ -4066,6 +4075,18 @@ public class KitchenSimulator : MonoBehaviour
             player.transform.position = playerPosition;
         }
         guideStep = data.guideStep;
+        accidentCount = data.accidentCount;
+        masteredFaults.Clear();
+        if (data.masteredFaults != null)
+        {
+            for (int i = 0; i < data.masteredFaults.Length; i++)
+            {
+                if (!string.IsNullOrEmpty(data.masteredFaults[i]))
+                {
+                    masteredFaults.Add(data.masteredFaults[i]);
+                }
+            }
+        }
 
         // 恢复已解锁工具
         if (data.unlockedTools != null)
@@ -6089,11 +6110,364 @@ public class KitchenSimulator : MonoBehaviour
             selfRepair = "表面密封、补美缝、管根阴角封堵。",
             propertyRepair = "楼下持续渗水、闭水试验失败、铲砖重做防水（专业防水公司）。",
         },
+        new FaultEntry
+        {
+            name = "十四、橱柜门板受潮变形",
+            symptom = "柜门开合卡顿有异响，门缝上宽下窄，门板边缘发胀起皮。",
+            cause = "厨房水汽长期侵蚀柜体；门板封边破损后吸水膨胀；铰链松动导致门板受力不均；板材防潮等级不足。",
+            sensor = "柜内湿度传感器测 %RH；门板形变量测点 mm。",
+            threshold = "🟢 正常：柜内湿度 40~60%RH，形变 <1mm\n🟡 预警：湿度 60~75%RH，形变 1~3mm\n🔴 报警：湿度 >75%RH，形变 >3mm（开合受阻）",
+            tools = "螺丝刀、卷尺、新门板、防潮垫、铰链、封边条。",
+            steps = "1. 卸下门板，检查铰链是否松动锈蚀\n2. 量柜体对角线，确认柜体本身是否方正\n3. 板材受潮无法校回，直接更换变形门板\n4. 调整铰链三维螺丝，使四周门缝均匀\n5. 柜体加防潮垫并保持通风，避免再次受潮",
+            selfRepair = "换门板、调铰链、柜内除湿防潮。",
+            propertyRepair = "柜体本身受潮变形、板材大面积膨胀脱层（须整体更换）。",
+        },
+        new FaultEntry
+        {
+            name = "十五、地面/墙面瓷砖空鼓",
+            symptom = "踩踏有松动异响，敲击发出空鼓声；墙面瓷砖受震动存在脱落风险。",
+            cause = "铺贴时粘结层不饱满或砂浆配比不当；基层未做界面处理；受潮后粘结层脱层；温度变形导致应力集中。",
+            sensor = "空鼓率检测（敲击法/红外热像）%；淋浴区水浸传感器测渗水。",
+            threshold = "🟢 正常：空鼓率 <5%\n🟡 预警：5~15%\n🔴 报警：>15%（墙砖有脱落风险）",
+            tools = "小锤、切割机、铲刀、界面剂、瓷砖胶、勾缝剂、水平尺。",
+            steps = "1. 用小锤逐块敲击，标出空鼓范围\n2. 清空家具，做好地面与洁具保护\n3. 切割机沿空鼓边界切开，剔除空鼓砖\n4. 清理旧粘结层，基层做界面剂处理\n5. 重新铺贴并找平，养护 24 小时\n6. 淋浴区墙砖需做闭水试验确认不渗漏",
+            selfRepair = "小面积空鼓的剔除重贴、勾缝补美缝。",
+            propertyRepair = "大面积空鼓、破坏防水层、墙砖有脱落风险的高空作业（须专业）。",
+        },
+        new FaultEntry
+        {
+            name = "十六、线缆外露与收纳不安全",
+            symptom = "电视墙/床头线缆杂乱外露，线缆表面发热，长期积尘。",
+            cause = "装修时未预留线管；后期加装电器直接走明线；强弱电未分开走线；线缆长期受力弯折。",
+            sensor = "线缆表面温度传感器 ℃；剩余电流检测 mA。",
+            threshold = "🟢 正常：线温 <40℃，漏电 <10mA\n🟡 预警：线温 40~60℃\n🔴 报警：线温 >60℃ 或漏电 >30mA",
+            tools = "测电笔、扎带、线槽、膨胀螺丝、螺丝刀、绝缘胶带。",
+            steps = "1. 断开相关设备电源\n2. 梳理线缆，区分强电（电源）与弱电（信号）线\n3. 剪掉多余扎带，强电弱电分开走线\n4. 沿墙脚或电视墙背面安装线槽\n5. 线缆入槽固定，转弯处留出弯曲半径\n6. 通电测试设备正常后收尾",
+            selfRepair = "明线收进线槽、整理扎带、分离强弱电。",
+            propertyRepair = "墙内预埋线管改造、线路老化更换、增加回路（须电工）。",
+        },
+        new FaultEntry
+        {
+            name = "十七、灯具/灯带固定失效",
+            symptom = "灯带一端下坠、灯具晃动，接线处线路外露，偶有闪烁。",
+            cause = "卡扣/膨胀螺丝老化松脱；吊顶基材强度不足；灯具自重长期作用；接线端子松动导致接触不良。",
+            sensor = "灯具位移 mm；回路电流 A（接触不良时电流波动）。",
+            threshold = "🟢 正常：位移 <1mm，电流稳定\n🟡 预警：位移 1~5mm，电流波动 <10%\n🔴 报警：位移 >5mm 或电流波动 >20%（端子打火风险）",
+            tools = "绝缘螺丝刀、测电笔、梯子、新卡扣、膨胀螺丝、绝缘胶带。",
+            steps = "1. 关闭灯带回路总闸\n2. 拆下脱落灯带，检查卡扣与固定件\n3. 更换老化卡扣，加密固定点\n4. 检查线路有无破损，破损处缠绝缘胶带\n5. 重新固定灯带并理顺线路\n6. 合闸通电，确认正常发光无闪烁",
+            selfRepair = "换卡扣、加固固定点、理顺表面线路。",
+            propertyRepair = "吊顶内隐蔽线路改造、灯具接线盒烧损（须电工）。",
+        },
+        new FaultEntry
+        {
+            name = "十八、木门/柜门变形与五金松动",
+            symptom = "关门费力、门缝不均漏风；柜门推拉卡顿伴有摩擦异响。",
+            cause = "木材受潮膨胀或干燥收缩；铰链/滑轨松动变形；门扇自重长期下垂；五金件磨损积尘。",
+            sensor = "门缝宽度 mm；推拉阻力 N。",
+            threshold = "🟢 正常：门缝 1~2mm，阻力 <40N\n🟡 预警：门缝 2~4mm，阻力 40~80N\n🔴 报警：门缝 >4mm 或阻力 >80N（关不严/推不动）",
+            tools = "螺丝刀、刨子、木工胶、封边条、新铰链/滑轨、润滑蜡。",
+            steps = "1. 观察门缝，判断是上侧还是下侧蹭框\n2. 检查铰链螺丝，松动则拧紧或换加长螺丝\n3. 门缝不匀处用刨子少量修刨门边\n4. 门扇底部与侧边做封边防潮处理\n5. 滑轨门则清理滑轨，变形则整体更换\n6. 反复开关/推拉测试，多次微调至顺畅",
+            selfRepair = "调铰链、修刨门边、清理并更换滑轨、封边防潮。",
+            propertyRepair = "门框变形、墙体沉降导致的门洞不正（须木工/结构处理）。",
+        },
     };
+
+    // 手册条目 → 它对应的 OrderTemplate 标题；用于在手册里标记「已掌握」进度
+    private static readonly string[][] ManualCovers =
+    {
+        new[] { "水槽下方渗漏" },                    // 一、明装角阀/软管/水龙头漏水
+        new string[0],                               // 二、墙内/埋地水管渗漏（无对应工单）
+        new[] { "地漏返味" },                        // 三、地漏返水/排水堵塞
+        new string[0],                               // 四、水压异常
+        new string[0],                               // 五、电气过载与跳闸
+        new string[0],                               // 六、漏电与绝缘老化
+        new[] { "冰箱插座接触不良", "床头插座松动" }, // 七、插座/端子过热、接触不良
+        new string[0],                               // 八、室内烟雾/火灾隐患
+        new[] { "灶台燃气管老化" },                  // 九、燃气泄漏
+        new string[0],                               // 十、一氧化碳 CO 超标
+        new[] { "沙发背景墙开裂" },                  // 十一、墙体裂缝/房屋倾斜
+        new string[0],                               // 十二、暖气系统
+        new[] { "马桶底座渗水", "墙面瓷砖空鼓", "墙面返潮发霉" },   // 十三、防水失效
+        new[] { "橱柜门板变形" },                    // 十四
+        new[] { "地面瓷砖空鼓" },                    // 十五
+        new[] { "电视线缆外露" },                    // 十六
+        new[] { "吊顶灯带脱落" },                    // 十七
+        new[] { "木门变形关不严", "衣柜滑轨卡顿" },  // 十八
+    };
+
+    // 该手册条目覆盖的工单里已掌握几项
+    private string ManualMasteredText(int index)
+    {
+        if (index < 0 || index >= ManualCovers.Length || ManualCovers[index].Length == 0)
+        {
+            return string.Empty;
+        }
+        int done = 0;
+        for (int i = 0; i < ManualCovers[index].Length; i++)
+        {
+            if (masteredFaults.Contains(ManualCovers[index][i]))
+            {
+                done++;
+            }
+        }
+        if (done == 0)
+        {
+            return string.Empty;
+        }
+        return done >= ManualCovers[index].Length ? " ✓ 已掌握" : " ✓ " + done + "/" + ManualCovers[index].Length;
+    }
 
     private bool faultManualOpen;
     private int faultManualIndex;
     private Vector2 faultManualScroll;
+
+    private Rect FaultManualRect
+    {
+        get
+        {
+            float width = 800f;
+            float height = 540f;
+            return new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        }
+    }
+
+    // ── 处置工序：把手册的处置流程拆成可排序的步骤，供「诊断 → 排工序」玩法使用 ──
+    // causeKey 是诊断环节的正确答案；steps 必须按真实作业顺序排列；
+    // dangers 是危险/错误操作，选到即触发事故（内容与 FaultManual 的技术口径保持一致）。
+    private class FaultProcedure
+    {
+        public string title;        // 对应 OrderTemplate.title
+        public string symptom;      // 现场观测到的现象（诊断题面，不含成因）
+        public string causeKey;     // 正确成因（短标签）
+        public string[] steps;      // 正确工序（有序）
+        public string[] dangers;    // 危险错误操作
+
+        public FaultProcedure(string title, string symptom, string causeKey, string[] steps, string[] dangers)
+        {
+            this.title = title;
+            this.symptom = symptom;
+            this.causeKey = causeKey;
+            this.steps = steps;
+            this.dangers = dangers;
+        }
+    }
+
+    private static readonly FaultProcedure[] Procedures =
+    {
+        // ── 厨房 ──
+        new FaultProcedure("水槽下方渗漏", "柜底板见水渍、久置发霉，柜内长期潮湿", "角阀/软管密封垫老化", new[]
+        {
+            "关闭水表总阀或水槽下角阀",
+            "干毛巾吸干积水，接水盆放在渗漏点下方",
+            "拧下软管螺母，检查密封垫圈是否变硬破损",
+            "更换新垫圈，软管有裂纹鼓包则整根换新",
+            "螺纹顺时针缠生料带 5~6 圈，不要太厚",
+            "装回后先手拧紧再用扳手加半圈，开阀试漏",
+        }, new[]
+        {
+            "不关总阀就直接拧下软管螺母",
+            "用蛮力把角阀拧到底防漏，拧裂阀体",
+            "生料带缠十几圈硬塞进螺纹",
+        }),
+        new FaultProcedure("灶台燃气管老化", "灶台附近闻到轻微异味，燃气报警器预警", "燃气软管超期老化龟裂", new[]
+        {
+            "立即关闭灶前阀和燃气总阀",
+            "开窗通风，人撤到室外（严禁开灯/开关电器/打电话）",
+            "用肥皂水刷接口，冒泡处即为漏点",
+            "松开喉箍取下老化软管",
+            "装燃气专用软管并拧紧喉箍",
+            "开阀再用肥皂水检漏，确认不冒泡",
+        }, new[]
+        {
+            "用打火机或明火沿管道找漏点",
+            "不关燃气总阀就直接拆软管",
+            "在漏气现场按开关、打电话或穿脱毛衣",
+        }),
+        new FaultProcedure("橱柜门板变形", "柜门开合卡顿有异响，门缝上宽下窄", "门板受潮膨胀变形", new[]
+        {
+            "卸下门板，检查铰链是否松动锈蚀",
+            "量柜体对角线，确认柜体本身是否方正",
+            "板材受潮无法校回，直接更换变形门板",
+            "调整铰链三维螺丝，使四周门缝均匀",
+            "柜体加防潮垫并保持通风，避免再次受潮",
+        }, new[]
+        {
+            "用力硬掰门板想把它扳平，撕裂铰链孔",
+            "只换门板不做防潮处理",
+        }),
+        new FaultProcedure("冰箱插座接触不良", "插头发热变色，插座面板温度明显偏高", "插座簧片疲劳/接线松动", new[]
+        {
+            "断开对应回路断路器",
+            "用电笔确认插座已无电",
+            "拆下插座面板，拍照记录接线位置",
+            "线头发黑烧焦处剪掉重新剥线",
+            "按「左零右火上接地」接线并拧紧螺丝",
+            "装回面板合闸，测温确认不再发热",
+        }, new[]
+        {
+            "不断电就直接拆插座面板",
+            "用铜丝或铁丝代替保险丝",
+            "湿手操作电气部件",
+        }),
+
+        // ── 客厅 ──
+        new FaultProcedure("地面瓷砖空鼓", "踩踏有松动异响，敲击发出空鼓声", "基层空鼓/粘结层脱层", new[]
+        {
+            "用小锤逐块敲击，标出空鼓范围",
+            "清空该区域家具并做好地面保护",
+            "切割机沿空鼓边界切开，剔除空鼓砖",
+            "清理旧粘结层，基层做界面剂处理",
+            "重新铺贴并找平，养护 24 小时",
+            "养护后复敲，确认不再有空鼓声",
+        }, new[]
+        {
+            "往砖缝里灌胶掩盖空鼓",
+            "不做界面处理直接铺贴",
+        }),
+        new FaultProcedure("沙发背景墙开裂", "墙面出现裂纹，饰面起皮脱落", "基层空鼓/饰面层开裂", new[]
+        {
+            "用裂缝宽度卡测宽，标记并记录日期",
+            "判断走向：横向细裂多为饰面层，斜向贯穿涉结构",
+            "铲除空鼓与起皮层直至坚实基层",
+            "挂网后重新批刮腻子",
+            "打磨后补漆恢复饰面",
+            "观察两周，裂缝继续扩大则报物业鉴定",
+        }, new[]
+        {
+            "用腻子直接盖住裂缝不做铲除",
+            "斜向贯穿裂缝自己灌浆处理",
+        }),
+        new FaultProcedure("电视线缆外露", "电视墙线缆杂乱外露，摸上去发热", "线缆未按规范收纳固定", new[]
+        {
+            "断开相关设备电源",
+            "梳理线缆，区分强电（电源）与弱电（信号）线",
+            "剪掉多余扎带，强电弱电分开走线",
+            "沿墙脚或电视墙背面安装线槽",
+            "线缆入槽固定，转弯处留出弯曲半径",
+            "通电测试设备正常后收尾",
+        }, new[]
+        {
+            "带电整理插排线路",
+            "把强电与弱电线捆在一起走线",
+        }),
+        new FaultProcedure("吊顶灯带脱落", "灯带一端下坠，接线处线路外露", "卡扣老化失效/固定件松脱", new[]
+        {
+            "关闭灯带回路总闸",
+            "拆下脱落灯带，检查卡扣与固定件",
+            "更换老化卡扣，加密固定点",
+            "检查线路有无破损，破损处缠绝缘胶带",
+            "重新固定灯带并理顺线路",
+            "合闸通电，确认正常发光无闪烁",
+        }, new[]
+        {
+            "带电拆灯带接线端子",
+            "用普通胶带把灯带直接粘回吊顶",
+        }),
+
+        // ── 卧室 ──
+        new FaultProcedure("木门变形关不严", "关门费力，门缝不均并漏风", "门扇受潮膨胀/铰链变形", new[]
+        {
+            "观察门缝，判断是上侧还是下侧蹭框",
+            "检查铰链螺丝，松动则拧紧或换加长螺丝",
+            "门缝不匀处用刨子少量修刨门边",
+            "门扇底部与侧边做封边防潮处理",
+            "反复开关测试，多次微调至闭合顺畅",
+        }, new[]
+        {
+            "一次性刨掉过多，门缝过大无法返工",
+            "硬推硬关强行把门顶上",
+        }),
+        new FaultProcedure("墙面返潮发霉", "墙面泛潮起霉斑，墙纸发黑起翘", "外墙渗水导致内墙受潮", new[]
+        {
+            "擦干表面，观察水迹走向判断来源",
+            "铲除霉变层直至坚实基层",
+            "外墙迎水面重做防水（须专业）",
+            "内墙批耐水腻子并保持通风除湿",
+            "观察两周，确认无新渗水痕迹",
+        }, new[]
+        {
+            "只刷一层防霉漆盖住霉斑",
+            "在内墙做防水堵住渗水，水汽会继续破坏墙体",
+        }),
+        new FaultProcedure("衣柜滑轨卡顿", "推拉门推拉费力，伴有摩擦异响", "滑轨变形积尘/门扇垂直度偏差", new[]
+        {
+            "取下柜门，检查滑轨有无变形与积尘",
+            "清理滑轨内的积尘与杂物",
+            "滑轨已变形则整体更换",
+            "重新安装滑轨，调整门扇垂直度",
+            "反复推拉测试，调至顺畅无卡顿",
+        }, new[]
+        {
+            "往滑轨上大量抹油，会粘更多灰尘",
+            "硬推硬拉强行推拉柜门",
+        }),
+        new FaultProcedure("床头插座松动", "拔插打火，插座面板晃动", "暗盒松动/接线端子松脱", new[]
+        {
+            "断开对应回路断路器",
+            "用电笔确认插座已无电",
+            "拆下插座面板，检查暗盒是否松动",
+            "加固或更换暗盒，紧固接线端子",
+            "按「左零右火上接地」接线并拧紧",
+            "装回面板合闸，通电测试",
+        }, new[]
+        {
+            "带电拆卸插座面板",
+            "用胶水把面板粘在松动的暗盒上",
+        }),
+
+        // ── 卫生间 ──
+        new FaultProcedure("地漏返味", "下水道反味，排水变慢，地面偶有返水", "存水弯干涸/地漏芯失效", new[]
+        {
+            "清理地面杂物，防止滑倒",
+            "开地漏盖板，清除头发杂物",
+            "倒一壶约 60℃ 热水软化油垢",
+            "下水仍慢，用皮搋子对准地漏口抽吸 15~20 次",
+            "无效则用疏通弹簧伸入转动搅碎堵塞物后冲洗",
+            "反复返水多为公共排污管堵塞，报物业",
+        }, new[]
+        {
+            "倒入强酸疏通剂后紧接着倒热水，会喷溅灼伤",
+            "用铁丝硬捅，划伤管道内壁",
+        }),
+        new FaultProcedure("墙面瓷砖空鼓", "淋浴区瓷砖敲击空鼓，存在脱落风险", "淋浴区基层受潮脱层", new[]
+        {
+            "用小锤敲击，标出空鼓瓷砖范围",
+            "做好地面与洁具保护",
+            "切开空鼓砖边缘，剔除空鼓瓷砖",
+            "铲除旧粘结层，基层做防水处理",
+            "重新铺贴瓷砖并找平",
+            "养护 24 小时后做闭水试验确认不渗漏",
+        }, new[]
+        {
+            "只做勾缝掩盖空鼓，不剔除瓷砖",
+            "不做防水处理直接铺贴",
+        }),
+        new FaultProcedure("马桶底座渗水", "底座周围渗水返碱，地面长期潮湿", "法兰密封圈老化失效", new[]
+        {
+            "关闭进水角阀并冲空水箱",
+            "擦干底座周围水迹，观察渗水位置",
+            "松开底座螺栓，抬起马桶并清除旧法兰",
+            "更换新法兰密封圈，对正排污口放回马桶",
+            "均匀拧紧底座螺栓，沿底座打防霉密封胶",
+            "静置固化 24 小时后开阀冲水测试",
+        }, new[]
+        {
+            "不关进水角阀就直接抬马桶",
+            "只打胶不换法兰圈，治标不治本",
+        }),
+    };
+
+    private static FaultProcedure ProcedureOf(string title)
+    {
+        for (int i = 0; i < Procedures.Length; i++)
+        {
+            if (Procedures[i].title == title)
+            {
+                return Procedures[i];
+            }
+        }
+        return null;
+    }
 
     private void DrawFaultManual()
     {
@@ -6103,7 +6477,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         float width = 800f;
         float height = 540f;
-        Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        Rect rect = FaultManualRect;
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
         GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 120f, 26f), "维修知识手册 · 检测与维修", titleStyle);
 
@@ -6131,7 +6505,7 @@ public class KitchenSimulator : MonoBehaviour
                 faultManualIndex = i;
                 faultManualScroll = Vector2.zero;
             }
-            GUI.Label(item, FaultManual[i].name, faultManualIndex == i ? cardTitleStyle : smallStyle);
+            GUI.Label(item, FaultManual[i].name + ManualMasteredText(i), faultManualIndex == i ? cardTitleStyle : smallStyle);
         }
 
         // 右侧：选中故障详情（可滚动、自动换行）
@@ -6153,6 +6527,201 @@ public class KitchenSimulator : MonoBehaviour
         GUILayout.EndArea();
 
         GUILayout.Space(0f);   // 保证 GUILayout 与 GUI 混合时布局正确
+    }
+
+    // ── 处置面板：① 诊断成因 → ② 按正确顺序排工序 ──────────
+    private Rect RepairPanelRect
+    {
+        get
+        {
+            float w = Mathf.Min(Screen.width - 80f, 780f);
+            float h = Mathf.Min(Screen.height - 60f, 560f);
+            return new Rect((Screen.width - w) * 0.5f, (Screen.height - h) * 0.5f, w, h);
+        }
+    }
+
+    private void DrawRepairPanel()
+    {
+        if (!repairPanelOpen || repairingOrder == null)
+        {
+            return;
+        }
+
+        FaultProcedure p = ProcedureOf(repairingOrder.title);
+        Rect rect = RepairPanelRect;
+        DrawPanel(rect, new Color(0.05f, 0.07f, 0.10f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
+
+        // 标题 + 阶段指示
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 14f, rect.width - 200f, 26f),
+            repairingOrder.Code + "　" + repairingOrder.room + " · " + repairingOrder.title, titleStyle);
+        string stageText = repairStage == RepairStage.Diagnose
+            ? "① 诊断成因　→　② 排工序"
+            : "① 诊断成因 √　→　② 排工序";
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 42f, rect.width - 200f, 18f), stageText, smallStyle);
+
+        Rect close = new Rect(rect.x + rect.width - 100f, rect.y + 14f, 78f, 26f);
+        if (DrawAccentButton(close, "放弃处置", new Color(0.42f, 0.34f, 0.34f)))
+        {
+            AbortRepair();
+            return;
+        }
+
+        Fill(new Rect(rect.x + 22f, rect.y + 68f, rect.width - 44f, 1f), dividerColor);
+
+        // 左侧：现场信息（现象 / 读数 / 阈值）
+        Rect left = new Rect(rect.x + 22f, rect.y + 80f, 300f, rect.height - 152f);
+        DrawPanel(left, new Color(1f, 1f, 1f, 0.04f), Color.clear);
+        if (p != null)
+        {
+            bodyStyle.wordWrap = true;
+            GUI.Label(new Rect(left.x + 12f, left.y + 10f, left.width - 24f, 20f), "现场现象", cardTitleStyle);
+            GUI.Label(new Rect(left.x + 12f, left.y + 32f, left.width - 24f, 60f), p.symptom, bodyStyle);
+
+            GUI.Label(new Rect(left.x + 12f, left.y + 100f, left.width - 24f, 20f), "传感器实时读数", cardTitleStyle);
+            GUI.Label(new Rect(left.x + 12f, left.y + 122f, left.width - 24f, 20f),
+                repairingOrder.sensorName + "　" + repairingOrder.sensorValue.ToString("F1") + " " + repairingOrder.sensorUnit, bodyStyle);
+            GUI.Label(new Rect(left.x + 12f, left.y + 144f, left.width - 24f, 20f),
+                "报警阈值 > " + repairingOrder.sensorAlarm.ToString("F1") + " " + repairingOrder.sensorUnit, smallStyle);
+
+            // 阈值分区条：绿=正常 / 红=报警
+            Rect zone = new Rect(left.x + 12f, left.y + 172f, left.width - 24f, 10f);
+            float maxR = Mathf.Max(0.001f, repairingOrder.sensorMax);
+            float alarmR = Mathf.Clamp01(repairingOrder.sensorAlarm / maxR);
+            Fill(new Rect(zone.x, zone.y, zone.width * alarmR, zone.height), new Color(0.28f, 0.62f, 0.4f, 0.85f));
+            Fill(new Rect(zone.x + zone.width * alarmR, zone.y, zone.width * (1f - alarmR), zone.height), new Color(0.72f, 0.28f, 0.26f, 0.85f));
+            float vr = Mathf.Clamp01(repairingOrder.sensorValue / maxR);
+            Fill(new Rect(zone.x + zone.width * vr - 1f, zone.y - 3f, 3f, zone.height + 6f), Color.white);
+
+            Fill(new Rect(left.x + 12f, left.y + 196f, left.width - 24f, 1f), dividerColor);
+            Color prevC = GUI.color;
+            GUI.color = OrderSelfRepairable(repairingOrder) ? fixedColor : workingColor;
+            GUI.Label(new Rect(left.x + 12f, left.y + 208f, left.width - 24f, 18f),
+                OrderSelfRepairable(repairingOrder) ? "归属：居民可自修" : "归属：须物业/专业", smallStyle);
+            GUI.color = prevC;
+            GUI.Label(new Rect(left.x + 12f, left.y + 228f, left.width - 24f, 18f), "熟练度：" + RankTitle(), smallStyle);
+            GUI.Label(new Rect(left.x + 12f, left.y + 248f, left.width - 24f, 18f), "诊断干扰项：" + Mathf.Max(0, causePool.Count - 1) + " 个", smallStyle);
+        }
+
+        // 右侧：按阶段渲染
+        Rect right = new Rect(rect.x + 338f, rect.y + 80f, rect.width - 360f, rect.height - 152f);
+        if (repairStage == RepairStage.Diagnose)
+        {
+            DrawDiagnoseOptions(right, p);
+        }
+        else
+        {
+            DrawStepOptions(right, p);
+        }
+
+        // 底部进度 + 提示
+        float by = rect.y + rect.height - 58f;
+        Fill(new Rect(rect.x + 22f, by - 8f, rect.width - 44f, 1f), dividerColor);
+        Fill(new Rect(rect.x + 22f, by + 4f, (rect.width - 44f) * repairingOrder.repairProgress, 8f), workingColor);
+        GUI.Label(new Rect(rect.x + 22f, by + 16f, rect.width - 44f, 20f),
+            "进度 " + Mathf.RoundToInt(repairingOrder.repairProgress * 100f) + "%　·　"
+            + (repairStage == RepairStage.Diagnose
+                ? "从现象和读数反推最可能的成因；按 K 可查维修知识手册"
+                : "按真实作业顺序点工序；危险操作会出事故并赔付")
+            + "　·　Esc 放弃", smallStyle);
+    }
+
+    // 统一按钮：底板 + 无样式 Button 收点击 + 文字，避免 GUIStyle 状态色不可控
+    private bool DrawAccentButton(Rect r, string label, Color baseColor)
+    {
+        bool hover = r.Contains(Event.current.mousePosition);
+        Fill(r, hover ? Color.Lerp(baseColor, Color.white, 0.25f) : baseColor);
+        bool clicked = GUI.Button(r, GUIContent.none, GUIStyle.none);
+        GUI.Label(r, label, cardButtonStyle);
+        return clicked;
+    }
+
+    private void DrawDiagnoseOptions(Rect area, FaultProcedure p)
+    {
+        GUI.Label(new Rect(area.x, area.y, area.width, 20f), "最可能的成因是？", cardTitleStyle);
+        float y = area.y + 28f;
+        for (int i = 0; i < causePool.Count; i++)
+        {
+            if (DrawAccentButton(new Rect(area.x, y + i * 38f, area.width, 32f), causePool[i], btnBlue))
+            {
+                ChooseCause(i);
+                return;
+            }
+        }
+        GUI.Label(new Rect(area.x, y + causePool.Count * 38f + 10f, area.width, 44f),
+            "提示：按 K 打开维修知识手册，对照「故障现象 / 产生原因」可查到答案。", smallStyle);
+    }
+
+    private void DrawStepOptions(Rect area, FaultProcedure p)
+    {
+        if (p == null)
+        {
+            return;
+        }
+        GUI.Label(new Rect(area.x, area.y, area.width, 20f),
+            "下一步该做什么？　已按序完成 " + doneSteps.Count + "/" + p.steps.Length, cardTitleStyle);
+
+        // 已完成工序（有序），最多列 4 条：9 个选项时刚好不溢出面板
+        float y = area.y + 26f;
+        int firstShown = Mathf.Max(0, doneSteps.Count - 4);
+        if (firstShown > 0)
+        {
+            GUI.Label(new Rect(area.x, y, area.width, 16f), "… 前面 " + firstShown + " 步已正确完成", smallStyle);
+            y += 16f;
+        }
+        for (int i = firstShown; i < doneSteps.Count; i++)
+        {
+            GUI.Label(new Rect(area.x, y, area.width, 16f), "√ 第 " + (i + 1) + " 步　" + p.steps[doneSteps[i]], smallStyle);
+            y += 16f;
+        }
+        if (doneSteps.Count == 0)
+        {
+            GUI.Label(new Rect(area.x, y, area.width, 16f), "（尚未开始：先做第 1 步）", smallStyle);
+            y += 16f;
+        }
+
+        // 待选操作：正确工序与危险操作混排、外观一致，否则考不出判断力
+        y += 8f;
+        GUI.Label(new Rect(area.x, y, area.width, 16f), "可选操作（其中混有错误/危险操作）", smallStyle);
+        y += 20f;
+
+        int total = p.steps.Length + p.dangers.Length;
+        for (int k = 0; k < optionOrder.Count && k < total; k++)
+        {
+            int opt = optionOrder[k];
+            bool used;
+            string label;
+            if (opt < p.steps.Length)
+            {
+                used = doneSteps.Contains(opt);
+                label = p.steps[opt];
+            }
+            else
+            {
+                used = false;
+                label = p.dangers[opt - p.steps.Length];
+            }
+
+            Rect row = new Rect(area.x, y + k * 28f, area.width, 24f);
+            bool hover = row.Contains(Event.current.mousePosition);
+            Color fill = used ? new Color(1f, 1f, 1f, 0.03f)
+                : (hover ? new Color(1f, 1f, 1f, 0.15f) : new Color(1f, 1f, 1f, 0.07f));
+            Fill(row, fill);
+
+            bool clicked = GUI.Button(row, GUIContent.none, GUIStyle.none);
+            Color prev = GUI.color;
+            if (used)
+            {
+                GUI.color = new Color(0.5f, 0.58f, 0.58f);
+            }
+            GUI.Label(row, (used ? "√ " : "· ") + label, cardButtonStyle);
+            GUI.color = prev;
+
+            if (clicked && !used)
+            {
+                ChooseStep(opt);
+                return;
+            }
+        }
     }
 
     private void UpdateOrderSpawning()
@@ -6900,11 +7469,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        if (repairingOrder != null)
-        {
-            AdvanceRepair();
-        }
-        else if (activeOrder != null)
+        if (activeOrder != null && repairingOrder == null)
         {
             if (IsNight)
             {
@@ -6927,53 +7492,32 @@ public class KitchenSimulator : MonoBehaviour
                 return;
             }
 
-            StartRepair(activeOrder);
-            AdvanceRepair();
+            BeginDiagnosis(activeOrder);
         }
     }
 
-    private void AdvanceRepair()
-    {
-        repairClicks++;
-        toolStrike = 1f;
-        if (repairingOrder != null)
-        {
-            EmitWorkEffect(repairingOrder.site);
-        }
-        repairingOrder.repairProgress = Mathf.Clamp01((float)repairClicks / RepairClicks);
-        if (repairClicks >= RepairClicks)
-        {
-            CompleteRepair();
-        }
-    }
+    // ── 处置玩法：① 诊断成因 → ② 按正确顺序排工序 ──────────
+    private enum RepairStage { None, Diagnose, Procedure }
 
-    private void CompleteRepair()
-    {
-        int unlockedBefore = UnlockedBuildingCount();
-        repairingOrder.repairProgress = 1f;
-        repairingOrder.state = OrderState.Fixed;
-        AddIncome(repairingOrder.cost);
-        PlayNotify();
-        ShowToast("工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + repairingOrder.title + "（业主支付 ¥" + repairingOrder.cost.ToString("N0") + "）", 5f);
+    private RepairStage repairStage = RepairStage.None;
+    private bool repairPanelOpen;
+    private int diagnoseWrongCount;        // 诊断选错次数
+    private readonly List<int> doneSteps = new List<int>();     // 已按序完成的工序序号
+    private readonly List<int> optionOrder = new List<int>();   // 工序选项的展示顺序（打乱后）
+    private readonly List<string> causePool = new List<string>();   // 本次诊断的成因选项
+    private float shockTimer;              // 事故红闪计时
+    private int accidentCount;             // 累计操作事故次数（计入验收报告）
 
-        int unlockedAfter = UnlockedBuildingCount();
-        if (unlockedAfter > unlockedBefore)
-        {
-            ShowToast("晋升为「" + RankTitle() + "」！解锁 " + unlockedAfter + "号楼", 6f);
-        }
-
-        repairingOrder = null;
-        activeOrder = null;
-        repairClicks = 0;
-        SaveGame();
-    }
-
-    private void StartRepair(Order order)
+    private void BeginDiagnosis(Order order)
     {
         repairingOrder = order;
         order.state = OrderState.Repairing;
         order.repairProgress = 0f;
-        repairClicks = 0;
+        repairStage = RepairStage.Diagnose;
+        repairPanelOpen = true;
+        diagnoseWrongCount = 0;
+        doneSteps.Clear();
+        SetCursorLock(false);   // 面板要点击选项，召唤鼠标
 
         Vector3 direction = order.site - playerPosition;
         direction.y = 0f;
@@ -6982,7 +7526,236 @@ public class KitchenSimulator : MonoBehaviour
             player.transform.forward = direction.normalized;
         }
 
-        ShowToast("开始维修 " + order.Code + " · 连续点击左键施工（共 " + RepairClicks + " 次）", 4f);
+        BuildCauseOptions(order);
+        ShowToast("先判断成因，再按正确顺序施工 —— 用错工具/乱操作会出事", 5f);
+    }
+
+    // 稳定非负种子。自带 FNV-1a 而不用 string.GetHashCode()：
+    // 后者在不同运行时可能每进程随机化，会让同一故障的选项顺序每次都变。
+    // 也不能用 Mathf.Abs(int.MinValue)——会抛 OverflowException。
+    private static int TitleSeed(string title)
+    {
+        unchecked
+        {
+            int h = (int)2166136261;
+            for (int i = 0; i < title.Length; i++)
+            {
+                h = (h ^ title[i]) * 16777619;
+            }
+            return h & 0x7FFFFFFF;
+        }
+    }
+
+    // 诊断选项：1 个正确成因 + N 个来自其它故障的干扰成因（N 随职称增加，至少 1 个）
+    private void BuildCauseOptions(Order order)
+    {
+        int seed = TitleSeed(order.title);
+        FaultProcedure p = ProcedureOf(order.title);
+        causePool.Clear();
+        if (p == null)
+        {
+            return;
+        }
+
+        int distractors = Mathf.Clamp(1 + CountFixed() / OrdersPerBuilding, 1, 3);
+        List<string> pool = new List<string>();
+        pool.Add(p.causeKey);
+        // 用稳定偏移取干扰项，保证同一故障每次选项一致且互不重复
+        for (int i = 0; i < Procedures.Length && pool.Count <= distractors; i++)
+        {
+            string candidate = Procedures[(seed + i * 3) % Procedures.Length].causeKey;
+            if (candidate == p.causeKey || pool.Contains(candidate))
+            {
+                continue;
+            }
+            pool.Add(candidate);
+        }
+
+        // 打乱展示顺序
+        for (int i = 0; i < pool.Count; i++)
+        {
+            int j = (seed + i * 7) % pool.Count;
+            string tmp = pool[i];
+            pool[i] = pool[j];
+            pool[j] = tmp;
+        }
+        causePool.AddRange(pool);
+    }
+
+    // 工序选项：全部正确工序 + 危险操作，混排后玩家不知道哪些是雷
+    private void BuildStepOptions(Order order)
+    {
+        FaultProcedure p = ProcedureOf(order.title);
+        optionOrder.Clear();
+        if (p == null)
+        {
+            return;
+        }
+        int total = p.steps.Length + p.dangers.Length;
+        List<int> idx = new List<int>();
+        for (int i = 0; i < total; i++)
+        {
+            idx.Add(i);
+        }
+        // 确定性洗牌：同一故障顺序稳定，便于玩家记忆与复现
+        int seed = TitleSeed(order.title);
+        for (int i = total - 1; i > 0; i--)
+        {
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF;
+            int j = seed % (i + 1);
+            int tmp = idx[i];
+            idx[i] = idx[j];
+            idx[j] = tmp;
+        }
+        optionOrder.AddRange(idx);
+    }
+
+    private void ChooseCause(int option)
+    {
+        FaultProcedure p = ProcedureOf(repairingOrder.title);
+        if (p == null || option < 0 || option >= causePool.Count)
+        {
+            return;
+        }
+        if (causePool[option] == p.causeKey)
+        {
+            repairStage = RepairStage.Procedure;
+            doneSteps.Clear();
+            BuildStepOptions(repairingOrder);
+            PlayNotify();
+            ShowToast("判断正确：" + p.causeKey + "　现在按正确顺序施工", 4f);
+            return;
+        }
+
+        // 诊断选错 → 返工：进度回退并给方向性提示
+        diagnoseWrongCount++;
+        RegressProgress();
+        ShowToast("判断有误 —— 现象与「" + causePool[option] + "」不符，再想想 " + p.symptom, 5f);
+    }
+
+    private void ChooseStep(int option)
+    {
+        FaultProcedure p = ProcedureOf(repairingOrder.title);
+        if (p == null || option < 0 || option >= p.steps.Length + p.dangers.Length)
+        {
+            return;
+        }
+        bool isStep = option < p.steps.Length;
+        int stepIndex = isStep ? option : option - p.steps.Length;
+
+        if (!isStep)
+        {
+            TriggerAccident(p.dangers[stepIndex]);
+            return;
+        }
+
+        // 必须按顺序：下一个该做的就是 doneSteps.Count 号工序
+        if (stepIndex == doneSteps.Count)
+        {
+            doneSteps.Add(stepIndex);
+            toolStrike = 1f;
+            EmitWorkEffect(repairingOrder.site);
+            repairingOrder.repairProgress = Mathf.Clamp01((float)doneSteps.Count / p.steps.Length);
+            if (doneSteps.Count >= p.steps.Length)
+            {
+                CompleteRepair();
+            }
+            return;
+        }
+
+        if (doneSteps.Contains(stepIndex))
+        {
+            ShowToast("这一步已经做过了，继续下一步", 3f);
+            return;
+        }
+
+        // 顺序不对 → 返工
+        RegressProgress();
+        ShowToast("顺序不对 —— 现在应该先做第 " + (doneSteps.Count + 1) + " 步，想想前置条件是哪个", 4f);
+    }
+
+    // 返工：退掉最近完成的一步，进度随之回退
+    private void RegressProgress()
+    {
+        if (repairingOrder == null)
+        {
+            return;
+        }
+        if (doneSteps.Count > 0)
+        {
+            doneSteps.RemoveAt(doneSteps.Count - 1);
+        }
+        repairingOrder.repairProgress = Mathf.Clamp01((float)doneSteps.Count / Mathf.Max(1, CurrentStepCount()));
+    }
+
+    private int CurrentStepCount()
+    {
+        FaultProcedure p = repairingOrder != null ? ProcedureOf(repairingOrder.title) : null;
+        return p != null ? p.steps.Length : 1;
+    }
+
+    // 危险操作 → 事故：红闪 + 扣钱 + 进度清零重来
+    private void TriggerAccident(string danger)
+    {
+        accidentCount++;
+        shockTimer = 1.2f;
+        int fine = 120 + Random.Range(0, 180);
+        AddExpense(fine);              // 返工材料与赔付
+        doneSteps.Clear();
+        if (repairingOrder != null)
+        {
+            repairingOrder.repairProgress = 0f;
+        }
+        PlayNotify();
+        ShowToast("⚠ 操作事故：" + danger + "　—— 返工重来，赔付 ¥" + fine.ToString("N0"), 7f);
+    }
+
+    // 放弃处置：工单还原为待维修，避免玩家卡在面板里
+    private void AbortRepair()
+    {
+        if (repairingOrder != null && repairingOrder.state == OrderState.Repairing)
+        {
+            repairingOrder.state = OrderState.Pending;
+            repairingOrder.repairProgress = 0f;
+        }
+        repairingOrder = null;
+        repairStage = RepairStage.None;
+        repairPanelOpen = false;
+        doneSteps.Clear();
+        SetCursorLock(true);
+        ShowToast("已放下这单，可随时回来重新处置", 3f);
+    }
+
+    private void CompleteRepair()
+    {
+        int unlockedBefore = UnlockedBuildingCount();
+        string title = repairingOrder.title;
+        repairingOrder.repairProgress = 1f;
+        repairingOrder.state = OrderState.Fixed;
+        AddIncome(repairingOrder.cost);
+        PlayNotify();
+
+        // 合成一条多行提示：ShowToast 是覆盖式的，分次调用会只剩最后一条
+        string msg = "工单完成 " + repairingOrder.Code + " · " + repairingOrder.room + " " + title
+            + "（业主支付 ¥" + repairingOrder.cost.ToString("N0") + "）";
+        if (masteredFaults.Add(title))
+        {
+            msg += "\n✓ 已掌握：" + title + " 处置流程（" + masteredFaults.Count + "/" + Procedures.Length + "）";
+        }
+        int unlockedAfter = UnlockedBuildingCount();
+        if (unlockedAfter > unlockedBefore)
+        {
+            msg += "\n晋升为「" + RankTitle() + "」！解锁 " + unlockedAfter + "号楼";
+        }
+        ShowToast(msg, 8f);
+
+        repairingOrder = null;
+        activeOrder = null;
+        repairStage = RepairStage.None;
+        repairPanelOpen = false;
+        doneSteps.Clear();
+        SetCursorLock(true);
+        SaveGame();
     }
 
     private void UpdateRepair()
@@ -6991,6 +7764,16 @@ public class KitchenSimulator : MonoBehaviour
         if (toolStrike > 0f)
         {
             toolStrike = Mathf.Max(0f, toolStrike - Time.deltaTime * 4.5f);
+        }
+        // 事故红闪衰减
+        if (shockTimer > 0f)
+        {
+            shockTimer = Mathf.Max(0f, shockTimer - Time.deltaTime * 1.6f);
+        }
+        // 处置面板：Esc 放弃，避免卡在面板里
+        if (repairPanelOpen && Input.GetKeyDown(KeyCode.Escape))
+        {
+            AbortRepair();
         }
     }
 
@@ -7166,7 +7949,19 @@ public class KitchenSimulator : MonoBehaviour
         DrawLobby();
         DrawChat();
         DrawFaultManual();
+        DrawRepairPanel();
+        DrawShockFlash();
         DrawStartError();
+    }
+
+    // 操作事故红闪
+    private void DrawShockFlash()
+    {
+        if (shockTimer <= 0f)
+        {
+            return;
+        }
+        Fill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.85f, 0.12f, 0.10f, Mathf.Clamp01(shockTimer) * 0.34f));
     }
 
     // ── 小地图（M 键切换大/小）────────────────────────────
@@ -8479,7 +9274,18 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
         sb.AppendLine();
-        sb.AppendLine("三、关键指标对比分析");
+        sb.AppendLine("三、处置技能掌握情况（居民自修能力清单）");
+        sb.AppendLine("  已掌握处置流程：" + masteredFaults.Count + " / " + Procedures.Length + " 类");
+        for (int i = 0; i < Procedures.Length; i++)
+        {
+            bool ok = masteredFaults.Contains(Procedures[i].title);
+            sb.AppendLine("    " + (ok ? "[已掌握] " : "[未掌握] ") + Procedures[i].title
+                + "　成因：" + Procedures[i].causeKey);
+        }
+        sb.AppendLine("  诊断判断失误：" + diagnoseWrongCount + " 次");
+        sb.AppendLine("  操作事故累计：" + accidentCount + " 次（违规操作导致的返工与赔付）");
+        sb.AppendLine();
+        sb.AppendLine("四、关键指标对比分析");
         sb.AppendLine("  指标              本平台(数字孪生)     传统人工巡检");
         sb.AppendLine("  隐患消除率        " + Pad(HazardClearRate().ToString("F0") + " %", 20) + Pad("68 %", 17));
         sb.AppendLine("  闭环验收率        " + Pad(VerifyRate().ToString("F0") + " %", 20) + Pad("无此环节", 17));
@@ -8504,12 +9310,12 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  造价核算依据：材料费按市场参考单价计列并计 15% 损耗，");
         sb.AppendLine("  人工费按 " + LaborRate + " 元/工时计取，另计 15% 管理费。");
         sb.AppendLine();
-        sb.AppendLine("四、经营数据");
+        sb.AppendLine("五、经营数据");
         sb.AppendLine("  累计改造投入：" + "¥" + expenses.ToString("N0"));
         sb.AppendLine("  业主支付合计：" + "¥" + income.ToString("N0"));
         sb.AppendLine("  净利　　　　：" + "¥" + (income - expenses).ToString("N0"));
         sb.AppendLine();
-        sb.AppendLine("五、结论");
+        sb.AppendLine("六、结论");
         sb.AppendLine("  本平台以传感器实时数据驱动隐患排查与处置，隐患消除率、平均处置时长、");
         sb.AppendLine("  漏检率等关键指标均优于传统人工巡检方式，改造全过程数据可追溯。");
         sb.AppendLine("==============================================");
@@ -8656,10 +9462,25 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
         float width = Mathf.Clamp(Screen.width - 760f, 260f, 560f);
-        Rect rect = new Rect((Screen.width - width) * 0.5f, 18f, width, 46f);
+        // 按内容增高：完工结算会同时播报「完成 / 已掌握 / 晋升」多条，固定 46px 会把后几条裁掉
+        float usable = Mathf.Max(80f, width - 44f);
+        float units = 0f;
+        int hardLines = 1;
+        for (int i = 0; i < toastText.Length; i++)
+        {
+            if (toastText[i] == '\n')
+            {
+                hardLines++;
+                continue;
+            }
+            units += toastText[i] > 0x2E80 ? 13f : 7f;   // 中文按全宽估算
+        }
+        int lines = Mathf.Max(hardLines, Mathf.CeilToInt(units / usable));
+        float height = Mathf.Max(46f, 18f + lines * 22f);
+        Rect rect = new Rect((Screen.width - width) * 0.5f, 18f, width, height);
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 14f, rect.y + 8f, 4f, rect.height - 16f), toastTimer > 5f ? fixedColor : pendingColor);
-        GUI.Label(new Rect(rect.x + 28f, rect.y, rect.width - 44f, rect.height), toastText, toastStyle);
+        GUI.Label(new Rect(rect.x + 28f, rect.y + 6f, rect.width - 44f, rect.height - 12f), toastText, toastStyle);
     }
 
     // ── 绘制工具 ──────────────────────────────────────────
@@ -8780,6 +9601,8 @@ public class KitchenSimulator : MonoBehaviour
             || (almanacOpen && AlmanacRect.Contains(point))
             || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point))
             || (lobbyOpen && LobbyRect.Contains(point)) || (inRoom && ChatRect.Contains(point))
+            || (faultManualOpen && FaultManualRect.Contains(point))
+            || (repairPanelOpen && RepairPanelRect.Contains(point))
             || (!loggedIn);
     }
 
