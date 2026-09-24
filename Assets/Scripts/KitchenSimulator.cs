@@ -537,6 +537,16 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
 
+        // 维修知识手册开关
+        if (Input.GetKeyDown(KeyCode.K) && loggedIn)
+        {
+            faultManualOpen = !faultManualOpen;
+            if (faultManualOpen)
+            {
+                SetCursorLock(false);
+            }
+        }
+
         // 联机轮询：上传我的位置 + 拉取队友位置 + 拉取聊天
         if (inRoom && loggedIn)
         {
@@ -3001,7 +3011,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // 鼠标模式：按 Tab 切换（显示/锁定），Esc 释放；界面开着时不自动锁回去
-        bool mouseNeeded = lobbyOpen || shopOpen || bagOpen || almanacOpen || twinPanelOpen;
+        bool mouseNeeded = lobbyOpen || shopOpen || bagOpen || almanacOpen || twinPanelOpen || faultManualOpen;
         if (Input.GetKeyDown(KeyCode.Tab))
         {
             SetCursorLock(!cursorLocked);
@@ -5848,6 +5858,244 @@ public class KitchenSimulator : MonoBehaviour
         orderTimer = 2f;
     }
 
+    // ── 维修知识手册（故障库）──────────────────────────
+    private class FaultEntry
+    {
+        public string name;         // 故障名称
+        public string symptom;      // 故障现象
+        public string cause;        // 产生原因
+        public string sensor;       // 传感器监测
+        public string threshold;    // 异常判定（绿/黄/红）
+        public string tools;        // 工具
+        public string steps;        // 维修步骤
+        public string selfRepair;   // 居民自修
+        public string propertyRepair; // 物业/专业维修
+    }
+
+    private static readonly FaultEntry[] FaultManual =
+    {
+        new FaultEntry
+        {
+            name = "一、明装角阀/软管/水龙头漏水",
+            symptom = "厨房/卫生间柜底积水、水龙头滴水、软管接口喷水，久置柜板发霉、墙面起皮。",
+            cause = "橡胶密封垫老化变形；进水软管长期弯曲受热开裂；角阀阀芯磨损关不严；螺纹接口松动或生料带老化。",
+            sensor = "水浸传感器（柜底/洗手盆下）检测积水液位 0~100；管道压力传感器（入户总管）测水压 MPa；流量计测无用水时流量。",
+            threshold = "🟢 正常：积水 0~10\n🟡 预警：10~50 且持续 30 秒\n🔴 报警：>50 且持续 3 秒（明显积水）",
+            tools = "活动扳手、老虎钳、生料带、新密封垫圈、新软管、干毛巾、水盆。",
+            steps = "1. 先关水表总阀或对应角阀\n2. 干毛巾吸干积水，水盆放在渗漏点下方\n3. 观察渗漏点：软管接口滴水→扳手拧下软管螺母；龙头本体滴水→拆把手取阀芯查密封圈\n4. 垫圈变硬/变形/破损→换新垫圈\n5. 软管有裂纹/鼓包/发硬→整根换新\n6. 螺纹缠生料带：顺时针 5~6 圈，不要太厚\n7. 装回后先手拧紧，再扳手加半圈，勿用力过猛\n8. 开阀，擦干渗漏处，等 5 分钟手摸确认不漏",
+            selfRepair = "明装软管、水龙头密封圈、角阀表面接口。",
+            propertyRepair = "墙内预埋管渗漏、角阀锈死无法关闭、水表后主管接口问题。",
+        },
+        new FaultEntry
+        {
+            name = "二、墙内/埋地水管渗漏",
+            symptom = "墙面发潮发霉、腻子鼓包，楼下天花板渗水，水费突增，踢脚线有水迹。",
+            cause = "塑料水管老化变脆开裂；接口胶水老化或热熔不严；地基轻微沉降拉裂暗管；管材质量差。",
+            sensor = "水浸传感器（墙根/吊顶检修口下）+ 水压传感器（入户总管）测水压 MPa。",
+            threshold = "🟢 正常：水浸 0~10；水压 0.20~0.50 MPa\n🟡 预警：水浸 10~50；水压 0.15~0.18 MPa 持续 1 小时\n🔴 报警：水浸 >50；水压 <0.12 MPa（管壁破损/大量漏水）",
+            tools = "活动扳手、管钳、红外热像仪、墙面开槽工具、PPR热熔器、PPR管/接头、防水卷材。",
+            steps = "1. 居民先关总阀防止继续\n2. 擦干表面水迹，观察墙面水迹位置\n3. 难定位时用红外热像仪扫墙面找低温/潮湿区\n4. 专业人员用开槽工具沿疑似管路开槽\n5. 切掉破损管段，PPR管热熔重接\n6. 开阀试压检查接口\n7. 确认不漏后回填、重做防水、恢复墙面",
+            selfRepair = "关总阀防止扩大、清理表面水渍、拍照记录。",
+            propertyRepair = "开墙找漏点、暗管熔接、防水层修复、沉降引发的管道问题（须专业）。",
+        },
+        new FaultEntry
+        {
+            name = "三、地漏返水/排水堵塞",
+            symptom = "洗衣机排水时地漏冒水，卫生间积水，水槽排水慢，下水道反味。",
+            cause = "排水管油脂凝结管径变小；存水弯堵塞；主排污管堵塞；地漏老化密封不严。",
+            sensor = "水浸传感器（地漏旁地面）检测积水量 0~100。",
+            threshold = "🟢 正常：积水 0~10\n🟡 预警：10~50 持续 15 秒（排水不畅/少量反水）\n🔴 报警：>50 持续 3 秒（明显返水）",
+            tools = "皮搋子、地漏疏通弹簧、除垢剂、热水、钳子、手套。",
+            steps = "1. 先清理地面积水防滑倒\n2. 开地漏盖板清头发杂物\n3. 倒一壶约 60℃ 热水软化油垢\n4. 下水仍慢→皮搋子对准地漏口抽吸 15~20 次\n5. 无效→疏通弹簧伸入转动搅碎堵塞物\n6. 抽出后倒热水冲洗\n7. 反复返水→可能是公共排污管堵塞，报物业",
+            selfRepair = "盖板杂物清理、皮搋子/弹簧疏通自家支管、地漏芯更换。",
+            propertyRepair = "公共排污管堵塞、楼下检查口疏通、室外化粪池满溢。",
+        },
+        new FaultEntry
+        {
+            name = "四、水压异常（过高/过低）",
+            symptom = "水龙头出水小、热水器打不着；或水压过大水管抖动、水锤声、接口易漏。",
+            cause = "过低：总阀未全开、前置过滤器堵塞、公共供水不足、二次供水泵故障；过高：减压阀失效、物业调压过高、管径偏小。",
+            sensor = "水压传感器（入户总水管靠近水表处）测水压 MPa。",
+            threshold = "🟢 正常：0.20~0.50 MPa\n🟡 预警：<0.18 或 >0.55 MPa 持续 10 分钟\n🔴 报警：<0.12 或 >0.65 MPa 持续 1 分钟",
+            tools = "活动扳手、压力表、生料带、水桶、毛刷。",
+            steps = "1. 看平台水压曲线判断持续偏低还是偶发\n2. 查自家总阀是否全开（逆时针拧到头）\n3. 关总阀，拧开滤瓶清洗前置过滤器/水表滤网\n4. 仍低→压力表测入户管，区分自家/小区问题\n5. 偏高→调减压阀（逆时针降压）到约 0.30 MPa\n6. 二次供水问题→物业到泵房调变频泵",
+            selfRepair = "开总阀、清洗前置过滤器滤网、调家用减压阀。",
+            propertyRepair = "泵房压力设置、公共主管压力不足、市政供水故障。",
+        },
+        new FaultEntry
+        {
+            name = "五、电气过载与跳闸",
+            symptom = "开多个大功率电器时回路跳闸，复位后几分钟又跳，电线发热。",
+            cause = "回路大功率电器过多超断路器额定值；线径偏小；断路器老化误跳；插座接触不良高温。",
+            sensor = "电气监测模块（电流互感器+温度探头）装在配电箱，测回路电流 A、线缆温度 ℃。",
+            threshold = "🟢 正常：负载率 <80%，线温 <60℃\n🟡 预警：负载率 80~90%，线温 60~80℃ 持续 10 分钟\n🔴 报警：负载率 >90%，线温 >80℃ 或瞬时超额定",
+            tools = "绝缘螺丝刀、电笔、万用表、钳形电流表、绝缘胶带、新断路器。",
+            steps = "1. 到配电箱看哪路跳闸，拨到 OFF\n2. 断电后手背轻触出线端是否发烫\n3. 拔掉该回路所有大功率电器\n4. 万用表测回路电阻确认无短路\n5. 钳形表卡火线逐步恢复供电测电流\n6. 电流仍接近额定→大功率电器换单独回路/新增回路\n7. 断路器发烫/不灵活→换同规格断路器",
+            selfRepair = "拔多余电器、复位断路器、减少同时用电。",
+            propertyRepair = "换电线、增开回路、配电箱改造、换断路器（须持证电工）。",
+        },
+        new FaultEntry
+        {
+            name = "六、漏电与绝缘老化",
+            symptom = "摸电器外壳有麻感，漏电保护器常跳，插座附近焦黄、有烧焦味。",
+            cause = "电线绝缘老化龟裂裸铜碰金属壳；插座受潮；电器内部绝缘损坏；接地缺失。",
+            sensor = "漏电互感器（零序电流互感器）装总进线回路，测漏电电流 mA。",
+            threshold = "🟢 正常：漏电 <10 mA\n🟡 预警：10~30 mA 持续 5 秒\n🔴 报警：>30 mA（漏电保护器随时跳闸）",
+            tools = "绝缘手套、电笔、万用表、绝缘电阻表、绝缘胶带、新插座/插头。",
+            steps = "1. 戴绝缘手套断总闸\n2. 拔掉所有电器插头找漏电回路\n3. 逐一查插座：接线松动/水渍/绝缘烧焦\n4. 万用表测火线与地线电阻\n5. 插座受潮→拆下吹干换新\n6. 插头碳化→换插头或整机检查\n7. 线路老化→专业电工摇表逐段排查换线\n8. 合闸观察是否还跳",
+            selfRepair = "拔故障电器、换表面插座面板、吹干受潮插座。",
+            propertyRepair = "线路老化更换、接地系统修复、潮湿区域电路改造（须电工）。",
+        },
+        new FaultEntry
+        {
+            name = "七、插座/端子过热、接触不良",
+            symptom = "插座发烫、插拔打火、接线端子附近变色。",
+            cause = "接线螺丝热胀冷缩松动；铝铜线直接连接电化学腐蚀；插座簧片疲劳；回路长期过载。",
+            sensor = "温度传感器/红外测温模块 + AFCI 电弧检测器，测温度 ℃、温升速率、危险电弧。",
+            threshold = "🟢 正常：温度 <40℃\n🟡 预警：40~60℃ 或温升 >2℃/min\n🔴 报警：>60℃ 或温升 >5℃/min 或检测到危险电弧",
+            tools = "电笔/万用表、螺丝刀、剥线钳、新插座、绝缘胶带。",
+            steps = "1. 断对应回路断路器\n2. 电笔确认插座无电\n3. 拆面板拍照记录接线\n4. 查线皮发黑/烧焦/松动\n5. 剪掉氧化部分重新剥线\n6. 按「左零右火上接地」接线拧紧\n7. 装回面板合闸\n8. 红外测温确认温度正常后复位",
+            selfRepair = "换插座面板、重新拧紧接线。",
+            propertyRepair = "墙内接线盒烧熔、铝线改造、频繁跳闸/电弧报警。",
+        },
+        new FaultEntry
+        {
+            name = "八、室内烟雾/火灾隐患",
+            symptom = "油烟过大、烟感报警但无明显明火；或电气短路冒烟。",
+            cause = "油温过高油烟大；电气短路冒烟；杂物阴燃；烟感积灰误报。",
+            sensor = "光电感烟探测器（厨房/客厅/卧室顶部）测烟雾浓度 0~100。",
+            threshold = "🟢 正常：<5\n🟡 预警：5~15 持续 3 秒（油烟/灰尘/水汽）\n🔴 报警：>15 持续 3 秒（明显烟雾）",
+            tools = "灭火器、湿毛巾、手电筒、螺丝刀、吸尘器。",
+            steps = "1. 有明火→家人撤离、打 119、灭火器扑初期火\n2. 无明火只是油烟→关灶开油烟机通风\n3. 电气冒烟→断总闸拔插头\n4. 烟散后用吸尘器清烟感灰尘\n5. 持续报警→换传感器",
+            selfRepair = "厨房通风、清洁传感器、处理阴燃杂物。",
+            propertyRepair = "公共烟道/烟感系统、消防联动主机（不可自修，应急撤离）。",
+        },
+        new FaultEntry
+        {
+            name = "九、燃气泄漏",
+            symptom = "闻到臭鸡蛋味，或平台燃气报警；久处室内头晕恶心。",
+            cause = "软管老化龟裂/鼠咬；灶具接口胶圈老化；燃气表接口松动；热水器燃烧不充分产生一氧化碳。",
+            sensor = "可燃气体传感器（厨房天花板下近燃气表）测天然气 %LEL；一氧化碳传感器测 CO ppm。",
+            threshold = "🟢 正常：天然气 <5%LEL，CO <10 ppm\n🟡 预警：5~10%LEL，CO 10~30 ppm 持续 5 秒\n🔴 报警：>10%LEL，CO >30 ppm（立即处理）",
+            tools = "肥皂水、毛刷、扳手、燃气专用软管、喉箍。",
+            steps = "1. 立即关灶前阀和燃气总阀\n2. 严禁开灯/开关电器/打电话/穿脱毛衣\n3. 开窗通风，人撤到室外\n4. 表后软管老化→肥皂水刷接口，冒泡处即漏点\n5. 关阀，扳手松喉箍换新软管装好\n6. 开阀再肥皂水检漏确认不冒泡\n7. 漏气在表前/公共管道→撤离并打燃气抢修电话",
+            selfRepair = "表后阀门到灶具间软管更换、肥皂水检漏。",
+            propertyRepair = "燃气表漏气、表前公共管道、调压箱（必须燃气公司）。",
+        },
+        new FaultEntry
+        {
+            name = "十、一氧化碳 CO 超标",
+            symptom = "燃气热水器燃烧不充分、烟道堵塞倒烟、室内长时间燃气灶燃烧。",
+            cause = "老式直排/烟道式热水器燃烧不充分；烟道堵塞；燃气灶长时间燃烧通风差；炭火取暖。",
+            sensor = "电化学 CO 传感器（厨房/热水器旁/卧室呼吸区）测 CO ppm。",
+            threshold = "🟢 正常：CO <10 ppm\n🟡 预警：10~30 ppm\n🔴 报警：≥30 ppm 持续 15 分钟；≥70 ppm 立即报警",
+            tools = "（居民不可自修，仅应急）",
+            steps = "1. 立即开窗通风\n2. 关燃气热水器/灶\n3. 熄灭明火\n4. 人员撤到空气新鲜处\n5. 头痛/恶心/意识模糊→就医并说明可能 CO 中毒\n6. 联系厂家/燃气公司查燃烧器、烟道\n7. 公共烟道问题通知物业\n8. 平台记录 CO 曲线恢复正常后复位",
+            selfRepair = "开窗通风、关闭燃气设备（应急）。",
+            propertyRepair = "热水器燃烧器/烟道/排烟系统、公共烟道（专业/燃气公司）。",
+        },
+        new FaultEntry
+        {
+            name = "十一、墙体裂缝/房屋倾斜",
+            symptom = "墙体斜向/窗角裂缝或持续扩大；门框变形关不上；靠墙地面凹陷。",
+            cause = "材料老化；地基不均匀沉降；温度裂缝；拆墙改造改变受力。",
+            sensor = "裂缝计（跨裂缝测宽度 mm）+ 倾角计（外墙顶部/承重墙转角测倾斜°）。",
+            threshold = "🟢 正常：裂缝 <0.2 mm，倾斜 <0.5°\n🟡 预警：0.2~0.3 mm 且月增 <0.05 mm；倾斜 0.5~1.0°\n🔴 报警：>0.3 mm 或月增 >0.1 mm；倾斜 >1.0° 或周增 >0.1°",
+            tools = "裂缝宽度卡、石膏/堵漏王、砂浆、抹子、激光水平仪、加固钢板（专业）。",
+            steps = "1. 裂缝卡测宽，两端标记记录日期\n2. 表面横向裂缝→风险低；斜向/竖向贯穿→涉结构安全勿自修\n3. 表面龟裂→清理松散、浇水湿润、堵漏王/石膏填补\n4. 观察两周激光水平仪测变化\n5. 数据持续扩大/倾斜增加→报物业，结构工程师鉴定\n6. 物业措施：灌浆、粘钢、地基注浆纠偏",
+            selfRepair = "表面细微龟裂、石膏补缝、记录观察。",
+            propertyRepair = "承重墙裂缝、持续扩大裂缝、整体倾斜、地基沉降（须结构鉴定）。",
+        },
+        new FaultEntry
+        {
+            name = "十二、暖气系统漏水/压力异常/气堵",
+            symptom = "暖气片漏水、压力忽高忽低、暖气不热（气堵）。",
+            cause = "暖气片/管道腐蚀砂眼；排气阀失效；系统失水；滤网堵塞；结垢。",
+            sensor = "供暖压力变送器测压力 MPa；温度探头；水浸传感器（暖气片下）。",
+            threshold = "🟢 正常：压力 0.15~0.25 MPa\n🟡 预警：0.10~0.15 或 0.25~0.35 MPa\n🔴 报警：<0.10 或 >0.45 MPa 持续 1 分钟；暖气片下浸水 >10 秒",
+            tools = "排气钥匙/一字螺丝刀、水桶、毛巾、扳手。",
+            steps = "1. 确认系统注水运行\n2. 容器接排气阀下方\n3. 缓慢拧松排气阀\n4. 听到排气声等连续出水\n5. 立即拧紧排气阀\n6. 擦干观察是否渗水\n7. 看平台压力回绿\n8. 压力过低可轻补水，勿长期大量补水掩盖漏水",
+            selfRepair = "暖气片排气、表面接口检查。",
+            propertyRepair = "暖气片砂眼、主管/立管漏水、换热站/循环泵故障（供热公司）。",
+        },
+        new FaultEntry
+        {
+            name = "十三、卫生间/厨房防水失效",
+            symptom = "楼下天花板渗水、地面干燥区积水、墙根发霉。",
+            cause = "原防水涂料/卷材老化；管根/地漏/阴角未处理好；瓷砖空鼓开裂；改造破坏防水层。",
+            sensor = "地面含水率/温湿度传感器；门口水浸检测绳；楼下天花水浸/含水率。",
+            threshold = "卫生间湿度长期 >75% RH；地面干燥区水浸；楼下天花含水率 >8% 或水浸报警。",
+            tools = "渗透型防水剂/美缝剂、密封胶、刷子、胶枪、手套。",
+            steps = "1. 停止用水擦干地面\n2. 清理瓷砖缝灰尘旧胶\n3. 管根/阴角/瓷砖缝涂刷防水剂或补美缝\n4. 干燥后再使用\n5. 通风用除湿机\n6. 平台观察湿度是否下降",
+            selfRepair = "表面密封、补美缝、管根阴角封堵。",
+            propertyRepair = "楼下持续渗水、闭水试验失败、铲砖重做防水（专业防水公司）。",
+        },
+    };
+
+    private bool faultManualOpen;
+    private int faultManualIndex;
+    private Vector2 faultManualScroll;
+
+    private void DrawFaultManual()
+    {
+        if (!faultManualOpen)
+        {
+            return;
+        }
+        float width = 800f;
+        float height = 540f;
+        Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
+        DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 120f, 26f), "维修知识手册 · 检测与维修", titleStyle);
+
+        Rect close = new Rect(rect.x + width - 84f, rect.y + 12f, 68f, 26f);
+        DrawPanel(close, new Color(0.3f, 0.32f, 0.36f, 0.95f), Color.clear);
+        if (GUI.Button(close, GUIContent.none, GUIStyle.none))
+        {
+            faultManualOpen = false;
+            SetCursorLock(true);
+        }
+        GUI.Label(close, "关闭", cardButtonStyle);
+
+        // 左侧：故障目录
+        Rect listRect = new Rect(rect.x + 16f, rect.y + 50f, 236f, height - 64f);
+        DrawPanel(listRect, new Color(1f, 1f, 1f, 0.04f), Color.clear);
+        for (int i = 0; i < FaultManual.Length; i++)
+        {
+            Rect item = new Rect(listRect.x + 8f, listRect.y + 8f + i * 31f, listRect.width - 16f, 27f);
+            if (item.Contains(Event.current.mousePosition))
+            {
+                Fill(item, new Color(1f, 1f, 1f, 0.08f));
+            }
+            if (GUI.Button(item, GUIContent.none, GUIStyle.none))
+            {
+                faultManualIndex = i;
+                faultManualScroll = Vector2.zero;
+            }
+            GUI.Label(item, FaultManual[i].name, faultManualIndex == i ? cardTitleStyle : smallStyle);
+        }
+
+        // 右侧：选中故障详情（可滚动、自动换行）
+        Rect detailRect = new Rect(rect.x + 264f, rect.y + 50f, width - 280f, height - 64f);
+        DrawPanel(detailRect, new Color(1f, 1f, 1f, 0.04f), Color.clear);
+        FaultEntry f = FaultManual[Mathf.Clamp(faultManualIndex, 0, FaultManual.Length - 1)];
+        bodyStyle.wordWrap = true;
+        GUILayout.BeginArea(new Rect(detailRect.x + 12f, detailRect.y + 8f, detailRect.width - 24f, detailRect.height - 16f));
+        faultManualScroll = GUILayout.BeginScrollView(faultManualScroll, GUILayout.Width(detailRect.width - 24f), GUILayout.Height(detailRect.height - 16f));
+        GUILayout.Label("【故障现象】\n" + f.symptom, bodyStyle);
+        GUILayout.Label("【产生原因】\n" + f.cause, bodyStyle);
+        GUILayout.Label("【传感器监测】\n" + f.sensor, bodyStyle);
+        GUILayout.Label("【异常判定】\n" + f.threshold, bodyStyle);
+        GUILayout.Label("【维修工具】\n" + f.tools, bodyStyle);
+        GUILayout.Label("【维修步骤】\n" + f.steps, bodyStyle);
+        GUILayout.Label("【居民自修】\n" + f.selfRepair, bodyStyle);
+        GUILayout.Label("【须物业/专业】\n" + f.propertyRepair, bodyStyle);
+        GUILayout.EndScrollView();
+        GUILayout.EndArea();
+
+        GUILayout.Space(0f);   // 保证 GUILayout 与 GUI 混合时布局正确
+    }
+
     private void UpdateOrderSpawning()
     {
         if (!introDone)
@@ -6840,6 +7088,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawLogin();
         DrawLobby();
         DrawChat();
+        DrawFaultManual();
         DrawStartError();
     }
 
