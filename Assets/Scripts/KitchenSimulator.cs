@@ -413,7 +413,6 @@ public class KitchenSimulator : MonoBehaviour
     private float roomSyncTimer;
     private int lastUploadedSignature = int.MinValue;
     private readonly Dictionary<string, RemoteAvatar> remotePlayers = new Dictionary<string, RemoteAvatar>();
-    private readonly Dictionary<string, float> remoteAvatarAnim = new Dictionary<string, float>();
     private int loginTab;                 // 0 登录 1 注册 2 外观
     private int custCoat;
     private int custTrouser;
