@@ -13,6 +13,12 @@ public class KitchenSimulator : MonoBehaviour
     private const string ProjectSubtitle = "装修公司 · 上门维修";
     private const int StartCash = 600;
 
+    // ── 匿名要求 ──────────────────────────────────────────
+    // 竞赛规定：展示文件与程序界面统一使用赛项随机编号，不得出现学校、地区、
+    // 姓名、队名、仓库地址等可识别参赛身份的信息。赛场拿到编号后改这里即可，
+    // 界面标题栏与导出简报都会同步显示，不会出现账户名等个人信息。
+    private const string EntryCode = "赛项编号-0000";
+
     // ── 时间系统：白天(6:00~20:00 共 14 游戏小时)≈ 5 分钟真实时间；7 天为一个月 ──
     private const float RealSecondsPerGameHour = 21.4f;
     private const int HoursPerDay = 24;
@@ -404,7 +410,13 @@ public class KitchenSimulator : MonoBehaviour
     private const string SupabaseUrl = "https://cjzjdeojwgpxptfcfoxt.supabase.co";
     private const string SupabaseKey = "sb_publishable_yGVYNaSVQPQCgL3bCTZkbw_q8ZhqONI";
     private bool authBusy;   // 登录/注册请求进行中，防重复提交
-    private static bool CloudEnabled { get { return !SupabaseUrl.Contains("YOUR-PROJECT"); } }
+    // 离线演示模式：竞赛要求核心功能不依赖外网账号与私有云，断网也须能完成
+    // 检测—工单—展示全流程。此模式下一切云端请求都不发起，只用本地存档。
+    private bool offlineDemo;
+    private bool CloudEnabled
+    {
+        get { return !offlineDemo && !SupabaseUrl.Contains("YOUR-PROJECT"); }
+    }
 
     // ── 联机房间 + 聊天 ────────────────────────────────
     private bool inRoom;
@@ -536,13 +548,20 @@ public class KitchenSimulator : MonoBehaviour
             SaveGame();
         }
 
-        // 联机：房间面板开关
+        // 联机：房间面板开关（离线演示模式下不可用，保证断网也能完成检测—工单—展示）
         if (Input.GetKeyDown(KeyCode.L) && loggedIn)
         {
-            lobbyOpen = !lobbyOpen;
-            if (lobbyOpen)
+            if (offlineDemo || !CloudEnabled)
             {
-                SetCursorLock(false);   // 打开大厅时召唤鼠标，方便点按钮
+                ShowToast("离线演示模式下联机不可用 —— 检测、工单、复测与简报导出不受影响", 4f);
+            }
+            else
+            {
+                lobbyOpen = !lobbyOpen;
+                if (lobbyOpen)
+                {
+                    SetCursorLock(false);   // 打开大厅时召唤鼠标，方便点按钮
+                }
             }
         }
 
@@ -698,7 +717,7 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), pavement);
 
         BuildCitySkyline();
-        BuildLujiazui();
+        BuildSkyline();
         BuildStreetLamps();
 
         // 绿化：只放在建筑范围之外
@@ -1196,7 +1215,9 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 小区路灯（天黑自动亮）──────────────────────────────
-    // ══ 远处「陆家嘴」式超高层天际线 ══
+    // ══ 远处现代化天际线 ══
+    // 纯程序化生成，不使用任何真实地标模型：竞赛要求界面与展示文件不得出现
+    // 学校、地区、姓名、队名等可识别信息，真实地标建筑会被认定为地区标识。
     private Material NightLight(Color c)
     {
         Material m = MakeMaterial(c, 0.1f, 0.65f);
@@ -1205,11 +1226,11 @@ public class KitchenSimulator : MonoBehaviour
         return m;
     }
 
-    private void BuildLujiazui()
+    private void BuildSkyline()
     {
         Vector3 c = new Vector3(30f, 0f, -92f);
 
-        // 江面（黄浦江）——自定义水面着色器（透明 + 菲涅尔反光 + 波纹 + 夜间泛光）
+        // 水面（自定义水面着色器：透明 + 菲涅尔反光 + 波纹 + 夜间泛光）
         Shader waterShader = Shader.Find("Custom/Water");
         if (waterShader != null)
         {
@@ -1222,15 +1243,10 @@ public class KitchenSimulator : MonoBehaviour
             riverMaterial = MakeMaterial(new Color(0.10f, 0.30f, 0.48f), 0.2f, 0.7f);
         }
         CreateWaterSurface("River", new Vector3(30f, 0.02f, -42f), 320f, 26f, riverMaterial);
-        // 江面是不可跨越的边界：加隐形碰撞体，玩家走到江边会被挡下而不是「踩」在水面上
+        // 水面是不可跨越的边界：加隐形碰撞体，玩家走到水边会被挡下而不是「踩」在水面上
         obstacles.Add(new Bounds(new Vector3(30f, 1f, -42f), new Vector3(320f, 2f, 26f)));
 
-        SpawnLandmark("Models/Lujiazui/OrientalPearl", c + new Vector3(-38f, 0f, 12f));
-        SpawnLandmark("Models/Lujiazui/ShanghaiTower", c + new Vector3(-10f, 0f, -4f));
-        SpawnLandmark("Models/Lujiazui/SWFC", c + new Vector3(10f, 0f, 3f));
-        SpawnLandmark("Models/Lujiazui/JinMao", c + new Vector3(28f, 0f, -6f));
-
-        // 周边高层群——发光窗格楼体，形成密集的现代化夜城天际线（置于地标之后）
+        // 高层群：发光窗格楼体，轮廓分「收分 / 退台 / 尖顶」三种，避免千篇一律
         Shader winShader = Shader.Find("Custom/BuildingWindows");
         buildingWindowMaterial = winShader != null
             ? new Material(winShader)
@@ -1242,48 +1258,50 @@ public class KitchenSimulator : MonoBehaviour
             new Color(0.4f, 1f, 0.85f),
         };
         System.Random rng = new System.Random(2026);
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 26; i++)
         {
-            float x = c.x - 80f + i * 11f + (float)rng.NextDouble() * 5f;
-            float z = c.z - 24f - (float)rng.NextDouble() * 38f;
-            float h = 24f + (float)rng.NextDouble() * 28f;
-            float w = 7f + (float)rng.NextDouble() * 6f;
-            CreateDecoCube("LJ Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, w * 0.85f), buildingWindowMaterial);
+            float x = c.x - 96f + i * 8f + (float)rng.NextDouble() * 4f;
+            float z = c.z - 24f - (float)rng.NextDouble() * 44f;
+            float h = 22f + (float)rng.NextDouble() * 34f;
+            float w = 6f + (float)rng.NextDouble() * 7f;
+            float depth = w * (0.75f + (float)rng.NextDouble() * 0.3f);
+            CreateDecoCube("Sky Tower", new Vector3(x, h * 0.5f - 0.2f, z), new Vector3(w, h, depth), buildingWindowMaterial);
+
+            float top = h;
+            int style = rng.Next(3);
+            if (style == 0)
+            {
+                // 收分：上部收细一段
+                float uh = 6f + (float)rng.NextDouble() * 9f;
+                CreateDecoCube("Sky Upper", new Vector3(x, h + uh * 0.5f, z),
+                    new Vector3(w * 0.55f, uh, depth * 0.55f), buildingWindowMaterial);
+                top = h + uh;
+            }
+            else if (style == 1)
+            {
+                // 退台：逐层内收
+                float step = h * 0.12f;
+                for (int s = 0; s < 3; s++)
+                {
+                    float sw = w * (0.82f - s * 0.16f);
+                    CreateDecoCube("Sky Step", new Vector3(x, h + step * (s + 0.5f), z),
+                        new Vector3(sw, step, depth * (0.82f - s * 0.16f)), buildingWindowMaterial);
+                }
+                top = h + step * 3f;
+            }
+            else
+            {
+                // 尖顶：细天线
+                float mh = 3f + (float)rng.NextDouble() * 6f;
+                CreateDecoCube("Sky Mast", new Vector3(x, h + mh * 0.5f, z),
+                    new Vector3(0.22f, mh, 0.22f), buildingWindowMaterial);
+                top = h + mh;
+            }
+
             // 顶部灯冠
             Material light = NightLight(lightTones[rng.Next(lightTones.Length)]);
-            CreateDecoCube("LJ Crown", new Vector3(x, h + 0.6f, z), new Vector3(w * 1.05f, 1.2f, w * 0.9f), light);
+            CreateDecoCube("Sky Crown", new Vector3(x, top + 0.6f, z), new Vector3(w * 1.05f, 1.2f, depth * 1.05f), light);
         }
-    }
-
-    // 加载 Blender 导出的地标模型（Resources），并收集发光材质供夜间点灯
-    private void SpawnLandmark(string path, Vector3 position)
-    {
-        GameObject prefab = Resources.Load<GameObject>(path);
-        if (prefab == null)
-        {
-            Debug.LogWarning("未找到地标模型: " + path);
-            return;
-        }
-        // 注意：FBX 根节点自带 Blender→Unity 的轴转换旋转(270°X)和缩放(100x)，
-        // 必须保留其变换、只改位置；若用 Quaternion.identity 覆盖会导致模型横躺。
-        GameObject instance = Instantiate(prefab, transform);
-        instance.transform.localPosition = position;
-        instance.name = path;
-        Renderer[] renderers = instance.GetComponentsInChildren<Renderer>(true);
-        for (int i = 0; i < renderers.Length; i++)
-        {
-            Material[] mats = renderers[i].sharedMaterials;
-            for (int j = 0; j < mats.Length; j++)
-            {
-                Material m = mats[j];
-                if (m != null && m.name.Contains("LJ_Glow"))
-                {
-                    m.DisableKeyword("_EMISSION");
-                    nightLightMaterials.Add(m);
-                }
-            }
-        }
-        generatedObjects.Add(instance);
     }
 
     // 生成细分水面网格（供水面着色器的顶点波纹使用）
@@ -1444,7 +1462,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 roomLights[i].enabled = lampsOn;
             }
-            // 陆家嘴式地标灯光
+            // 天际线楼体灯光
             for (int i = 0; i < nightLightMaterials.Count; i++)
             {
                 Material m = nightLightMaterials[i];
@@ -4347,12 +4365,12 @@ public class KitchenSimulator : MonoBehaviour
         Fill(new Rect(0f, 0f, Screen.width, Screen.height), new Color(0.04f, 0.06f, 0.09f, 0.82f));
 
         float width = 420f;
-        float height = 330f;
+        float height = 400f;
         Rect rect = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
 
         GUI.Label(new Rect(rect.x + 24f, rect.y + 18f, width - 48f, 30f), "焕新家装 · 员工登录", titleStyle);
-        GUI.Label(new Rect(rect.x + 24f, rect.y + 46f, width - 48f, 20f), "云端账户（Supabase）　·　未登录无法开工", smallStyle);
+        GUI.Label(new Rect(rect.x + 24f, rect.y + 46f, width - 48f, 20f), EntryCode + "　·　云端账户可选，离线演示模式无需联网", smallStyle);
 
         string[] tabs = { "登录", "注册", "外观" };
         float tabW = (width - 48f - 16f) / 3f;
@@ -4407,9 +4425,22 @@ public class KitchenSimulator : MonoBehaviour
             DrawAppearancePicker(rect, y);
         }
 
-        GUI.Label(new Rect(rect.x + 24f, rect.y + height - 74f, width - 48f, 20f), loginMessage, smallStyle);
+        GUI.Label(new Rect(rect.x + 24f, rect.y + 282f, width - 48f, 20f), loginMessage, smallStyle);
 
-        Rect guest = new Rect(rect.x + 24f, rect.y + height - 50f, width - 48f, 34f);
+        // 离线演示模式：竞赛要求核心功能不依赖外网账号/私有云，断网也能跑完
+        // 「检测—工单—展示」全流程。此入口不发起任何云端请求，进度存本地。
+        Rect offline = new Rect(rect.x + 24f, rect.y + 306f, width - 48f, 38f);
+        DrawPanel(offline, new Color(0.16f, 0.42f, 0.30f, 0.95f), Color.clear);
+        if (GUI.Button(offline, GUIContent.none, GUIStyle.none))
+        {
+            offlineDemo = true;
+            ApplyAppearance(custCoat, custTrouser);
+            loginMessage = string.Empty;
+            EnterGame("离线演示");
+        }
+        GUI.Label(offline, "离线演示模式（不联网 · 本地存档）", cardButtonStyle);
+
+        Rect guest = new Rect(rect.x + 24f, rect.y + 350f, width - 48f, 34f);
         DrawPanel(guest, new Color(0.22f, 0.24f, 0.28f, 0.95f), Color.clear);
         if (GUI.Button(guest, GUIContent.none, GUIStyle.none))
         {
@@ -5213,7 +5244,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "小陈，来活儿了。城东那片老小区，问题一堆，业主催得紧。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "各家的户主会自己到前台来登记，或者打电话预约，单子就记下了。" });
-        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前，连点几下左键就能开工，干完活记得收费。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "带上工具去现场，走到问题跟前按左键开工。先看现象和读数判断成因，再按正确顺序做工序 —— 顺序错了要返工，乱来会出事故。" });
+        dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "拿不准就按 K 翻维修知识手册，那里写了每类故障的成因、阈值和处置步骤。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "先给你配了把活动扳手，管件那几单够你练手了。" });
         dialogue.Add(new DialogueLine { speaker = "工头 老张", text = "挣了钱去商店添几件趁手的家伙，能接的活才多。去吧！" });
     }
@@ -8111,7 +8143,7 @@ public class KitchenSimulator : MonoBehaviour
         Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 44f), pendingColor);
         GUI.Label(new Rect(rect.x + 26f, rect.y + 16f, 280f, 28f), ProjectName, titleStyle);
         GUI.Label(new Rect(rect.x + 27f, rect.y + 46f, 300f, 18f), ProjectSubtitle + "　·　" + RankTitle(), smallStyle);
-        GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText, smallStyle);
+        GUI.Label(new Rect(rect.x + 27f, rect.y + 64f, 300f, 18f), ClockText + "　·　" + EntryCode, smallStyle);
         Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 288f, 20f), "收入 ¥" + income.ToString("N0") + " · 成本 ¥" + expenses.ToString("N0"), smallStyle);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 288f, 20f), "财富值 ¥" + Cash.ToString("N0") + " · 净利 ¥" + (income - expenses).ToString("N0"), smallStyle);
@@ -9238,7 +9270,9 @@ public class KitchenSimulator : MonoBehaviour
         sb.AppendLine("  老旧住宅厨房改造工程 · 数字孪生运维验收报告");
         sb.AppendLine("==============================================");
         sb.AppendLine("生成时间：" + ClockText);
-        sb.AppendLine("操作员　：" + (string.IsNullOrEmpty(currentAccount) ? "—" : currentAccount));
+        // 匿名：此处不得输出账户名/姓名，只输出赛项随机编号
+        sb.AppendLine("赛项编号：" + EntryCode);
+        sb.AppendLine("运行模式：" + (offlineDemo ? "本地离线演示（不联网）" : "联网"));
         sb.AppendLine();
         sb.AppendLine("一、项目概况");
         sb.AppendLine("  监测点位总数　　：" + orders.Count);
