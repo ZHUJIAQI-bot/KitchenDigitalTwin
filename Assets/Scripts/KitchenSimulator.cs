@@ -3212,7 +3212,11 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildTvUnit(tvX, axisZ, 90f);                       // 电视靠西墙，面朝东
         BuildSofa(sofaX, axisZ, 270f);                      // 沙发正对电视，面朝西
-        BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.2f, w * 0.3f), 0f, 0.45f);   // 长边沿 Z，与沙发视线垂直
+        // 窄客厅不摆茶几：电视柜与沙发之间只剩 0.3m，茶几会把通道彻底堵死
+        if (w >= 4.8f)
+        {
+            BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.2f, w * 0.3f), 0f, 0.45f);
+        }
         CreateDecoCube("Rug", new Vector3(cx, 0.02f, axisZ),
             new Vector3(Mathf.Max(1.6f, w - 1.5f), 0.02f, 2.0f), new Color(0.68f, 0.55f, 0.44f));
         BuildPlant(left + 0.55f, back - 0.65f);             // 绿植摆后角，不挡门
@@ -3221,9 +3225,11 @@ public class KitchenSimulator : MonoBehaviour
         // 画框必须贴在左侧墙面上，不能跟着电视柜往房间里偏；只保留一幅并避开窗洞
         float artZ = Mathf.Min(back - 0.6f, axisZ + 1.9f);
         BuildWallArt(left + 0.14f, artZ, new Color(0.62f, 0.48f, 0.4f));
-        BuildTableDecor(cx, axisZ);
+        if (w >= 4.8f)
+        {
+            BuildTableDecor(cx, axisZ);
+        }
         BuildPendantLamp(cx, axisZ);
-        BuildCurtains(cx, cz, w, d);
     }
 
     // 电视墙挂画（画框 + 画心）
