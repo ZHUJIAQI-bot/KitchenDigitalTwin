@@ -417,6 +417,8 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle dialogueStyle;
     private GUIStyle transitionStyle;
     private GUIStyle alarmStyle;
+    private GUIStyle manualBodyStyle;
+    private GUIStyle manualListStyle;
 
     private int Cash { get { return StartCash + income - expenses; } }
 
@@ -7194,8 +7196,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
-            float width = 800f;
-            float height = 540f;
+            float width = 900f;
+            float height = 620f;
             return new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         }
     }
@@ -7444,8 +7446,8 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        float width = 800f;
-        float height = 540f;
+        float width = 900f;
+        float height = 620f;
         Rect rect = FaultManualRect;
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
         GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 120f, 26f), "维修知识手册 · 检测与维修", titleStyle);
@@ -7463,11 +7465,11 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(close, "关闭", cardButtonStyle);
 
         // 左侧：故障目录
-        Rect listRect = new Rect(rect.x + 16f, rect.y + 50f, 236f, height - 64f);
+        Rect listRect = new Rect(rect.x + 16f, rect.y + 50f, 260f, height - 64f);
         DrawPanel(listRect, new Color(1f, 1f, 1f, 0.04f), Color.clear);
         for (int i = 0; i < FaultManual.Length; i++)
         {
-            Rect item = new Rect(listRect.x + 8f, listRect.y + 8f + i * 31f, listRect.width - 16f, 27f);
+            Rect item = new Rect(listRect.x + 8f, listRect.y + 8f + i * 33f, listRect.width - 16f, 29f);
             if (item.Contains(Event.current.mousePosition))
             {
                 Fill(item, new Color(1f, 1f, 1f, 0.08f));
@@ -7477,24 +7479,23 @@ public class KitchenSimulator : MonoBehaviour
                 faultManualIndex = i;
                 faultManualScroll = Vector2.zero;
             }
-            GUI.Label(item, FaultManual[i].name + ManualMasteredText(i), faultManualIndex == i ? cardTitleStyle : smallStyle);
+            GUI.Label(item, FaultManual[i].name + ManualMasteredText(i), faultManualIndex == i ? cardTitleStyle : manualListStyle);
         }
 
         // 右侧：选中故障详情（可滚动、自动换行）
-        Rect detailRect = new Rect(rect.x + 264f, rect.y + 50f, width - 280f, height - 64f);
+        Rect detailRect = new Rect(rect.x + 288f, rect.y + 50f, width - 304f, height - 64f);
         DrawPanel(detailRect, new Color(1f, 1f, 1f, 0.04f), Color.clear);
         FaultEntry f = FaultManual[Mathf.Clamp(faultManualIndex, 0, FaultManual.Length - 1)];
-        bodyStyle.wordWrap = true;
         GUILayout.BeginArea(new Rect(detailRect.x + 12f, detailRect.y + 8f, detailRect.width - 24f, detailRect.height - 16f));
         faultManualScroll = GUILayout.BeginScrollView(faultManualScroll, GUILayout.Width(detailRect.width - 24f), GUILayout.Height(detailRect.height - 16f));
-        GUILayout.Label("【故障现象】\n" + f.symptom, bodyStyle);
-        GUILayout.Label("【产生原因】\n" + f.cause, bodyStyle);
-        GUILayout.Label("【传感器监测】\n" + f.sensor, bodyStyle);
-        GUILayout.Label("【异常判定】\n" + f.threshold, bodyStyle);
-        GUILayout.Label("【维修工具】\n" + f.tools, bodyStyle);
-        GUILayout.Label("【维修步骤】\n" + f.steps, bodyStyle);
-        GUILayout.Label("【居民自修】\n" + f.selfRepair, bodyStyle);
-        GUILayout.Label("【须物业/专业】\n" + f.propertyRepair, bodyStyle);
+        GUILayout.Label("【故障现象】\n" + f.symptom, manualBodyStyle);
+        GUILayout.Label("【产生原因】\n" + f.cause, manualBodyStyle);
+        GUILayout.Label("【传感器监测】\n" + f.sensor, manualBodyStyle);
+        GUILayout.Label("【异常判定】\n" + f.threshold, manualBodyStyle);
+        GUILayout.Label("【维修工具】\n" + f.tools, manualBodyStyle);
+        GUILayout.Label("【维修步骤】\n" + f.steps, manualBodyStyle);
+        GUILayout.Label("【居民自修】\n" + f.selfRepair, manualBodyStyle);
+        GUILayout.Label("【须物业/专业】\n" + f.propertyRepair, manualBodyStyle);
         GUILayout.EndScrollView();
         GUILayout.EndArea();
 
@@ -8350,9 +8351,15 @@ public class KitchenSimulator : MonoBehaviour
         Material boardMat = MakeMaterial(new Color(0.05f, 0.09f, 0.12f), 0.1f, 0.4f);
         GameObject board = MakePrimitive(PrimitiveType.Cube, "Tag Board", marker.transform,
             new Vector3(0f, 0f, 0.03f), new Vector3(0.95f, 0.36f, 0.05f), Quaternion.identity, boardMat);
-        // 边框放在底板后面并只大一圈，避免整块牌子被状态色铺满
-        GameObject edge = MakePrimitive(PrimitiveType.Cube, "Tag Edge", marker.transform,
-            new Vector3(0f, 0f, 0f), new Vector3(1.02f, 0.43f, 0.02f), Quaternion.identity, stateMaterials[0]);
+        // 用四根细边框代替实心底板，正面/背面都不会糊住文字
+        GameObject edgeTop = MakePrimitive(PrimitiveType.Cube, "Tag Edge Top", marker.transform,
+            new Vector3(0f, 0.195f, 0.03f), new Vector3(1.02f, 0.035f, 0.07f), Quaternion.identity, stateMaterials[0]);
+        GameObject edgeBottom = MakePrimitive(PrimitiveType.Cube, "Tag Edge Bottom", marker.transform,
+            new Vector3(0f, -0.195f, 0.03f), new Vector3(1.02f, 0.035f, 0.07f), Quaternion.identity, stateMaterials[0]);
+        GameObject edgeLeft = MakePrimitive(PrimitiveType.Cube, "Tag Edge Left", marker.transform,
+            new Vector3(-0.49f, 0f, 0.03f), new Vector3(0.035f, 0.43f, 0.07f), Quaternion.identity, stateMaterials[0]);
+        GameObject edgeRight = MakePrimitive(PrimitiveType.Cube, "Tag Edge Right", marker.transform,
+            new Vector3(0.49f, 0f, 0.03f), new Vector3(0.035f, 0.43f, 0.07f), Quaternion.identity, stateMaterials[0]);
 
         GameObject labelObject = new GameObject("Tag Text");
         labelObject.transform.SetParent(marker.transform, false);
@@ -8380,10 +8387,12 @@ public class KitchenSimulator : MonoBehaviour
         order.tag = mesh;
         order.renderers = new[]
         {
-            edge.GetComponent<Renderer>(),
+            edgeTop.GetComponent<Renderer>(),
+            edgeBottom.GetComponent<Renderer>(),
+            edgeLeft.GetComponent<Renderer>(),
+            edgeRight.GetComponent<Renderer>(),
             ring.GetComponent<Renderer>(),
-            beam.GetComponent<Renderer>(),
-            board.GetComponent<Renderer>()
+            beam.GetComponent<Renderer>()
         };
     }
 
@@ -11030,6 +11039,8 @@ public class KitchenSimulator : MonoBehaviour
         dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, wordWrap = true, normal = { textColor = new Color(0.94f, 0.95f, 0.96f) } };
         transitionStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.96f, 0.93f, 0.86f) } };
         alarmStyle = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
+        manualBodyStyle = new GUIStyle(bodyStyle) { fontSize = 15, wordWrap = true };
+        manualListStyle = new GUIStyle(smallStyle) { fontSize = 14 };
 
         Font font = UiFont;
         if (font != null)
@@ -11047,6 +11058,8 @@ public class KitchenSimulator : MonoBehaviour
             dialogueStyle.font = font;
             transitionStyle.font = font;
             alarmStyle.font = font;
+            manualBodyStyle.font = font;
+            manualListStyle.font = font;
         }
     }
 
