@@ -1479,6 +1479,61 @@ public class KitchenSimulator : MonoBehaviour
             Material light = NightLight(lightTones[rng.Next(lightTones.Length)]);
             CreateDecoCube("Sky Crown", new Vector3(x, top + 0.6f, z), new Vector3(w * 1.05f, 1.2f, depth * 1.05f), light);
         }
+
+        // 河对岸的三座高层：造型为通用塔楼，不使用任何真实地标或地区名称
+        BuildRiversideTower(new Vector3(8f, 0f, -66f), 9f, 12f, 58f, 0);
+        BuildRiversideTower(new Vector3(30f, 0f, -70f), 10f, 13f, 72f, 1);
+        BuildRiversideTower(new Vector3(52f, 0f, -64f), 8f, 11f, 50f, 2);
+    }
+
+    private void BuildRiversideTower(Vector3 basePos, float width, float depth, float height, int style)
+    {
+        float top;
+        if (style == 0)
+        {
+            float h1 = height * 0.62f, h2 = height * 0.24f, h3 = height * 0.14f;
+            CreateDecoCube("Riverside Tower Base", new Vector3(basePos.x, h1 * 0.5f, basePos.z),
+                new Vector3(width, h1, depth), buildingWindowMaterial);
+            CreateDecoCube("Riverside Tower Mid", new Vector3(basePos.x, h1 + h2 * 0.5f, basePos.z),
+                new Vector3(width * 0.72f, h2, depth * 0.72f), buildingWindowMaterial);
+            CreateDecoCube("Riverside Tower Top", new Vector3(basePos.x, h1 + h2 + h3 * 0.5f, basePos.z),
+                new Vector3(width * 0.45f, h3, depth * 0.45f), buildingWindowMaterial);
+            top = height;
+        }
+        else if (style == 1)
+        {
+            float[] heights = { 0.38f, 0.26f, 0.18f, 0.12f, 0.06f };
+            float cursor = 0f;
+            for (int i = 0; i < heights.Length; i++)
+            {
+                float h = height * heights[i];
+                float w = width * (1f - i * 0.15f);
+                CreateDecoCube("Riverside Twisted Tower",
+                    new Vector3(basePos.x, cursor + h * 0.5f, basePos.z),
+                    new Vector3(w, h, depth * (1f - i * 0.12f)),
+                    Quaternion.Euler(0f, i * 7f, 0f), buildingWindowMaterial);
+                cursor += h;
+            }
+            top = cursor;
+        }
+        else
+        {
+            float hA = height * 0.78f, hB = height * 0.62f;
+            CreateDecoCube("Riverside Twin A",
+                new Vector3(basePos.x - width * 0.28f, hA * 0.5f, basePos.z),
+                new Vector3(width * 0.42f, hA, depth * 0.7f), buildingWindowMaterial);
+            CreateDecoCube("Riverside Twin B",
+                new Vector3(basePos.x + width * 0.30f, hB * 0.5f, basePos.z),
+                new Vector3(width * 0.38f, hB, depth * 0.7f), buildingWindowMaterial);
+            CreateDecoCube("Riverside Podium",
+                new Vector3(basePos.x, height * 0.08f, basePos.z),
+                new Vector3(width, height * 0.16f, depth), buildingWindowMaterial);
+            top = hA;
+        }
+
+        Material crown = NightLight(new Color(0.45f, 0.8f, 1f));
+        CreateDecoCube("Riverside Crown", new Vector3(basePos.x, top + 1.2f, basePos.z),
+            new Vector3(width * 0.45f, 2.4f, depth * 0.45f), crown);
     }
 
     // 生成细分水面网格（供水面着色器的顶点波纹使用）
@@ -1549,6 +1604,9 @@ public class KitchenSimulator : MonoBehaviour
         GameObject lamp = new GameObject("Street Lamp");
         lamp.transform.SetParent(transform, false);
         lamp.transform.position = basePosition;
+        // 灯杆碰撞：玩家不能从路灯中间穿过去
+        obstacles.Add(new Bounds(basePosition + new Vector3(0f, 2f, 0f),
+            new Vector3(0.45f, 4f, 0.45f)));
 
         DecoPart(PrimitiveType.Cylinder, "Base", lamp.transform, new Vector3(0f, 0.15f, 0f), new Vector3(0.22f, 0.15f, 0.22f), Quaternion.identity, pole);
         DecoPart(PrimitiveType.Cylinder, "Pole", lamp.transform, new Vector3(0f, 2.1f, 0f), new Vector3(0.08f, 2.1f, 0.08f), Quaternion.identity, pole);
@@ -2790,7 +2848,7 @@ public class KitchenSimulator : MonoBehaviour
         plateX = Mathf.Clamp(plateX, entry.x0 + plateW * 0.5f + 0.1f, entry.x1 - plateW * 0.5f - 0.1f);
         CreateDecoCube(tag + " Plate", new Vector3(plateX, 1.95f, z0 - 0.19f),
             new Vector3(plateW, 0.36f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
-        CreateWorldLabel(index + "号楼", new Vector3(plateX, 1.95f, z0 - 0.32f), 0.04f, Color.white);
+        CreateWorldLabel(index + "号楼", new Vector3(plateX, 1.95f, z0 - 0.32f), 0.03f, Color.white);
     }
 
     // 把一排的房间按比例铺满开间
