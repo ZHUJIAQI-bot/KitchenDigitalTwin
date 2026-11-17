@@ -191,6 +191,7 @@ public class KitchenSimulator : MonoBehaviour
     private Material pavementMaterial;
     private Material innerWalkMaterial;
     private Material lawnMaterial;
+    private Material contactShadowMaterial;
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -340,6 +341,7 @@ public class KitchenSimulator : MonoBehaviour
         public float slide;
         public float length;
         public Vector3 closedPosition;
+        public Renderer[] renderers;
     }
     private readonly List<WindowPane> windowPanes = new List<WindowPane>();
     private WindowPane activeWindow;
@@ -705,7 +707,7 @@ public class KitchenSimulator : MonoBehaviour
         wallMaterial = MakeMaterial(wallColor, 0.02f, 0.4f);
         floorMaterial = MakeMaterial(floorA, 0.02f, 0.35f);
         // 无色透明玻璃：不能带蓝，否则窗玻璃看起来是蓝色的
-        glassMaterial = MakeTransparent(new Color(0.94f, 0.96f, 0.97f), 0.10f, 0.95f);
+        glassMaterial = MakeTransparent(new Color(0.94f, 0.96f, 0.97f), 0.04f, 0.95f);
 
         // 地表材质：用运行时生成的噪声/砖缝贴图代替纯色，近看才有"地面"的颗粒感。
         // 贴图很小（128×128），WebGL 下内存与带宽压力都可以忽略。
@@ -720,6 +722,7 @@ public class KitchenSimulator : MonoBehaviour
         lawnMaterial = MakeTexturedMaterial(0f, 0.18f,
             CreateNoiseTexture("Lawn", new Color(0.26f, 0.44f, 0.20f), new Color(0.48f, 0.66f, 0.30f), 0.11f, 73, false),
             new Vector2(90f, 90f));
+        contactShadowMaterial = MakeTransparent(new Color(0.02f, 0.02f, 0.02f), 0.22f, 0f);
     }
 
     // 程序化地表贴图：两层 Perlin 噪声叠加，铺装额外画砖缝。
@@ -1000,7 +1003,8 @@ public class KitchenSimulator : MonoBehaviour
             pivot = pivot,
             alongX = alongX,
             length = length,
-            closedPosition = pivotObject.transform.position
+            closedPosition = pivotObject.transform.position,
+            renderers = new[] { glass.GetComponent<Renderer>(), mullion.GetComponent<Renderer>() }
         });
         generatedObjects.Add(pivotObject);
     }
@@ -1630,10 +1634,11 @@ public class KitchenSimulator : MonoBehaviour
                     lampGlobes[i].sharedMaterial = lampsOn ? lampOnMaterial : lampOffMaterial;
                 }
             }
-            // 室内灯：白天全灭
+            // 室内灯：白天低强度补光，夜间提亮
             for (int i = 0; i < roomLights.Count; i++)
             {
-                roomLights[i].enabled = lampsOn;
+                roomLights[i].enabled = true;
+                roomLights[i].intensity = Mathf.Lerp(1.6f, 0.45f, dayFactor);
             }
             // 天际线楼体灯光
             for (int i = 0; i < nightLightMaterials.Count; i++)
@@ -2339,9 +2344,9 @@ public class KitchenSimulator : MonoBehaviour
         Light light = lightObject.AddComponent<Light>();
         light.type = LightType.Point;
         light.range = range * 1.3f;
-        light.intensity = 1.7f;
+        light.intensity = 0.45f;
         light.color = new Color(1f, 0.94f, 0.85f);
-        light.enabled = false;   // 白天不开灯
+        light.enabled = true;    // 白天也保留低强度暖光补光
         roomLights.Add(light);
         generatedObjects.Add(lightObject);
     }
@@ -2615,19 +2620,32 @@ public class KitchenSimulator : MonoBehaviour
             BuildRoomFloor(r.x0, r.x1, r.z0, r.z1, FloorColorOf(r.type), FloorIsWood(r.type));
         }
 
-        // 踢脚线：沿房间三面墙脚走一圈，室内立刻不再像"白盒子"
-        Material baseboard = MakeMaterial(new Color(0.72f, 0.68f, 0.60f), 0.02f, 0.4f);
+        // 墙脚与顶面收口：左右踢脚线补齐（前后已有），再加天花板与石膏线
+        Material baseboard = MakeMaterial(new Color(0.45f, 0.36f, 0.27f), 0.02f, 0.4f);
+        Material ceiling = MakeMaterial(new Color(0.93f, 0.91f, 0.86f), 0f, 0.25f);
+        Material cornice = MakeMaterial(new Color(0.82f, 0.79f, 0.72f), 0f, 0.3f);
         for (int i = 0; i < rooms.Count; i++)
         {
             RoomRect r = rooms[i];
             float innerW = Mathf.Max(0.1f, r.x1 - r.x0 - 0.08f);
             float innerD = Mathf.Max(0.1f, r.z1 - r.z0 - 0.08f);
-            CreateDecoCube("Baseboard Back", new Vector3((r.x0 + r.x1) * 0.5f, 0.08f, r.z1 - 0.04f),
-                new Vector3(innerW, 0.16f, 0.05f), baseboard);
             CreateDecoCube("Baseboard Left", new Vector3(r.x0 + 0.04f, 0.08f, (r.z0 + r.z1) * 0.5f),
                 new Vector3(0.05f, 0.16f, innerD), baseboard);
             CreateDecoCube("Baseboard Right", new Vector3(r.x1 - 0.04f, 0.08f, (r.z0 + r.z1) * 0.5f),
                 new Vector3(0.05f, 0.16f, innerD), baseboard);
+
+            float cx = (r.x0 + r.x1) * 0.5f;
+            float cz = (r.z0 + r.z1) * 0.5f;
+            CreateDecoCube("Ceiling", new Vector3(cx, WallHeight - 0.06f, cz),
+                new Vector3(innerW + 0.02f, 0.05f, innerD + 0.02f), ceiling);
+            CreateDecoCube("Cornice Front", new Vector3(cx, WallHeight - 0.16f, r.z0 + 0.03f),
+                new Vector3(r.x1 - r.x0, 0.08f, 0.06f), cornice);
+            CreateDecoCube("Cornice Back", new Vector3(cx, WallHeight - 0.16f, r.z1 - 0.03f),
+                new Vector3(r.x1 - r.x0, 0.08f, 0.06f), cornice);
+            CreateDecoCube("Cornice Left", new Vector3(r.x0 + 0.03f, WallHeight - 0.16f, cz),
+                new Vector3(0.06f, 0.08f, r.z1 - r.z0), cornice);
+            CreateDecoCube("Cornice Right", new Vector3(r.x1 - 0.03f, WallHeight - 0.16f, cz),
+                new Vector3(0.06f, 0.08f, r.z1 - r.z0), cornice);
         }
 
         // ── 外墙：入户门 + 按房间自动开窗 ──
@@ -3106,6 +3124,18 @@ public class KitchenSimulator : MonoBehaviour
             Vector3 dir = pane.alongX ? Vector3.right : Vector3.forward;
             pane.pivot.position = pane.closedPosition + dir * (pane.length * 0.82f * pane.slide);
             pane.pivot.localRotation = Quaternion.identity;
+            // 完全推开后不再渲染玻璃，避免半块窗扇停在洞口挡视线
+            bool visible = pane.slide < 0.98f;
+            if (pane.renderers != null)
+            {
+                for (int r = 0; r < pane.renderers.Length; r++)
+                {
+                    if (pane.renderers[r] != null && pane.renderers[r].enabled != visible)
+                    {
+                        pane.renderers[r].enabled = visible;
+                    }
+                }
+            }
         }
 
         // 公司感应玻璃门：玩家或任何 NPC 靠近都自动滑开
@@ -3497,6 +3527,18 @@ public class KitchenSimulator : MonoBehaviour
         return mid;
     }
 
+    // 家具下方的接触阴影：让柜子/床/沙发"压"在地面上，而不是悬浮
+    private void AddContactShadow(Transform parent, Vector3 localPosition, float width, float depth)
+    {
+        if (contactShadowMaterial == null)
+        {
+            return;
+        }
+        DecoPart(PrimitiveType.Cube, "Contact Shadow", parent,
+            new Vector3(localPosition.x, 0.016f, localPosition.z),
+            new Vector3(width, 0.006f, depth), Quaternion.identity, contactShadowMaterial);
+    }
+
     // 柜门：外框 + 内嵌门芯 + 拉手，替代一块薄板。
     private void CreateCabinetDoor(string name, Transform parent, Vector3 localPosition,
         Vector3 size, Material frame, Material panel, Material handle, float handleOffset = 0.32f)
@@ -3566,6 +3608,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildTable(float x, float z, float sizeX, float sizeZ, float yaw, float height)
     {
         Transform g = CreateGroup("Table", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, sizeX + 0.15f, sizeZ + 0.15f);
         EnsureTextures();
         Material wood = TexturedMaterial(new Color(0.6f, 0.43f, 0.26f), woodTexture, 2f);
 
@@ -3589,6 +3632,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildBed(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Bed", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, 1.8f, 2.25f);
         Material frame = MakeMaterial(new Color(0.45f, 0.3f, 0.18f), 0.02f, 0.4f);
         Material sheet = MakeMaterial(new Color(0.75f, 0.79f, 0.87f), 0.02f, 0.4f);
         Material pillow = MakeMaterial(new Color(0.96f, 0.96f, 0.93f), 0.02f, 0.4f);
@@ -3615,6 +3659,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildSofa(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Sofa", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, 2.2f, 1.05f);
         EnsureTextures();
         Material fabric = TexturedMaterial(new Color(0.4f, 0.47f, 0.53f), fabricTexture, 4f);
         Material cushion = TexturedMaterial(new Color(0.5f, 0.58f, 0.64f), fabricTexture, 4f);
@@ -3645,6 +3690,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildWardrobe(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Wardrobe", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, 1.8f, 0.78f);
         EnsureTextures();
         Material body = TexturedMaterial(new Color(0.5f, 0.35f, 0.2f), woodTexture, 2f);
         Material door = TexturedMaterial(new Color(0.62f, 0.46f, 0.28f), woodTexture, 2f);
@@ -3665,6 +3711,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildCabinet(float x, float z, float yaw)
     {
         Transform g = CreateGroup("Cabinet", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, 1.0f, 0.65f);
         Material body = MakeMaterial(new Color(0.58f, 0.6f, 0.62f), 0.35f, 0.5f);
         Material drawer = MakeMaterial(new Color(0.7f, 0.72f, 0.74f), 0.35f, 0.5f);
         Material handle = MakeMaterial(new Color(0.8f, 0.82f, 0.84f), 0.8f, 0.7f);
@@ -3804,6 +3851,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildTvUnit(float x, float z, float yaw)
     {
         Transform g = CreateGroup("TV Unit", new Vector3(x, 0f, z), yaw);
+        AddContactShadow(g, Vector3.zero, 2.0f, 0.6f);
         Material cab = MakeMaterial(new Color(0.6f, 0.44f, 0.27f), 0.02f, 0.4f);
         Material screen = MakeMaterial(new Color(0.07f, 0.08f, 0.1f), 0.35f, 0.8f);
         Material bezel = MakeMaterial(new Color(0.12f, 0.13f, 0.15f), 0.4f, 0.6f);
