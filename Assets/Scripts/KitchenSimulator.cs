@@ -3086,8 +3086,9 @@ public class KitchenSimulator : MonoBehaviour
         BuildPlant(left + 0.55f, back - 0.65f);             // 绿植摆后角，不挡门
 
         // 装饰：电视墙挂画、茶几摆件、吊灯、窗帘
-        BuildWallArt(tvX + 0.14f, axisZ + 1.35f, new Color(0.62f, 0.48f, 0.4f));
-        BuildWallArt(tvX + 0.14f, axisZ - 1.35f, new Color(0.44f, 0.52f, 0.48f));
+        // 画框必须贴在左侧墙面上，不能跟着电视柜往房间里偏；只保留一幅并避开窗洞
+        float artZ = Mathf.Min(back - 0.6f, axisZ + 1.9f);
+        BuildWallArt(left + 0.14f, artZ, new Color(0.62f, 0.48f, 0.4f));
         BuildTableDecor(cx, axisZ);
         BuildPendantLamp(cx, axisZ);
         BuildCurtains(cx, cz, w, d);
