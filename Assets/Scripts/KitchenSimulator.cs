@@ -419,6 +419,7 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle alarmStyle;
     private GUIStyle manualBodyStyle;
     private GUIStyle manualListStyle;
+    private GUIStyle manualTitleStyle;
 
     private int Cash { get { return StartCash + income - expenses; } }
 
@@ -3303,12 +3304,6 @@ public class KitchenSimulator : MonoBehaviour
             CreateDecoCube("Drain Slot", new Vector3(cx + 0.55f, 0.048f, bathCz - 0.79f + i * 0.06f),
                 new Vector3(0.18f, 0.006f, 0.02f), slot);
         }
-
-        // 湿区入口屏挡：从干区看不到马桶
-        AddSolidBox("Bath Screen", new Vector3(left + w * 0.60f, 1.1f, bathFront + 0.85f),
-            new Vector3(0.08f, 2.2f, 1.6f), partition);
-        AddSolidBox("Bath Screen Return", new Vector3(left + w * 0.80f, 1.1f, bathFront + 1.65f),
-            new Vector3(w * 0.40f, 2.2f, 0.08f), partition);
 
         // 干区：洗衣机 + 洗衣液架
         AddSolidBox("Washer", new Vector3(left + 0.55f, 0.45f, front + 0.55f),
@@ -7197,8 +7192,8 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
-            float width = 900f;
-            float height = 620f;
+            float width = Mathf.Min(960f, Screen.width - 60f);
+            float height = Mathf.Min(660f, Screen.height - 60f);
             return new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         }
     }
@@ -7447,8 +7442,8 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
-        float width = 900f;
-        float height = 620f;
+        float width = Mathf.Min(960f, Screen.width - 60f);
+        float height = Mathf.Min(660f, Screen.height - 60f);
         Rect rect = FaultManualRect;
         DrawPanel(rect, new Color(0.06f, 0.08f, 0.11f, 0.98f), new Color(1f, 1f, 1f, 0.18f));
         GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, width - 120f, 26f), "维修知识手册 · 检测与维修", titleStyle);
@@ -7487,14 +7482,26 @@ public class KitchenSimulator : MonoBehaviour
         Rect detailRect = new Rect(rect.x + 288f, rect.y + 50f, width - 304f, height - 64f);
         DrawPanel(detailRect, new Color(1f, 1f, 1f, 0.04f), Color.clear);
         FaultEntry f = FaultManual[Mathf.Clamp(faultManualIndex, 0, FaultManual.Length - 1)];
+        FaultProcedure activeProcedure = repairingOrder != null ? ProcedureOf(repairingOrder.title) : null;
         GUILayout.BeginArea(new Rect(detailRect.x + 12f, detailRect.y + 8f, detailRect.width - 24f, detailRect.height - 16f));
         faultManualScroll = GUILayout.BeginScrollView(faultManualScroll, GUILayout.Width(detailRect.width - 24f), GUILayout.Height(detailRect.height - 16f));
+        if (activeProcedure != null)
+        {
+            // 维修中的这一单，直接把实际考题的工序摆在最上面，避免和通用手册对不上
+            GUILayout.Label("【当前工单工序 · 与维修面板完全一致】", manualTitleStyle);
+            GUILayout.Label(activeProcedure.title, manualTitleStyle);
+            for (int si = 0; si < activeProcedure.steps.Length; si++)
+            {
+                GUILayout.Label((si + 1) + ". " + activeProcedure.steps[si], manualBodyStyle);
+            }
+            GUILayout.Space(10f);
+        }
         GUILayout.Label("【故障现象】\n" + f.symptom, manualBodyStyle);
         GUILayout.Label("【产生原因】\n" + f.cause, manualBodyStyle);
         GUILayout.Label("【传感器监测】\n" + f.sensor, manualBodyStyle);
         GUILayout.Label("【异常判定】\n" + f.threshold, manualBodyStyle);
         GUILayout.Label("【维修工具】\n" + f.tools, manualBodyStyle);
-        GUILayout.Label("【维修步骤】\n" + f.steps, manualBodyStyle);
+        GUILayout.Label("【通用处置参考】\n" + f.steps, manualBodyStyle);
         GUILayout.Label("【居民自修】\n" + f.selfRepair, manualBodyStyle);
         GUILayout.Label("【须物业/专业】\n" + f.propertyRepair, manualBodyStyle);
         GUILayout.EndScrollView();
@@ -11040,8 +11047,9 @@ public class KitchenSimulator : MonoBehaviour
         dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, wordWrap = true, normal = { textColor = new Color(0.94f, 0.95f, 0.96f) } };
         transitionStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.96f, 0.93f, 0.86f) } };
         alarmStyle = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
-        manualBodyStyle = new GUIStyle(bodyStyle) { fontSize = 15, wordWrap = true };
-        manualListStyle = new GUIStyle(smallStyle) { fontSize = 14 };
+        manualBodyStyle = new GUIStyle(bodyStyle) { fontSize = 16, wordWrap = true };
+        manualListStyle = new GUIStyle(smallStyle) { fontSize = 15 };
+        manualTitleStyle = new GUIStyle(manualBodyStyle) { fontSize = 16, fontStyle = FontStyle.Bold };
 
         Font font = UiFont;
         if (font != null)
@@ -11061,6 +11069,7 @@ public class KitchenSimulator : MonoBehaviour
             alarmStyle.font = font;
             manualBodyStyle.font = font;
             manualListStyle.font = font;
+            manualTitleStyle.font = font;
         }
     }
 
