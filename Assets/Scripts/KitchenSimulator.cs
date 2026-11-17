@@ -29,7 +29,7 @@ public class KitchenSimulator : MonoBehaviour
     private const float InteractDistance = 1.6f;
     private const float RepairDuration = 2.4f;
     private const float MarkerHeight = 1.95f;
-    private const float PlayerRadius = 0.34f;
+    private const float PlayerRadius = 0.26f;
 
     // 派单节奏
     private const float OrderIntervalMin = 5f;
@@ -245,7 +245,7 @@ public class KitchenSimulator : MonoBehaviour
     private bool cursorLocked;
     private const float EyeHeight = 1.52f;
     private const float MouseSensitivity = 2.6f;
-    private const float WallHeight = 3.6f;
+    private const float WallHeight = 4.2f;
     private const float DoorHeight = 2.6f;
 
     // 跳跃：参考地球重力加速度
@@ -2000,6 +2000,12 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
+        // 有交互面板时，引导条让位，避免左下角堆叠
+        if (repairingOrder != null || activeOrder != null || activeHomeowner != null
+            || activeWindow != null || activeColleague != null)
+        {
+            return;
+        }
 
         string[] steps =
         {
@@ -2010,11 +2016,12 @@ public class KitchenSimulator : MonoBehaviour
             "⑤ 每完成 " + OrdersPerBuilding + " 单晋升一级并解锁一栋楼，从 1 号楼起步逐级扩张到 " + ResidenceCount + " 栋",
         };
 
-        float width = 520f;
-        Rect rect = new Rect(16f, Screen.height - 236f, width, 38f);
+        float width = 560f;
+        Rect rect = new Rect(16f, Screen.height - 122f, width, 44f);
         DrawPanel(rect, new Color(0.05f, 0.09f, 0.13f, 0.94f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
         Fill(new Rect(rect.x + 12f, rect.y + 9f, 4f, 20f), btnBlue);
-        GUI.Label(new Rect(rect.x + 26f, rect.y + 9f, width - 40f, 22f), steps[Mathf.Clamp(guideStep, 0, 4)], smallStyle);
+        toastStyle.wordWrap = true;
+        GUI.Label(new Rect(rect.x + 26f, rect.y + 4f, width - 38f, 36f), steps[Mathf.Clamp(guideStep, 0, 4)], toastStyle);
     }
 
     private void UpdateFade()
@@ -2520,17 +2527,17 @@ public class KitchenSimulator : MonoBehaviour
     private static readonly HousePlan[] HousePlans =
     {
         // A：一室一厅一卫一厨
-        new HousePlan(12f, 12f, 0.55f, 1.2f,
+        new HousePlan(12f, 12f, 0.55f, 1.5f,
             new[] { new PlanRoom("客厅", 0.64f), new PlanRoom("厨房", 0.36f) },
             new[] { new PlanRoom("卫生间", 0.30f), new PlanRoom("卧室", 0.70f) }),
 
         // B：两室两厅一卫一厨
-        new HousePlan(12.5f, 12.5f, 0.50f, 1.2f,
+        new HousePlan(12.5f, 12.5f, 0.50f, 1.5f,
             new[] { new PlanRoom("客厅", 0.34f), new PlanRoom("餐厅", 0.32f), new PlanRoom("厨房", 0.34f) },
             new[] { new PlanRoom("卫生间", 0.22f), new PlanRoom("卧室", 0.39f), new PlanRoom("卧室", 0.39f) }),
 
         // C：三室两厅两卫一厨
-        new HousePlan(13.5f, 12.5f, 0.50f, 1.2f,
+        new HousePlan(13.5f, 12.5f, 0.50f, 1.5f,
             new[] { new PlanRoom("客厅", 0.30f), new PlanRoom("餐厅", 0.26f),
                     new PlanRoom("厨房", 0.24f), new PlanRoom("卫生间", 0.20f) },
             new[] { new PlanRoom("卫生间", 0.18f), new PlanRoom("卧室", 0.27f),
@@ -3322,7 +3329,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (w >= 3.8f)
         {
-            BuildWardrobe(left + 0.5f, cz - 0.4f, 90f);     // 衣柜靠西墙，窄房间不塞
+            BuildWardrobe(left + 0.95f, cz - 0.4f, 90f);    // 衣柜贴西墙，留出贴墙通道
         }
         if (w >= 3.0f)
         {
@@ -3488,7 +3495,7 @@ public class KitchenSimulator : MonoBehaviour
         DecoPart(PrimitiveType.Cube, "Quilt Fold", g,
             new Vector3(0f, 0.7f, -0.08f), new Vector3(1.54f, 0.05f, 0.16f),
             Quaternion.identity, MakeMaterial(new Color(0.62f, 0.66f, 0.82f), 0.02f, 0.45f));
-        AddRotatedObstacle("Bed Body", new Vector3(x, 0.3f, z), new Vector3(1.7f, 0.6f, 2.15f), yaw);
+        AddRotatedObstacle("Bed Body", new Vector3(x, 0.3f, z), new Vector3(1.65f, 0.5f, 2.1f), yaw);
     }
 
     private void BuildSofa(float x, float z, float yaw)
@@ -3518,7 +3525,7 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
             Quaternion.Euler(0f, 0f, -12f),
             MakeMaterial(new Color(0.62f, 0.68f, 0.52f), 0.02f, 0.45f));
-        AddRotatedObstacle("Sofa Body", new Vector3(x, 0.4f, z), new Vector3(2.1f, 0.8f, 0.95f), yaw);
+        AddRotatedObstacle("Sofa Body", new Vector3(x, 0.4f, z), new Vector3(2.0f, 0.6f, 0.9f), yaw);
     }
 
     private void BuildWardrobe(float x, float z, float yaw)
@@ -3538,7 +3545,7 @@ public class KitchenSimulator : MonoBehaviour
         DecoPart(PrimitiveType.Cube, "Wardrobe Plinth", g,
             new Vector3(0f, 0.06f, 0f), new Vector3(1.64f, 0.12f, 0.54f),
             Quaternion.identity, MakeMaterial(new Color(0.28f, 0.22f, 0.17f), 0.02f, 0.4f));
-        AddRotatedObstacle("Wardrobe Body", new Vector3(x, 1.1f, z), new Vector3(1.8f, 2.2f, 0.7f), yaw);
+        AddRotatedObstacle("Wardrobe Body", new Vector3(x, 1.1f, z), new Vector3(1.7f, 2.2f, 0.62f), yaw);
     }
 
     private void BuildCabinet(float x, float z, float yaw)
@@ -5382,18 +5389,18 @@ public class KitchenSimulator : MonoBehaviour
         Material legMaterial = playerTrouserMaterial;
 
         // 身体与四肢在世界中可见（低头能看见），头部隐藏避免遮挡视线
-        GameObject torso = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.5f, 0.7f, 0.3f), Quaternion.identity, bodyMaterial);
+        GameObject torso = MakePrimitive(PrimitiveType.Cube, "Torso", player.transform, new Vector3(0f, 0.85f, 0f), new Vector3(0.44f, 0.7f, 0.28f), Quaternion.identity, bodyMaterial);
         playerBody = torso.transform;
         playerClothRenderers.Add(torso.GetComponent<Renderer>());
 
         leftArmPivot = new GameObject("Left Arm Pivot").transform;
         leftArmPivot.SetParent(player.transform, false);
-        leftArmPivot.localPosition = new Vector3(-0.32f, 1.1f, 0f);
-        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Left Arm", leftArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
+        leftArmPivot.localPosition = new Vector3(-0.29f, 1.1f, 0f);
+        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Left Arm", leftArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.11f, 0.56f, 0.11f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
         rightArmPivot = new GameObject("Right Arm Pivot").transform;
         rightArmPivot.SetParent(player.transform, false);
-        rightArmPivot.localPosition = new Vector3(0.32f, 1.1f, 0f);
-        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Right Arm", rightArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.14f, 0.56f, 0.14f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
+        rightArmPivot.localPosition = new Vector3(0.29f, 1.1f, 0f);
+        playerClothRenderers.Add(MakePrimitive(PrimitiveType.Cube, "Right Arm", rightArmPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.11f, 0.56f, 0.11f), Quaternion.identity, bodyMaterial).GetComponent<Renderer>());
 
         leftLegPivot = new GameObject("Left Leg Pivot").transform;
         leftLegPivot.SetParent(player.transform, false);
@@ -5417,12 +5424,12 @@ public class KitchenSimulator : MonoBehaviour
         GameObject eyeL = MakePrimitive(PrimitiveType.Cube, "Player Eye L", player.transform, new Vector3(-0.075f, 1.39f, 0.165f), new Vector3(0.05f, 0.05f, 0.02f), Quaternion.identity, playerEye);
         GameObject eyeR = MakePrimitive(PrimitiveType.Cube, "Player Eye R", player.transform, new Vector3(0.075f, 1.39f, 0.165f), new Vector3(0.05f, 0.05f, 0.02f), Quaternion.identity, playerEye);
         GameObject vest = MakePrimitive(PrimitiveType.Cube, "Player Vest", player.transform, new Vector3(0f, 0.92f, -0.19f), new Vector3(0.36f, 0.6f, 0.05f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.6f, 0.15f), 0.05f, 0.4f));
-        GameObject waist = MakePrimitive(PrimitiveType.Cube, "Player Waist", player.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, playerClothMaterial);
+        GameObject waist = MakePrimitive(PrimitiveType.Cube, "Player Waist", player.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.38f, 0.3f, 0.24f), Quaternion.identity, playerClothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Player Neck", player.transform, new Vector3(0f, 1.24f, 0f), new Vector3(0.12f, 0.1f, 0.12f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
-        MakePrimitive(PrimitiveType.Cube, "Player Shoulder L", player.transform, new Vector3(-0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, playerClothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Player Shoulder R", player.transform, new Vector3(0.29f, 1.16f, 0f), new Vector3(0.16f, 0.14f, 0.2f), Quaternion.identity, playerClothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Player Hand L", leftArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
-        MakePrimitive(PrimitiveType.Cube, "Player Hand R", rightArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        MakePrimitive(PrimitiveType.Cube, "Player Shoulder L", player.transform, new Vector3(-0.25f, 1.16f, 0f), new Vector3(0.14f, 0.14f, 0.19f), Quaternion.identity, playerClothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Player Shoulder R", player.transform, new Vector3(0.25f, 1.16f, 0f), new Vector3(0.14f, 0.14f, 0.19f), Quaternion.identity, playerClothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Player Hand L", leftArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.11f, 0.11f, 0.11f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
+        MakePrimitive(PrimitiveType.Cube, "Player Hand R", rightArmPivot, new Vector3(0f, -0.6f, 0f), new Vector3(0.11f, 0.11f, 0.11f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
         playerClothRenderers.Add(waist.GetComponent<Renderer>());
         playerHead = head.transform;
         playerHeadRenderers = new[]
@@ -6022,14 +6029,14 @@ public class KitchenSimulator : MonoBehaviour
         Material beltMaterial = MakeMaterial(new Color(0.24f, 0.20f, 0.16f), 0.08f, 0.4f);
 
         // 躯干分胸/腰两段，比例更像人
-        Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.48f, 0.44f, 0.3f), Quaternion.identity, clothMaterial).transform;
-        MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, clothMaterial);
+        Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.44f, 0.44f, 0.28f), Quaternion.identity, clothMaterial).transform;
+        MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.38f, 0.3f, 0.24f), Quaternion.identity, clothMaterial);
         // 腰带与衣领：把上下装分开，人物轮廓不再是一整块
         MakePrimitive(PrimitiveType.Cube, "Belt", root.transform, new Vector3(0f, 0.79f, 0f), new Vector3(0.42f, 0.06f, 0.28f), Quaternion.identity, beltMaterial);
         MakePrimitive(PrimitiveType.Cube, "Collar", root.transform, new Vector3(0f, 1.2f, 0f), new Vector3(0.36f, 0.05f, 0.26f), Quaternion.identity, beltMaterial);
         MakePrimitive(PrimitiveType.Cube, "Neck", root.transform, new Vector3(0f, 1.26f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.25f, 1.17f, 0f), new Vector3(0.12f, 0.12f, 0.17f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.25f, 1.17f, 0f), new Vector3(0.12f, 0.12f, 0.17f), Quaternion.identity, clothMaterial);
         // 头/安全帽挂在根节点上（绝对高度），不受身体动画影响，保证始终可见
         MakePrimitive(PrimitiveType.Cube, "Head", root.transform, new Vector3(0f, 1.44f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
         MakePrimitive(PrimitiveType.Cube, "Helmet", root.transform, new Vector3(0f, 1.63f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
@@ -6049,17 +6056,17 @@ public class KitchenSimulator : MonoBehaviour
 
         Transform leftArm = new GameObject("Left Arm Pivot").transform;
         leftArm.SetParent(root.transform, false);
-        leftArm.localPosition = new Vector3(-0.34f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        leftArm.localPosition = new Vector3(-0.30f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.10f, 0.5f, 0.10f), Quaternion.identity, clothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Cuff L", leftArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.095f, 0.1f, 0.095f), Quaternion.identity, skinMaterial);
 
         Transform rightArm = new GameObject("Right Arm Pivot").transform;
         rightArm.SetParent(root.transform, false);
-        rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        rightArm.localPosition = new Vector3(0.30f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.10f, 0.5f, 0.10f), Quaternion.identity, clothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Cuff R", rightArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.095f, 0.1f, 0.095f), Quaternion.identity, skinMaterial);
 
         // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
         Transform leftLeg = new GameObject("Left Leg Pivot").transform;
@@ -6377,7 +6384,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            if (Distance2D(position, h.rig.root.position) < 0.62f)
+            if (Distance2D(position, h.rig.root.position) < 0.50f)
             {
                 return true;
             }
@@ -6389,12 +6396,12 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            if (Distance2D(position, c.rig.root.position) < 0.58f)
+            if (Distance2D(position, c.rig.root.position) < 0.46f)
             {
                 return true;
             }
         }
-        if (bossRig != null && bossRig.root != null && Distance2D(position, bossRig.root.position) < 0.62f)
+        if (bossRig != null && bossRig.root != null && Distance2D(position, bossRig.root.position) < 0.50f)
         {
             return true;
         }
@@ -6558,7 +6565,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // NPC 身体也挡人，玩家不能从户主身上穿过去
-        const float npcRadius = 0.46f;
+        const float npcRadius = 0.34f;
         for (int i = 0; i < homeowners.Count; i++)
         {
             if (homeowners[i].rig == null || homeowners[i].rig.root == null)
@@ -8974,13 +8981,13 @@ public class KitchenSimulator : MonoBehaviour
         get
         {
             // 折叠时只留一个工单徽标，展开才是完整列表
-            float width = taskListExpanded ? 332f : 96f;
+            float width = taskListExpanded ? 332f : 140f;
             float height = taskListExpanded ? 400f : 34f;
             return new Rect(Screen.width - width - 16f, 16f, width, height);
         }
     }
-    private Rect PromptRect { get { return new Rect(16f, Screen.height - 152f, 430f, 112f); } }
-    private Rect ToolChipRect { get { return new Rect(16f, Screen.height - 196f, 340f, 36f); } }
+    private Rect PromptRect { get { return new Rect(16f, Screen.height - 140f, 430f, 108f); } }
+    private Rect ToolChipRect { get { return new Rect(16f, Screen.height - 66f, 300f, 30f); } }
     private Rect BagRect { get { return new Rect(16f, 146f, 300f, 56f + tools.Count * 32f); } }
     private Rect ShopRect
     {
@@ -8996,7 +9003,7 @@ public class KitchenSimulator : MonoBehaviour
         get
         {
             return hintVisible
-                ? new Rect(0f, Screen.height - 30f, Screen.width, 30f)
+                ? new Rect(Screen.width * 0.5f - 280f, Screen.height - 88f, 560f, 62f)
                 : new Rect(Screen.width * 0.5f - 48f, Screen.height - 30f, 96f, 24f);
         }
     }
@@ -9236,10 +9243,11 @@ public class KitchenSimulator : MonoBehaviour
         if (!taskListExpanded)
         {
             Rect badge = TaskListRect;
-            DrawPanel(badge, panelFill, panelBorder);
+            bool hover = badge.Contains(Event.current.mousePosition);
+            DrawPanel(badge, hover ? Color.Lerp(panelFill, btnBlue, 0.25f) : panelFill, panelBorder);
             Fill(new Rect(badge.x + 8f, badge.y + 9f, 4f, 16f), fixedColor);
             GUI.Label(new Rect(badge.x + 18f, badge.y + 6f, badge.width - 22f, 22f),
-                "工单 " + CountActive(), cardButtonStyle);
+                "工单 " + CountActive() + " · 展开", cardButtonStyle);
             if (GUI.Button(badge, GUIContent.none, GUIStyle.none))
             {
                 taskListExpanded = true;
@@ -9368,11 +9376,16 @@ public class KitchenSimulator : MonoBehaviour
         {
             return;
         }
+        if (repairingOrder != null || activeOrder != null || activeHomeowner != null
+            || activeWindow != null || activeColleague != null)
+        {
+            return;
+        }
 
         Rect rect = ToolChipRect;
         DrawPanel(rect, panelFill, panelBorder);
-        Fill(new Rect(rect.x + 10f, rect.y + 9f, 4f, 18f), tools[currentTool].color);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 8f, rect.width - 32f, 22f),
+        Fill(new Rect(rect.x + 10f, rect.y + 7f, 4f, 16f), tools[currentTool].color);
+        GUI.Label(new Rect(rect.x + 22f, rect.y + 4f, rect.width - 32f, 22f),
             "当前工具：" + tools[currentTool].name + "   [Q / 滚轮 切换]", smallStyle);
     }
 
@@ -10891,8 +10904,11 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         Rect rect = HintRect;
-        Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测与报警派单　·　K 知识手册　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　L 联机　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
+        DrawPanel(rect, panelFill, panelBorder);
+        toastStyle.wordWrap = true;
+        GUI.Label(new Rect(rect.x + 14f, rect.y + 6f, rect.width - 28f, rect.height - 12f),
+            "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　E 对话　·　Q/滚轮 换工具　·　F 开关门窗　·　V 视角切换　·　T 监测平台　·　K 手册　·　G 商店　·　B 工具包　·　N 账目　·　M 地图　·　R 休息　·　H 收起提示",
+            toastStyle);
     }
 
     private void DrawToast()
