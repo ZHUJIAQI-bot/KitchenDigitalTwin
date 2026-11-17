@@ -3046,6 +3046,7 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildBathroom(float cx, float cz, float w, float d)
     {
         float left = cx - w * 0.5f, right = cx + w * 0.5f;
+        float front = cz - d * 0.5f;
         float back = cz + d * 0.5f;
         BuildToilet(right - 0.55f, cz - 0.2f, 270f);        // 马桶靠东墙
         BuildWashbasin(left + 0.5f, cz - 0.2f, 90f);        // 洗手台靠西墙
@@ -3070,6 +3071,13 @@ public class KitchenSimulator : MonoBehaviour
             CreateDecoCube("Drain Slot", new Vector3(cx + 0.7f, 0.048f, cz - 1.09f + i * 0.06f),
                 new Vector3(0.18f, 0.006f, 0.02f), slot);
         }
+
+        // 入口屏挡：从门外看不到马桶，保证隐私；留出左侧通行口
+        Color screenColor = new Color(0.88f, 0.88f, 0.85f);
+        AddSolidBox("Bath Screen", new Vector3(left + w * 0.72f, 1.1f, front + 0.9f),
+            new Vector3(0.08f, 2.2f, 1.8f), screenColor);
+        AddSolidBox("Bath Screen Return", new Vector3(left + w * 0.86f, 1.1f, front + 1.8f),
+            new Vector3(w * 0.28f, 2.2f, 0.08f), screenColor);
     }
 
     private void BuildBedroom(float cx, float cz, float w, float d)
@@ -9550,8 +9558,6 @@ public class KitchenSimulator : MonoBehaviour
                 AddExpense(DispatchPenalty);
                 AddDispatchLog(o.Code + " 响应超时 · " + o.room + " 超时 "
                     + DispatchResponseSeconds.ToString("F0") + " 秒未接单，赔付 ¥" + DispatchPenalty);
-                ShowToast("响应超时：" + o.Code + " " + o.room + " 派单后 "
-                    + DispatchResponseSeconds.ToString("F0") + " 秒未接单，赔付 ¥" + DispatchPenalty, 6f);
             }
         }
     }
@@ -10473,7 +10479,19 @@ public class KitchenSimulator : MonoBehaviour
             DrawPanel(rect, panelFill, panelBorder);
             Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), pendingColor);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 12f, rect.width - 56f, 26f), activeOrder.Code + " " + activeOrder.room + " · " + activeOrder.title, titleStyle);
-            GUI.Label(new Rect(rect.x + 28f, rect.y + 40f, rect.width - 56f, 20f), "成因：" + activeOrder.cause, bodyStyle);
+            bool alarming = activeOrder.alarmLevel >= 2;
+            Color prevLine = GUI.color;
+            if (alarming)
+            {
+                GUI.color = pendingColor;
+            }
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 40f, rect.width - 56f, 20f),
+                alarming
+                    ? "监测报警 · 实测 " + activeOrder.sensorValue.ToString("F1") + activeOrder.sensorUnit
+                      + "（报警线 " + activeOrder.sensorAlarm.ToString("F1") + "）"
+                    : "成因：" + activeOrder.cause,
+                bodyStyle);
+            GUI.color = prevLine;
             GUI.Label(new Rect(rect.x + 28f, rect.y + 62f, 240f, 20f), "核定经费 ¥" + activeOrder.cost.ToString("N0"), smallStyle);
 
             // 工具是否匹配
