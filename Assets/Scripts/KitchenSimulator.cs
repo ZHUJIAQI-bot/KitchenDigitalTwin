@@ -277,6 +277,7 @@ public class KitchenSimulator : MonoBehaviour
 
     // 第一人称手持工具（视图模型）
     private Transform toolPivot;
+    private Transform viewmodelRoot;
     private float toolAnim;
     private float toolStrike;   // 每次点击左键触发的工具挥动
     private bool walking;
@@ -3280,7 +3281,7 @@ public class KitchenSimulator : MonoBehaviour
         // 窄客厅不摆茶几：电视柜与沙发之间只剩 0.3m，茶几会把通道彻底堵死
         if (w >= 4.8f)
         {
-            BuildRoundCoffeeTable(cx, axisZ);
+            BuildTable(cx, axisZ, 0.9f, Mathf.Min(1.35f, w * 0.32f), 0f, 0.45f);
         }
         CreateDecoCube("Rug", new Vector3(cx, 0.02f, axisZ),
             new Vector3(Mathf.Max(1.6f, w - 1.5f), 0.02f, 2.0f), new Color(0.68f, 0.55f, 0.44f));
@@ -6064,14 +6065,17 @@ public class KitchenSimulator : MonoBehaviour
     {
         Material sleeve = MakeMaterial(new Color(0.16f, 0.34f, 0.48f), 0.05f, 0.35f);
         Transform cam = viewCamera.transform;
+        GameObject viewmodel = new GameObject("Viewmodel");
+        viewmodel.transform.SetParent(cam, false);
+        viewmodelRoot = viewmodel.transform;
 
         // 两条前臂，从画面下方伸向工具
-        MakePrimitive(PrimitiveType.Cube, "View Left Arm", cam, new Vector3(0.05f, -0.42f, 0.36f), new Vector3(0.1f, 0.1f, 0.34f), Quaternion.Euler(-10f, 12f, 0f), sleeve);
-        MakePrimitive(PrimitiveType.Cube, "View Right Arm", cam, new Vector3(0.3f, -0.44f, 0.34f), new Vector3(0.1f, 0.1f, 0.36f), Quaternion.Euler(-8f, -10f, 0f), sleeve);
+        MakePrimitive(PrimitiveType.Cube, "View Left Arm", viewmodelRoot, new Vector3(0.05f, -0.42f, 0.36f), new Vector3(0.1f, 0.1f, 0.34f), Quaternion.Euler(-10f, 12f, 0f), sleeve);
+        MakePrimitive(PrimitiveType.Cube, "View Right Arm", viewmodelRoot, new Vector3(0.3f, -0.44f, 0.34f), new Vector3(0.1f, 0.1f, 0.36f), Quaternion.Euler(-8f, -10f, 0f), sleeve);
 
         // 手持工具的挂点（具体模型由 BuildToolModel 按当前工具生成）
         toolPivot = new GameObject("Tool").transform;
-        toolPivot.SetParent(cam, false);
+        toolPivot.SetParent(viewmodelRoot, false);
         toolPivot.localPosition = new Vector3(0.19f, -0.31f, 0.5f);
         toolPivot.localRotation = Quaternion.Euler(-8f, -14f, 4f);
     }
@@ -7014,7 +7018,11 @@ public class KitchenSimulator : MonoBehaviour
         UpdateTool();
 
         // 第三人称下隐藏第一人称手持模型
-        if (toolPivot != null)
+        if (viewmodelRoot != null)
+        {
+            viewmodelRoot.gameObject.SetActive(!thirdPerson);
+        }
+        else if (toolPivot != null)
         {
             toolPivot.gameObject.SetActive(!thirdPerson);
         }
