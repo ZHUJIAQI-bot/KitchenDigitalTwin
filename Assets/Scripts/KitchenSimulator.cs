@@ -2759,8 +2759,9 @@ public class KitchenSimulator : MonoBehaviour
             sum += Mathf.Max(0.01f, row[i].fraction);
         }
         float cursor = x0;
-        float doorC = (z0 + z1) * 0.5f;
-        float doorHalf = Mathf.Min(0.75f, (z1 - z0) * 0.18f);
+        // 门洞靠前布置：客厅沙发靠后墙，门在房间中部会被沙发堵死
+        float doorC = z0 + (z1 - z0) * 0.28f;
+        float doorHalf = Mathf.Min(0.72f, (z1 - z0) * 0.16f);
         for (int i = 0; i < row.Length - 1; i++)
         {
             cursor += (x1 - x0) * Mathf.Max(0.01f, row[i].fraction) / sum;
@@ -8366,8 +8367,8 @@ public class KitchenSimulator : MonoBehaviour
         labelObject.transform.localPosition = new Vector3(0f, 0f, 0.07f);
         TextMesh mesh = labelObject.AddComponent<TextMesh>();
         mesh.font = UiFont;
-        mesh.fontSize = 48;
-        mesh.characterSize = 0.028f;
+        mesh.fontSize = 32;
+        mesh.characterSize = 0.018f;
         mesh.anchor = TextAnchor.MiddleCenter;
         mesh.alignment = TextAlignment.Center;
         mesh.lineSpacing = 1.0f;
@@ -8874,7 +8875,7 @@ public class KitchenSimulator : MonoBehaviour
                 }
                 else
                 {
-                    order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark
+                    order.tag.text = order.sensorValue.ToString("F1") + order.sensorUnit + "\n" + mark
                         + (OrderSelfRepairable(order) ? "" : " ·须物业");
                 }
                 order.tag.color = stateColors[(int)order.state];
