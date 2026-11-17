@@ -7611,6 +7611,13 @@ public class KitchenSimulator : MonoBehaviour
             DrawStepOptions(right, p);
         }
 
+        // 最后一步可能在 DrawStepOptions 里已经完成并清空 repairingOrder，
+        // 同一帧不能继续画进度条，否则会空引用
+        if (repairingOrder == null || !repairPanelOpen)
+        {
+            return;
+        }
+
         // 底部进度 + 提示
         float by = rect.y + rect.height - 58f;
         Fill(new Rect(rect.x + 22f, by - 8f, rect.width - 44f, 1f), dividerColor);
@@ -9217,7 +9224,10 @@ public class KitchenSimulator : MonoBehaviour
     // ── 点击开始（WebGL 需用户手势才能锁定鼠标）────────────
     private void DrawStartOverlay()
     {
-        if (cursorLocked || dialogueIndex >= 0)
+        // 任何面板打开时都不要弹“点击画面开始”，否则会盖住监测平台/手册
+        if (cursorLocked || dialogueIndex >= 0 || !loggedIn
+            || twinPanelOpen || faultManualOpen || repairPanelOpen
+            || lobbyOpen || shopOpen || bagOpen || almanacOpen)
         {
             return;
         }
