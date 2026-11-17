@@ -322,9 +322,12 @@ public class KitchenSimulator : MonoBehaviour
         public Transform pivot;
         public float open;        // 0 关 / 1 开
         public float target;
-        public float xMin;
-        public float xMax;
-        public float z;
+        public bool alongX;       // true=门洞沿 X，false=门洞沿 Z
+        public float start;
+        public float end;
+        public float fixedCoord;
+        public float width;
+        public Vector3 closedPosition;
         public bool manualOpen;
     }
     private readonly List<HouseDoor> houseDoors = new List<HouseDoor>();
@@ -2612,6 +2615,21 @@ public class KitchenSimulator : MonoBehaviour
             BuildRoomFloor(r.x0, r.x1, r.z0, r.z1, FloorColorOf(r.type), FloorIsWood(r.type));
         }
 
+        // 踢脚线：沿房间三面墙脚走一圈，室内立刻不再像"白盒子"
+        Material baseboard = MakeMaterial(new Color(0.72f, 0.68f, 0.60f), 0.02f, 0.4f);
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            RoomRect r = rooms[i];
+            float innerW = Mathf.Max(0.1f, r.x1 - r.x0 - 0.08f);
+            float innerD = Mathf.Max(0.1f, r.z1 - r.z0 - 0.08f);
+            CreateDecoCube("Baseboard Back", new Vector3((r.x0 + r.x1) * 0.5f, 0.08f, r.z1 - 0.04f),
+                new Vector3(innerW, 0.16f, 0.05f), baseboard);
+            CreateDecoCube("Baseboard Left", new Vector3(r.x0 + 0.04f, 0.08f, (r.z0 + r.z1) * 0.5f),
+                new Vector3(0.05f, 0.16f, innerD), baseboard);
+            CreateDecoCube("Baseboard Right", new Vector3(r.x1 - 0.04f, 0.08f, (r.z0 + r.z1) * 0.5f),
+                new Vector3(0.05f, 0.16f, innerD), baseboard);
+        }
+
         // ── 外墙：入户门 + 按房间自动开窗 ──
         RoomRect entry = rooms[0];
         float doorW = Mathf.Clamp(entry.x1 - entry.x0 - 1.2f, 1.2f, 2.2f);
@@ -2685,6 +2703,7 @@ public class KitchenSimulator : MonoBehaviour
             backDoors.Add(cx + 0.55f);
             backDoors.Add(0f);
             backDoors.Add(DoorHeight);
+            BuildDoor(tag + " Room Door " + i, true, backStart, cx - 0.55f, cx + 0.55f);
         }
         BuildWallWithOpenings("Res Corridor Back Wall", true, backStart, x0, x2, 0.22f, inner,
             backDoors.ToArray());
@@ -2781,6 +2800,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 BuildWallWithOpenings(tag + " Wall " + i, false, cursor, z0, z1, 0.22f, inner,
                     doorC - doorHalf, doorC + doorHalf, 0f, DoorHeight);
+                BuildDoor(tag + " Door " + i, false, cursor, doorC - doorHalf, doorC + doorHalf);
             }
             else
             {
@@ -2920,18 +2940,77 @@ public class KitchenSimulator : MonoBehaviour
     // 可开关的房门：按 F 切换，门扇绕合页旋转
     private void BuildHouseDoor(string name, float start, float end, float z)
     {
+        BuildDoor(name, true, z, start, end);
+    }
+
+    // 通用门：沿 X 或 Z 的推拉门，带门套与拉手
+    private void BuildDoor(string name, bool alongX, float fixedCoord, float start, float end)
+    {
         Material wood = MakeMaterial(new Color(0.6f, 0.42f, 0.24f), 0.02f, 0.4f);
         Material handle = MakeMaterial(new Color(0.82f, 0.78f, 0.45f), 0.7f, 0.6f);
+        Material trim = MakeMaterial(new Color(0.78f, 0.74f, 0.68f), 0.02f, 0.45f);
+
+        float width = end - start;
+        if (width <= 0.1f)
+        {
+            return;
+        }
+        const float offset = 0.06f;
+        Vector3 pivotPosition = alongX
+            ? new Vector3(start, 0f, fixedCoord + offset)
+            : new Vector3(fixedCoord + offset, 0f, start);
 
         GameObject hinge = new GameObject(name);
         hinge.transform.SetParent(transform, false);
-        hinge.transform.position = new Vector3(start, 0f, z);
+        hinge.transform.position = pivotPosition;
 
-        float width = end - start;
-        DecoPart(PrimitiveType.Cube, "Door Panel", hinge.transform, new Vector3(width * 0.5f, 1.05f, 0f), new Vector3(width - 0.06f, 2.06f, 0.07f), Quaternion.identity, wood);
-        DecoPart(PrimitiveType.Cylinder, "Knob", hinge.transform, new Vector3(width - 0.2f, 1.05f, -0.07f), new Vector3(0.035f, 0.03f, 0.035f), Quaternion.Euler(90f, 0f, 0f), handle);
+        if (alongX)
+        {
+            DecoPart(PrimitiveType.Cube, "Door Panel", hinge.transform,
+                new Vector3(width * 0.5f, 1.05f, 0f), new Vector3(width - 0.06f, 2.06f, 0.07f),
+                Quaternion.identity, wood);
+            DecoPart(PrimitiveType.Cylinder, "Knob", hinge.transform,
+                new Vector3(width - 0.2f, 1.05f, -0.07f), new Vector3(0.035f, 0.03f, 0.035f),
+                Quaternion.Euler(90f, 0f, 0f), handle);
+            DecoPart(PrimitiveType.Cube, "Door Jamb L", transform,
+                new Vector3(start - 0.04f, 1.15f, fixedCoord), new Vector3(0.08f, 2.3f, 0.16f),
+                Quaternion.identity, trim);
+            DecoPart(PrimitiveType.Cube, "Door Jamb R", transform,
+                new Vector3(end + 0.04f, 1.15f, fixedCoord), new Vector3(0.08f, 2.3f, 0.16f),
+                Quaternion.identity, trim);
+            DecoPart(PrimitiveType.Cube, "Door Lintel", transform,
+                new Vector3((start + end) * 0.5f, 2.31f, fixedCoord), new Vector3(width + 0.16f, 0.1f, 0.16f),
+                Quaternion.identity, trim);
+        }
+        else
+        {
+            DecoPart(PrimitiveType.Cube, "Door Panel", hinge.transform,
+                new Vector3(0f, 1.05f, width * 0.5f), new Vector3(0.07f, 2.06f, width - 0.06f),
+                Quaternion.identity, wood);
+            DecoPart(PrimitiveType.Cylinder, "Knob", hinge.transform,
+                new Vector3(-0.07f, 1.05f, width - 0.2f), new Vector3(0.035f, 0.03f, 0.035f),
+                Quaternion.Euler(90f, 0f, 0f), handle);
+            DecoPart(PrimitiveType.Cube, "Door Jamb L", transform,
+                new Vector3(fixedCoord, 1.15f, start - 0.04f), new Vector3(0.16f, 2.3f, 0.08f),
+                Quaternion.identity, trim);
+            DecoPart(PrimitiveType.Cube, "Door Jamb R", transform,
+                new Vector3(fixedCoord, 1.15f, end + 0.04f), new Vector3(0.16f, 2.3f, 0.08f),
+                Quaternion.identity, trim);
+            DecoPart(PrimitiveType.Cube, "Door Lintel", transform,
+                new Vector3(fixedCoord, 2.31f, (start + end) * 0.5f), new Vector3(0.16f, 0.1f, width + 0.16f),
+                Quaternion.identity, trim);
+        }
 
-        houseDoors.Add(new HouseDoor { pivot = hinge.transform, open = 0f, target = 0f, xMin = start, xMax = end, z = z });
+        houseDoors.Add(new HouseDoor
+        {
+            pivot = hinge.transform,
+            alongX = alongX,
+            start = start,
+            end = end,
+            fixedCoord = fixedCoord,
+            width = width,
+            closedPosition = pivotPosition
+        });
     }
 
     // ── 门动画 ────────────────────────────────────────────
@@ -2987,12 +3066,16 @@ public class KitchenSimulator : MonoBehaviour
             }
 
             // 有人（玩家或 NPC）靠近就自动开门，否则回到玩家手动设定的状态
-            Vector3 doorMid = new Vector3((door.xMin + door.xMax) * 0.5f, 0f, door.z);
+            Vector3 doorMid = door.alongX
+                ? new Vector3((door.start + door.end) * 0.5f, 0f, door.fixedCoord)
+                : new Vector3(door.fixedCoord, 0f, (door.start + door.end) * 0.5f);
             bool someone = Distance2D(playerPosition, doorMid) < 2.7f || AnyoneNear(doorMid, 2.7f);
             door.target = someone ? 1f : (door.manualOpen ? 1f : 0f);
 
             door.open = Mathf.Lerp(door.open, door.target, Time.deltaTime * 5f);
-            door.pivot.localRotation = Quaternion.Euler(0f, -95f * door.open, 0f);
+            Vector3 dir = door.alongX ? Vector3.right : Vector3.forward;
+            door.pivot.position = door.closedPosition + dir * (door.width * 0.96f * door.open);
+            door.pivot.localRotation = Quaternion.identity;
         }
 
         // 窗扇开合动画
@@ -3926,6 +4009,10 @@ public class KitchenSimulator : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.H))
         {
             hintVisible = !hintVisible;
+        }
+        if (Input.GetKeyDown(KeyCode.J))
+        {
+            taskListExpanded = !taskListExpanded;
         }
         if (Input.GetKeyDown(KeyCode.G))
         {
@@ -6567,9 +6654,19 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            float nearestX = Mathf.Clamp(p.x, door.xMin, door.xMax);
-            float ox = p.x - nearestX;
-            float oz = p.y - door.z;
+            float ox, oz;
+            if (door.alongX)
+            {
+                float nearestX = Mathf.Clamp(p.x, door.start, door.end);
+                ox = p.x - nearestX;
+                oz = p.y - door.fixedCoord;
+            }
+            else
+            {
+                float nearestZ = Mathf.Clamp(p.y, door.start, door.end);
+                ox = p.x - door.fixedCoord;
+                oz = p.y - nearestZ;
+            }
             if (ox * ox + oz * oz < PlayerRadius * PlayerRadius)
             {
                 return true;
@@ -9042,7 +9139,7 @@ public class KitchenSimulator : MonoBehaviour
         get
         {
             // 折叠时只留一个工单徽标，展开才是完整列表
-            float width = taskListExpanded ? 332f : 140f;
+            float width = taskListExpanded ? 332f : 168f;
             float height = taskListExpanded ? 400f : 34f;
             return new Rect(Screen.width - width - 16f, 16f, width, height);
         }
@@ -9311,7 +9408,7 @@ public class KitchenSimulator : MonoBehaviour
             DrawPanel(badge, hover ? Color.Lerp(panelFill, btnBlue, 0.25f) : panelFill, panelBorder);
             Fill(new Rect(badge.x + 8f, badge.y + 9f, 4f, 16f), fixedColor);
             GUI.Label(new Rect(badge.x + 18f, badge.y + 6f, badge.width - 22f, 22f),
-                "工单 " + CountActive() + " · 展开", cardButtonStyle);
+                "J 工单 " + CountActive() + " · 展开", cardButtonStyle);
             if (GUI.Button(badge, GUIContent.none, GUIStyle.none))
             {
                 taskListExpanded = true;
@@ -10971,7 +11068,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawPanel(rect, panelFill, panelBorder);
         toastStyle.wordWrap = true;
         GUI.Label(new Rect(rect.x + 14f, rect.y + 6f, rect.width - 28f, rect.height - 12f),
-            "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　E 对话　·　Q/滚轮 换工具　·　F 开关门窗　·　V 视角切换　·　T 监测平台　·　K 手册　·　G 商店　·　B 工具包　·　N 账目　·　M 地图　·　R 休息　·　H 收起提示",
+            "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　J 工单列表　·　E 对话　·　Q/滚轮 换工具　·　F 开关门窗　·　V 视角切换　·　T 监测平台　·　K 手册　·　G 商店　·　B 工具包　·　N 账目　·　M 地图　·　R 休息　·　H 收起提示",
             toastStyle);
     }
 
