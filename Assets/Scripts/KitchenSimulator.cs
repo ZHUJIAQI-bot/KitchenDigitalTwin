@@ -2818,7 +2818,7 @@ public class KitchenSimulator : MonoBehaviour
                 case "厨房": BuildKitchenRoom(cx, cz, rw, rd); break;
                 case "卫生间": BuildBathroom(cx, cz, rw, rd); break;
                 case "卧室": BuildBedroom(cx, cz, rw, rd); break;
-                case "餐厅": BuildTable(cx, cz, Mathf.Min(1.6f, rw * 0.45f), Mathf.Min(1.4f, rd * 0.4f), 0f, 0.74f); break;
+                case "餐厅": BuildDiningSet(cx, cz, rw, rd); break;
                 case "客厅": BuildLivingRoom(cx, cz, rw, rd); break;
                 default: break;   // 过道不摆家具
             }
@@ -3311,6 +3311,19 @@ public class KitchenSimulator : MonoBehaviour
         CreateDecoSphere("Flower", new Vector3(cx + 0.02f, 0.76f, cz - 0.42f), 0.07f, MakeMaterial(new Color(0.78f, 0.42f, 0.45f), 0.02f, 0.35f));
     }
 
+    // 餐桌 + 四把椅子，比只放一张桌子更像有人住的餐厅
+    private void BuildDiningSet(float cx, float cz, float w, float d)
+    {
+        float tableW = Mathf.Min(1.5f, w * 0.45f);
+        float tableD = Mathf.Min(1.1f, d * 0.35f);
+        BuildTable(cx, cz, tableW, tableD, 0f, 0.74f);
+
+        float oz = tableD * 0.5f + 0.38f;
+        // 只摆前后两把椅子，左右留出通往客厅/厨房的门洞
+        BuildChair(cx, cz - oz, 0f);
+        BuildChair(cx, cz + oz, 180f);
+    }
+
     // 客厅吊灯
     private void BuildPendantLamp(float cx, float cz)
     {
@@ -3530,6 +3543,9 @@ public class KitchenSimulator : MonoBehaviour
     {
         float left = cx - w * 0.5f, right = cx + w * 0.5f;
         float front = cz - d * 0.5f, back = cz + d * 0.5f;
+        CreateDecoCube("Bedroom Rug", new Vector3(cx, 0.016f, front + Mathf.Min(1.4f, d * 0.25f)),
+            new Vector3(Mathf.Min(2.2f, w * 0.6f), 0.008f, 1.5f),
+            new Color(0.64f, 0.57f, 0.5f));
         BuildBed(cx - 0.3f, back - 1.55f, 180f);            // 床头靠北墙
         if (w >= 3.0f)
         {
@@ -3701,6 +3717,20 @@ public class KitchenSimulator : MonoBehaviour
         Material sheet = MakeMaterial(new Color(0.75f, 0.79f, 0.87f), 0.02f, 0.4f);
         Material pillow = MakeMaterial(new Color(0.96f, 0.96f, 0.93f), 0.02f, 0.4f);
         Material quilt = MakeMaterial(new Color(0.5f, 0.56f, 0.74f), 0.02f, 0.4f);
+        Material legMat = MakeMaterial(new Color(0.28f, 0.2f, 0.14f), 0.05f, 0.4f);
+        Material buttonMat = MakeMaterial(new Color(0.62f, 0.5f, 0.38f), 0.05f, 0.5f);
+
+        for (int i = 0; i < 4; i++)
+        {
+            float lx = (i % 2 == 0) ? -0.68f : 0.68f;
+            float lz = (i < 2) ? -0.88f : 0.88f;
+            CreateDecoCylinder("Bed Leg", new Vector3(lx, 0.08f, lz), 0.05f, 0.16f,
+                Quaternion.identity, legMat);
+        }
+        DecoPart(PrimitiveType.Cube, "Bed Rail L", g, new Vector3(-0.75f, 0.32f, 0f),
+            new Vector3(0.08f, 0.18f, 1.9f), Quaternion.identity, frame);
+        DecoPart(PrimitiveType.Cube, "Bed Rail R", g, new Vector3(0.75f, 0.32f, 0f),
+            new Vector3(0.08f, 0.18f, 1.9f), Quaternion.identity, frame);
 
         CreateSoftBox("Frame", g, new Vector3(0f, 0.2f, 0f),
             new Vector3(1.6f, 0.4f, 2.05f), frame, 0.04f);
@@ -3717,6 +3747,10 @@ public class KitchenSimulator : MonoBehaviour
         DecoPart(PrimitiveType.Cube, "Quilt Fold", g,
             new Vector3(0f, 0.7f, -0.08f), new Vector3(1.54f, 0.05f, 0.16f),
             Quaternion.identity, MakeMaterial(new Color(0.62f, 0.66f, 0.82f), 0.02f, 0.45f));
+        // 床头软包扣
+        CreateDecoSphere("Bed Button L", new Vector3(-0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
+        CreateDecoSphere("Bed Button R", new Vector3(0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
+        CreateDecoSphere("Bed Button C", new Vector3(0f, 1.16f, -0.98f), 0.032f, buttonMat);
         AddRotatedObstacle("Bed Body", new Vector3(x, 0.3f, z), new Vector3(1.65f, 0.5f, 2.1f), yaw);
     }
 
@@ -3748,6 +3782,22 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
             Quaternion.Euler(0f, 0f, -12f),
             MakeMaterial(new Color(0.62f, 0.68f, 0.52f), 0.02f, 0.45f));
+        // 沙发腿、坐垫接缝与扶手搭毯
+        Material sofaLeg = MakeMaterial(new Color(0.25f, 0.19f, 0.14f), 0.05f, 0.4f);
+        for (int i = 0; i < 4; i++)
+        {
+            float lx = (i % 2 == 0) ? -0.85f : 0.85f;
+            float lz = (i < 2) ? -0.3f : 0.3f;
+            CreateDecoCylinder("Sofa Leg", new Vector3(lx, 0.07f, lz), 0.045f, 0.14f,
+                Quaternion.identity, sofaLeg);
+        }
+        DecoPart(PrimitiveType.Cube, "Sofa Seam", g,
+            new Vector3(0f, 0.55f, 0.05f), new Vector3(0.02f, 0.12f, 0.62f),
+            Quaternion.identity, MakeMaterial(new Color(0.34f, 0.4f, 0.46f), 0.02f, 0.45f));
+        DecoPart(PrimitiveType.Cube, "Throw Blanket", g,
+            new Vector3(-0.9f, 0.72f, 0.08f), new Vector3(0.22f, 0.42f, 0.56f),
+            Quaternion.Euler(0f, 0f, 6f),
+            MakeMaterial(new Color(0.74f, 0.56f, 0.4f), 0.02f, 0.5f));
         AddRotatedObstacle("Sofa Body", new Vector3(x, 0.4f, z), new Vector3(2.0f, 0.6f, 0.9f), yaw);
     }
 
@@ -3766,6 +3816,9 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(0.8f, 2.05f, 0.05f), door, body, handle, 0.34f);
         CreateCabinetDoor("Door R", g, new Vector3(0.42f, 1.1f, -0.32f),
             new Vector3(0.8f, 2.05f, 0.05f), door, body, handle, -0.34f);
+        DecoPart(PrimitiveType.Cube, "Wardrobe Crown", g,
+            new Vector3(0f, 2.24f, 0f), new Vector3(1.78f, 0.08f, 0.68f),
+            Quaternion.identity, body);
         DecoPart(PrimitiveType.Cube, "Wardrobe Plinth", g,
             new Vector3(0f, 0.06f, 0f), new Vector3(1.64f, 0.12f, 0.54f),
             Quaternion.identity, MakeMaterial(new Color(0.28f, 0.22f, 0.17f), 0.02f, 0.4f));
@@ -3791,6 +3844,20 @@ public class KitchenSimulator : MonoBehaviour
                 new Vector3(0f, dy, -0.3f), new Vector3(0.016f, 0.12f, 0.016f),
                 Quaternion.Euler(0f, 0f, 90f), handle);
         }
+        // 床头灯 + 两本书
+        Material lampMetal = MakeMaterial(new Color(0.34f, 0.3f, 0.26f), 0.6f, 0.5f);
+        Material shade = MakeMaterial(new Color(0.92f, 0.86f, 0.72f), 0.02f, 0.45f);
+        CreateDecoCylinder("Lamp Base", new Vector3(0.26f, 1.24f, 0f), 0.07f, 0.05f, Quaternion.identity, lampMetal);
+        CreateDecoCylinder("Lamp Stem", new Vector3(0.26f, 1.34f, 0f), 0.014f, 0.2f, Quaternion.identity, lampMetal);
+        CreateDecoCylinder("Lamp Shade", new Vector3(0.26f, 1.46f, 0f), 0.13f, 0.1f, Quaternion.identity, shade);
+        CreateDecoSphere("Lamp Bulb", new Vector3(0.26f, 1.43f, 0f), 0.035f,
+            MakeGlow(new Color(1f, 0.92f, 0.75f), 0.8f));
+        DecoPart(PrimitiveType.Cube, "Book A", g, new Vector3(-0.22f, 1.24f, 0f),
+            new Vector3(0.3f, 0.035f, 0.2f), Quaternion.Euler(0f, 8f, 0f),
+            MakeMaterial(new Color(0.4f, 0.52f, 0.62f), 0.02f, 0.45f));
+        DecoPart(PrimitiveType.Cube, "Book B", g, new Vector3(-0.2f, 1.28f, 0.02f),
+            new Vector3(0.26f, 0.03f, 0.18f), Quaternion.Euler(0f, -6f, 0f),
+            MakeMaterial(new Color(0.66f, 0.46f, 0.36f), 0.02f, 0.45f));
         AddRotatedObstacle("Cabinet Body", new Vector3(x, 0.6f, z), new Vector3(1f, 1.2f, 0.6f), yaw);
     }
 
