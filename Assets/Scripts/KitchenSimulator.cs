@@ -3574,7 +3574,7 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (w >= 3.8f)
         {
-            BuildWardrobe(left + 0.95f, cz - 0.4f, 90f);    // 衣柜贴西墙，留出贴墙通道
+            BuildWardrobe(left + 0.95f, cz - 0.4f, -90f);   // 门朝室内，避免把柜背当软垫
         }
         if (w >= 3.0f)
         {
@@ -3602,6 +3602,20 @@ public class KitchenSimulator : MonoBehaviour
             collider.enabled = false;
         }
         return part;
+    }
+
+    private GameObject DecoPartCylinder(string name, Transform parent, Vector3 localPosition,
+        float radius, float height, Quaternion rotation, Material material)
+    {
+        return DecoPart(PrimitiveType.Cylinder, name, parent, localPosition,
+            new Vector3(radius, height, radius), rotation, material);
+    }
+
+    private GameObject DecoPartSphere(string name, Transform parent, Vector3 localPosition,
+        float radius, Material material)
+    {
+        return DecoPart(PrimitiveType.Sphere, name, parent, localPosition,
+            Vector3.one * radius * 2f, Quaternion.identity, material);
     }
 
     // 倒角盒：上下各内收一段，用三段叠层代替硬边立方体。
@@ -3762,7 +3776,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             float lx = (i % 2 == 0) ? -0.68f : 0.68f;
             float lz = (i < 2) ? -0.88f : 0.88f;
-            CreateDecoCylinder("Bed Leg", new Vector3(lx, 0.08f, lz), 0.05f, 0.16f,
+            DecoPartCylinder("Bed Leg", g, new Vector3(lx, 0.08f, lz), 0.05f, 0.16f,
                 Quaternion.identity, legMat);
         }
         DecoPart(PrimitiveType.Cube, "Bed Rail L", g, new Vector3(-0.75f, 0.32f, 0f),
@@ -3786,9 +3800,9 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(0f, 0.7f, -0.08f), new Vector3(1.54f, 0.05f, 0.16f),
             Quaternion.identity, MakeMaterial(new Color(0.62f, 0.66f, 0.82f), 0.02f, 0.45f));
         // 床头软包扣
-        CreateDecoSphere("Bed Button L", new Vector3(-0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
-        CreateDecoSphere("Bed Button R", new Vector3(0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
-        CreateDecoSphere("Bed Button C", new Vector3(0f, 1.16f, -0.98f), 0.032f, buttonMat);
+        DecoPartSphere("Bed Button L", g, new Vector3(-0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
+        DecoPartSphere("Bed Button R", g, new Vector3(0.4f, 0.92f, -0.98f), 0.032f, buttonMat);
+        DecoPartSphere("Bed Button C", g, new Vector3(0f, 1.16f, -0.98f), 0.032f, buttonMat);
         AddRotatedObstacle("Bed Body", new Vector3(x, 0.3f, z), new Vector3(1.65f, 0.5f, 2.1f), yaw);
     }
 
@@ -3813,11 +3827,11 @@ public class KitchenSimulator : MonoBehaviour
         CreateSoftBox("Cushion R", g, new Vector3(0.47f, 0.49f, 0.06f),
             new Vector3(0.82f, 0.14f, 0.68f), cushion, 0.05f);
         DecoPart(PrimitiveType.Cube, "Throw Pillow L", g,
-            new Vector3(-0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
+            new Vector3(-0.58f, 0.72f, -0.12f), new Vector3(0.34f, 0.34f, 0.12f),
             Quaternion.Euler(0f, 0f, 12f),
             MakeMaterial(new Color(0.78f, 0.62f, 0.42f), 0.02f, 0.45f));
         DecoPart(PrimitiveType.Cube, "Throw Pillow R", g,
-            new Vector3(0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
+            new Vector3(0.58f, 0.72f, -0.12f), new Vector3(0.34f, 0.34f, 0.12f),
             Quaternion.Euler(0f, 0f, -12f),
             MakeMaterial(new Color(0.62f, 0.68f, 0.52f), 0.02f, 0.45f));
         // 沙发腿、坐垫接缝与扶手搭毯
@@ -3826,7 +3840,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             float lx = (i % 2 == 0) ? -0.85f : 0.85f;
             float lz = (i < 2) ? -0.3f : 0.3f;
-            CreateDecoCylinder("Sofa Leg", new Vector3(lx, 0.07f, lz), 0.045f, 0.14f,
+            DecoPartCylinder("Sofa Leg", g, new Vector3(lx, 0.07f, lz), 0.045f, 0.14f,
                 Quaternion.identity, sofaLeg);
         }
         DecoPart(PrimitiveType.Cube, "Sofa Seam", g,
@@ -3885,10 +3899,10 @@ public class KitchenSimulator : MonoBehaviour
         // 床头灯 + 两本书
         Material lampMetal = MakeMaterial(new Color(0.34f, 0.3f, 0.26f), 0.6f, 0.5f);
         Material shade = MakeMaterial(new Color(0.92f, 0.86f, 0.72f), 0.02f, 0.45f);
-        CreateDecoCylinder("Lamp Base", new Vector3(0.26f, 1.24f, 0f), 0.07f, 0.05f, Quaternion.identity, lampMetal);
-        CreateDecoCylinder("Lamp Stem", new Vector3(0.26f, 1.34f, 0f), 0.014f, 0.2f, Quaternion.identity, lampMetal);
-        CreateDecoCylinder("Lamp Shade", new Vector3(0.26f, 1.46f, 0f), 0.13f, 0.1f, Quaternion.identity, shade);
-        CreateDecoSphere("Lamp Bulb", new Vector3(0.26f, 1.43f, 0f), 0.035f,
+        DecoPartCylinder("Lamp Base", g, new Vector3(0.26f, 1.24f, 0f), 0.07f, 0.05f, Quaternion.identity, lampMetal);
+        DecoPartCylinder("Lamp Stem", g, new Vector3(0.26f, 1.34f, 0f), 0.014f, 0.2f, Quaternion.identity, lampMetal);
+        DecoPartCylinder("Lamp Shade", g, new Vector3(0.26f, 1.46f, 0f), 0.13f, 0.1f, Quaternion.identity, shade);
+        DecoPartSphere("Lamp Bulb", g, new Vector3(0.26f, 1.43f, 0f), 0.035f,
             MakeGlow(new Color(1f, 0.92f, 0.75f), 0.8f));
         DecoPart(PrimitiveType.Cube, "Book A", g, new Vector3(-0.22f, 1.24f, 0f),
             new Vector3(0.3f, 0.035f, 0.2f), Quaternion.Euler(0f, 8f, 0f),
@@ -4051,11 +4065,23 @@ public class KitchenSimulator : MonoBehaviour
         Material pot = MakeMaterial(new Color(0.64f, 0.42f, 0.3f), 0.02f, 0.4f);
         Material leaf = MakeMaterial(new Color(0.25f, 0.53f, 0.27f), 0.02f, 0.4f);
 
-        DecoPart(PrimitiveType.Cylinder, "Pot", g, new Vector3(0f, 0.22f, 0f), new Vector3(0.24f, 0.22f, 0.24f), Quaternion.identity, pot);
-        DecoPart(PrimitiveType.Sphere, "Leaf 1", g, new Vector3(0f, 0.66f, 0f), Vector3.one * 0.52f, Quaternion.identity, leaf);
-        DecoPart(PrimitiveType.Sphere, "Leaf 2", g, new Vector3(0.18f, 0.88f, 0.1f), Vector3.one * 0.36f, Quaternion.identity, leaf);
-        DecoPart(PrimitiveType.Sphere, "Leaf 3", g, new Vector3(-0.16f, 0.84f, -0.12f), Vector3.one * 0.32f, Quaternion.identity, leaf);
-        AddRotatedObstacle("Plant Body", new Vector3(x, 0.25f, z), new Vector3(0.5f, 0.5f, 0.5f), 0f);
+        Material soil = MakeMaterial(new Color(0.28f, 0.2f, 0.14f), 0.02f, 0.35f);
+        Material stem = MakeMaterial(new Color(0.32f, 0.42f, 0.24f), 0.02f, 0.35f);
+        DecoPart(PrimitiveType.Cylinder, "Pot", g, new Vector3(0f, 0.16f, 0f),
+            new Vector3(0.16f, 0.18f, 0.16f), Quaternion.identity, pot);
+        DecoPart(PrimitiveType.Cylinder, "Soil", g, new Vector3(0f, 0.25f, 0f),
+            new Vector3(0.14f, 0.02f, 0.14f), Quaternion.identity, soil);
+        DecoPart(PrimitiveType.Cylinder, "Stem A", g, new Vector3(0f, 0.42f, 0f),
+            new Vector3(0.014f, 0.34f, 0.014f), Quaternion.identity, stem);
+        DecoPart(PrimitiveType.Cylinder, "Stem B", g, new Vector3(0.06f, 0.4f, 0.03f),
+            new Vector3(0.012f, 0.28f, 0.012f), Quaternion.Euler(0f, 0f, -12f), stem);
+        DecoPart(PrimitiveType.Sphere, "Leaf 1", g, new Vector3(0f, 0.62f, 0f),
+            Vector3.one * 0.28f, Quaternion.identity, leaf);
+        DecoPart(PrimitiveType.Sphere, "Leaf 2", g, new Vector3(0.13f, 0.76f, 0.05f),
+            Vector3.one * 0.18f, Quaternion.identity, leaf);
+        DecoPart(PrimitiveType.Sphere, "Leaf 3", g, new Vector3(-0.12f, 0.72f, -0.06f),
+            Vector3.one * 0.16f, Quaternion.identity, leaf);
+        AddRotatedObstacle("Plant Body", new Vector3(x, 0.24f, z), new Vector3(0.36f, 0.48f, 0.36f), 0f);
     }
 
     // ── 几何/碰撞辅助 ─────────────────────────────────────
