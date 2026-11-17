@@ -3748,17 +3748,17 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildRoundCoffeeTable(float cx, float cz)
     {
         Transform g = CreateGroup("Round Coffee Table", new Vector3(cx, 0f, cz), 0f);
-        AddContactShadow(g, Vector3.zero, 1.05f, 1.05f);
+        AddContactShadow(g, Vector3.zero, 1.38f, 1.38f);
         EnsureTextures();
         Material wood = TexturedMaterial(new Color(0.58f, 0.42f, 0.26f), woodTexture, 2f);
-        CreateDecoCylinder("Round Table Top", new Vector3(cx, 0.45f, cz), 0.45f, 0.08f,
+        CreateDecoCylinder("Round Table Top", new Vector3(cx, 0.45f, cz), 0.62f, 0.08f,
             Quaternion.identity, wood);
-        CreateDecoCylinder("Round Table Pedestal", new Vector3(cx, 0.22f, cz), 0.09f, 0.45f,
+        CreateDecoCylinder("Round Table Pedestal", new Vector3(cx, 0.22f, cz), 0.11f, 0.45f,
             Quaternion.identity, wood);
-        CreateDecoCylinder("Round Table Base", new Vector3(cx, 0.03f, cz), 0.28f, 0.06f,
+        CreateDecoCylinder("Round Table Base", new Vector3(cx, 0.03f, cz), 0.36f, 0.06f,
             Quaternion.identity, wood);
         AddRotatedObstacle("Round Coffee Table", new Vector3(cx, 0.22f, cz),
-            new Vector3(0.95f, 0.45f, 0.95f), 0f);
+            new Vector3(1.28f, 0.45f, 1.28f), 0f);
     }
 
     private void BuildBed(float x, float z, float yaw)
