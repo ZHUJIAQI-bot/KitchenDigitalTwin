@@ -609,6 +609,7 @@ public class KitchenSimulator : MonoBehaviour
             faultManualOpen = !faultManualOpen;
             if (faultManualOpen)
             {
+                faultManualScroll = Vector2.zero;
                 SetCursorLock(false);
             }
         }
@@ -7025,7 +7026,7 @@ public class KitchenSimulator : MonoBehaviour
             sensor = "可燃气体传感器（厨房天花板下近燃气表）测天然气 %LEL；一氧化碳传感器测 CO ppm。",
             threshold = "🟢 正常：天然气 <5%LEL，CO <10 ppm\n🟡 预警：5~10%LEL，CO 10~30 ppm 持续 5 秒\n🔴 报警：>10%LEL，CO >30 ppm（立即处理）",
             tools = "肥皂水、毛刷、扳手、燃气专用软管、喉箍。",
-            steps = "1. 立即关灶前阀和燃气总阀\n2. 严禁开灯/开关电器/打电话/穿脱毛衣\n3. 开窗通风，人撤到室外\n4. 表后软管老化→肥皂水刷接口，冒泡处即漏点\n5. 关阀，扳手松喉箍换新软管装好\n6. 开阀再肥皂水检漏确认不冒泡\n7. 漏气在表前/公共管道→撤离并打燃气抢修电话",
+            steps = "1. 立即关闭灶前阀和燃气总阀\n2. 开窗通风，人撤到室外（严禁开灯/开关电器/打电话）\n3. 用肥皂水刷接口，冒泡处即为漏点\n4. 松开喉箍取下老化软管\n5. 装燃气专用软管并拧紧喉箍\n6. 开阀再用肥皂水检漏，确认不冒泡",
             selfRepair = "表后阀门到灶具间软管更换、肥皂水检漏。",
             propertyRepair = "燃气表漏气、表前公共管道、调压箱（必须燃气公司）。",
         },
@@ -7494,6 +7495,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 GUILayout.Label((si + 1) + ". " + activeProcedure.steps[si], manualBodyStyle);
             }
+            GUILayout.Label("本单只考以上 " + activeProcedure.steps.Length + " 步；通用手册里的其他步骤不再参与本单排序。", manualBodyStyle);
             GUILayout.Space(10f);
         }
         GUILayout.Label("【故障现象】\n" + f.symptom, manualBodyStyle);
@@ -7501,7 +7503,10 @@ public class KitchenSimulator : MonoBehaviour
         GUILayout.Label("【传感器监测】\n" + f.sensor, manualBodyStyle);
         GUILayout.Label("【异常判定】\n" + f.threshold, manualBodyStyle);
         GUILayout.Label("【维修工具】\n" + f.tools, manualBodyStyle);
-        GUILayout.Label("【通用处置参考】\n" + f.steps, manualBodyStyle);
+        if (activeProcedure == null)
+        {
+            GUILayout.Label("【维修步骤】\n" + f.steps, manualBodyStyle);
+        }
         GUILayout.Label("【居民自修】\n" + f.selfRepair, manualBodyStyle);
         GUILayout.Label("【须物业/专业】\n" + f.propertyRepair, manualBodyStyle);
         GUILayout.EndScrollView();
