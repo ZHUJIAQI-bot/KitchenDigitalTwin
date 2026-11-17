@@ -508,6 +508,11 @@ public class KitchenSimulator : MonoBehaviour
     {
         Application.targetFrameRate = 60;
         Time.maximumDeltaTime = 0.1f;
+        // 打包运行时锁定 1080p，避免小窗口启动导致 UI 拥挤；编辑器预览不受影响
+        if (!Application.isEditor)
+        {
+            Screen.SetResolution(1920, 1080, Screen.fullScreen);
+        }
         // WebGL 下限制阴影与逐像素光源开销，避免全屏时掉帧
         QualitySettings.shadowDistance = 30f;
         QualitySettings.shadowCascades = 1;
