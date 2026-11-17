@@ -293,6 +293,8 @@ public class KitchenSimulator : MonoBehaviour
     private int currentTool;
     private bool bagOpen;
     private bool minimapLarge;
+    private bool minimapVisible;
+    private bool hintVisible;
     private bool shopOpen;
     private bool almanacOpen;
     private bool twinPanelOpen;          // 数字孪生监测面板：默认收起，避免遮挡视野
@@ -393,7 +395,8 @@ public class KitchenSimulator : MonoBehaviour
     private Order repairingOrder;
     private int orderSerial;
     private float orderTimer;
-    private bool taskListExpanded = true;
+    private bool taskListExpanded;
+    private bool budgetExpanded;
     private Vector2 taskScroll;
     private int income;     // 完工收入（客户支付）
     private int expenses;   // 购置道具支出
@@ -3886,7 +3889,24 @@ public class KitchenSimulator : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.M))
         {
-            minimapLarge = !minimapLarge;
+            if (!minimapVisible)
+            {
+                minimapVisible = true;
+                minimapLarge = false;
+            }
+            else if (!minimapLarge)
+            {
+                minimapLarge = true;
+            }
+            else
+            {
+                minimapVisible = false;
+                minimapLarge = false;
+            }
+        }
+        if (Input.GetKeyDown(KeyCode.H))
+        {
+            hintVisible = !hintVisible;
         }
         if (Input.GetKeyDown(KeyCode.G))
         {
@@ -8321,16 +8341,19 @@ public class KitchenSimulator : MonoBehaviour
 
         // 数据牌：深色底板 + 状态色描边（替代原来的感叹号，直接体现"数字孪生"）
         Material boardMat = MakeMaterial(new Color(0.05f, 0.09f, 0.12f), 0.1f, 0.4f);
-        GameObject board = MakePrimitive(PrimitiveType.Cube, "Tag Board", marker.transform, new Vector3(0f, 0f, 0.03f), new Vector3(2.5f, 0.8f, 0.05f), Quaternion.identity, boardMat);
-        GameObject edge = MakePrimitive(PrimitiveType.Cube, "Tag Edge", marker.transform, new Vector3(0f, 0f, 0.06f), new Vector3(2.58f, 0.88f, 0.02f), Quaternion.identity, stateMaterials[0]);
+        GameObject board = MakePrimitive(PrimitiveType.Cube, "Tag Board", marker.transform,
+            new Vector3(0f, 0f, 0.03f), new Vector3(0.95f, 0.36f, 0.05f), Quaternion.identity, boardMat);
+        // 边框放在底板后面并只大一圈，避免整块牌子被状态色铺满
+        GameObject edge = MakePrimitive(PrimitiveType.Cube, "Tag Edge", marker.transform,
+            new Vector3(0f, 0f, 0f), new Vector3(1.02f, 0.43f, 0.02f), Quaternion.identity, stateMaterials[0]);
 
         GameObject labelObject = new GameObject("Tag Text");
         labelObject.transform.SetParent(marker.transform, false);
-        labelObject.transform.localPosition = new Vector3(0f, 0f, 0f);
+        labelObject.transform.localPosition = new Vector3(0f, 0f, 0.07f);
         TextMesh mesh = labelObject.AddComponent<TextMesh>();
         mesh.font = UiFont;
-        mesh.fontSize = 64;
-        mesh.characterSize = 0.075f;
+        mesh.fontSize = 48;
+        mesh.characterSize = 0.028f;
         mesh.anchor = TextAnchor.MiddleCenter;
         mesh.alignment = TextAlignment.Center;
         mesh.lineSpacing = 1.0f;
@@ -8828,8 +8851,16 @@ public class KitchenSimulator : MonoBehaviour
                 {
                     mark = order.alarmLevel >= 1 ? "预警" : "正常";
                 }
-                order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark
-                    + (OrderSelfRepairable(order) ? "" : " ·须物业");
+                // 远处只留一个小感叹号，走近才展开读数，避免满屏红字
+                if (Distance2D(playerPosition, order.site) > 7f)
+                {
+                    order.tag.text = "!";
+                }
+                else
+                {
+                    order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark
+                        + (OrderSelfRepairable(order) ? "" : " ·须物业");
+                }
                 order.tag.color = stateColors[(int)order.state];
             }
 
@@ -8929,14 +8960,23 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 界面 ──────────────────────────────────────────────
-    private Rect BudgetRect { get { return new Rect(16f, 16f, 320f, 140f); } }
+    private Rect BudgetRect
+    {
+        get
+        {
+            return budgetExpanded
+                ? new Rect(16f, 16f, 320f, 140f)
+                : new Rect(16f, 16f, 190f, 38f);
+        }
+    }
     private Rect TaskListRect
     {
         get
         {
-            // 展开=固定高度页面内部滚动；折叠=只显示任务栏(1-2条)
-            float height = taskListExpanded ? 400f : 205f;
-            return new Rect(Screen.width - 348f, 16f, 332f, height);
+            // 折叠时只留一个工单徽标，展开才是完整列表
+            float width = taskListExpanded ? 332f : 96f;
+            float height = taskListExpanded ? 400f : 34f;
+            return new Rect(Screen.width - width - 16f, 16f, width, height);
         }
     }
     private Rect PromptRect { get { return new Rect(16f, Screen.height - 152f, 430f, 112f); } }
@@ -8951,7 +8991,15 @@ public class KitchenSimulator : MonoBehaviour
             return new Rect(16f, 146f, 330f, 122f + rows * 32f);
         }
     }
-    private Rect HintRect { get { return new Rect(0f, Screen.height - 30f, Screen.width, 30f); } }
+    private Rect HintRect
+    {
+        get
+        {
+            return hintVisible
+                ? new Rect(0f, Screen.height - 30f, Screen.width, 30f)
+                : new Rect(Screen.width * 0.5f - 48f, Screen.height - 30f, 96f, 24f);
+        }
+    }
     private Rect LoginRect { get { return new Rect((Screen.width - 420f) * 0.5f, (Screen.height - 330f) * 0.5f, 420f, 330f); } }
 
     private void OnGUI()
@@ -8997,6 +9045,10 @@ public class KitchenSimulator : MonoBehaviour
     {
         get
         {
+            if (!minimapVisible)
+            {
+                return new Rect(Screen.width - 106f, Screen.height - 48f, 90f, 32f);
+            }
             return minimapLarge
                 ? new Rect(Screen.width - 512f, Screen.height - 314f, 496f, 244f)
                 : new Rect(Screen.width - 312f, Screen.height - 180f, 296f, 128f);
@@ -9014,6 +9066,18 @@ public class KitchenSimulator : MonoBehaviour
 
     private void DrawMinimap()
     {
+        if (!minimapVisible)
+        {
+            Rect badge = MinimapRect;
+            DrawPanel(badge, panelFill, panelBorder);
+            GUI.Label(badge, "地图 M", cardButtonStyle);
+            if (GUI.Button(badge, GUIContent.none, GUIStyle.none))
+            {
+                minimapVisible = true;
+            }
+            return;
+        }
+
         Rect rect = MinimapRect;
         DrawPanel(rect, panelFill, panelBorder);
         GUI.Label(new Rect(rect.x + 12f, rect.y + 6f, 200f, 22f), "现场平面图", cardTitleStyle);
@@ -9134,6 +9198,20 @@ public class KitchenSimulator : MonoBehaviour
 
     private void DrawBudgetPanel()
     {
+        if (!budgetExpanded)
+        {
+            Rect pill = BudgetRect;
+            DrawPanel(pill, panelFill, panelBorder);
+            Fill(new Rect(pill.x + 10f, pill.y + 9f, 4f, 20f), pendingColor);
+            GUI.Label(new Rect(pill.x + 22f, pill.y + 7f, pill.width - 30f, 24f),
+                "¥" + Cash.ToString("N0"), cardButtonStyle);
+            if (GUI.Button(pill, GUIContent.none, GUIStyle.none))
+            {
+                budgetExpanded = true;
+            }
+            return;
+        }
+
         Rect rect = BudgetRect;
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, 44f), pendingColor);
@@ -9143,10 +9221,32 @@ public class KitchenSimulator : MonoBehaviour
         Fill(new Rect(rect.x + 22f, rect.y + 86f, rect.width - 44f, 1f), dividerColor);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 94f, 288f, 20f), "收入 ¥" + income.ToString("N0") + " · 成本 ¥" + expenses.ToString("N0"), smallStyle);
         GUI.Label(new Rect(rect.x + 22f, rect.y + 116f, 288f, 20f), "财富值 ¥" + Cash.ToString("N0") + " · 净利 ¥" + (income - expenses).ToString("N0"), smallStyle);
+
+        Rect close = new Rect(rect.x + rect.width - 70f, rect.y + 8f, 58f, 24f);
+        DrawPanel(close, new Color(0.3f, 0.32f, 0.36f, 0.95f), Color.clear);
+        if (GUI.Button(close, GUIContent.none, GUIStyle.none))
+        {
+            budgetExpanded = false;
+        }
+        GUI.Label(close, "收起", cardButtonStyle);
     }
 
     private void DrawTaskList()
     {
+        if (!taskListExpanded)
+        {
+            Rect badge = TaskListRect;
+            DrawPanel(badge, panelFill, panelBorder);
+            Fill(new Rect(badge.x + 8f, badge.y + 9f, 4f, 16f), fixedColor);
+            GUI.Label(new Rect(badge.x + 18f, badge.y + 6f, badge.width - 22f, 22f),
+                "工单 " + CountActive(), cardButtonStyle);
+            if (GUI.Button(badge, GUIContent.none, GUIStyle.none))
+            {
+                taskListExpanded = true;
+            }
+            return;
+        }
+
         Rect rect = TaskListRect;
         DrawPanel(rect, panelFill, panelBorder);
         Fill(new Rect(rect.x + 12f, rect.y + 16f, 4f, 28f), fixedColor);
@@ -9172,22 +9272,6 @@ public class KitchenSimulator : MonoBehaviour
         if (display.Count == 0)
         {
             GUI.Label(new Rect(rect.x + 18f, y + 6f, rect.width - 36f, 22f), "暂无工单，系统正在派单…", smallStyle);
-            return;
-        }
-
-        if (!taskListExpanded)
-        {
-            // 任务栏：只显示当前进行中的 1-2 条
-            int show = Mathf.Min(2, display.Count);
-            for (int i = 0; i < show; i++)
-            {
-                DrawOrderCard(new Rect(rect.x + 12f, y + i * 66f, rect.width - 24f, 58f), display[i]);
-            }
-            if (display.Count > show)
-            {
-                GUI.Label(new Rect(rect.x + 18f, y + show * 66f + 4f, rect.width - 36f, 18f),
-                    "还有 " + (display.Count - show) + " 条工单 · 点「展开」查看", smallStyle);
-            }
             return;
         }
 
@@ -10789,14 +10873,23 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
-        DrawPanel(rect, new Color(0.04f, 0.06f, 0.08f, 0.6f), Color.clear);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 14f, rect.width - 44f, 24f), "户主会到前台登记或电话预约", bodyStyle);
-        GUI.Label(new Rect(rect.x + 22f, rect.y + 38f, rect.width - 44f, 20f),
-            CountActive() < MaxActiveOrders ? "下一张工单约 " + Mathf.CeilToInt(orderTimer) + " 秒后到达" : "当前工单已满，先完成现场维修", smallStyle);
+        // 没有可交互对象时不占据屏幕，只在有工单/业主/窗户时弹出
     }
 
     private void DrawHintBar()
     {
+        if (!hintVisible)
+        {
+            Rect tab = HintRect;
+            DrawPanel(tab, panelFill, panelBorder);
+            GUI.Label(tab, "H 操作提示", cardButtonStyle);
+            if (GUI.Button(tab, GUIContent.none, GUIStyle.none))
+            {
+                hintVisible = true;
+            }
+            return;
+        }
+
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
         GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测与报警派单　·　K 知识手册　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　L 联机　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
@@ -10944,8 +11037,11 @@ public class KitchenSimulator : MonoBehaviour
     private bool IsPointerOverGui(Vector2 mousePosition)
     {
         Vector2 point = new Vector2(mousePosition.x, Screen.height - mousePosition.y);
+        bool hasPrompt = repairingOrder != null || activeOrder != null || activeHomeowner != null
+            || activeWindow != null || activeColleague != null;
         return BudgetRect.Contains(point) || TaskListRect.Contains(point) || MinimapRect.Contains(point)
-            || PromptRect.Contains(point) || ToolChipRect.Contains(point)
+            || (hasPrompt && PromptRect.Contains(point)) || ToolChipRect.Contains(point)
+            || HintRect.Contains(point)
             || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
             || (almanacOpen && AlmanacRect.Contains(point))
             || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point))
