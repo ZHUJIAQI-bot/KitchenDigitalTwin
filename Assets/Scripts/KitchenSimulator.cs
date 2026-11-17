@@ -73,6 +73,14 @@ public class KitchenSimulator : MonoBehaviour
         public readonly List<float> history = new List<float>();   // 最近采样，用于趋势曲线
         public float fixTime;          // 数据回归正常的时刻
         public float normalSince;      // 读数持续正常的起点
+        public float overSince;        // 本次读数连续超阈值的起点（0=当前未超）；运行时状态，不入存档
+        public float warnSince;        // 连续超预警线的起点
+        public float severeSince;      // 连续超严重线的起点
+        public float calmSince;        // 连续低于预警线的起点，用于滞回解除
+        public int alarmLevel;         // 0正常 1预警 2报警 3严重
+        public float dispatchedAt;     // 报警派单给维修公司的时刻（0=未派单）
+        public float acceptedAt;       // 维修公司接单时刻（0=未接单）
+        public bool dispatchPenalized; // 响应超时是否已扣罚
         public bool verified;          // 是否通过验收观察期（闭环）
         public bool selfRepairable;    // 是否居民可自修（否则须物业/专业）
 
@@ -179,6 +187,10 @@ public class KitchenSimulator : MonoBehaviour
     private readonly List<Material> nightLightMaterials = new List<Material>();
     private Material riverMaterial;
     private Material buildingWindowMaterial;
+    private Material roadMaterial;
+    private Material pavementMaterial;
+    private Material innerWalkMaterial;
+    private Material lawnMaterial;
     private readonly List<Renderer> lampGlobes = new List<Renderer>();
     private Material lampOnMaterial;
     private Material lampOffMaterial;
@@ -226,6 +238,8 @@ public class KitchenSimulator : MonoBehaviour
     private Transform rightLegPivot;
 
     private Camera viewCamera;
+    private const float BaseVerticalFov = 68f;
+    private float baseHorizontalFov;
     private float lookYaw;
     private float lookPitch;
     private bool cursorLocked;
@@ -355,6 +369,7 @@ public class KitchenSimulator : MonoBehaviour
     private const float DialogueTypeTime = 1e6f;   // 单句最大显示时长（用于逐字进度）
     private const float TypeCharsPerSecond = 34f;  // 逐字显示速度
     private Homeowner talkTarget;                  // 对话结束后要登记工单的户主
+    private Homeowner activeHomeowner;             // 附近可交谈的户主（按 E 才开始对话）
     private CharacterRig bossRig;
 
     // 小地图
@@ -387,6 +402,7 @@ public class KitchenSimulator : MonoBehaviour
     private GUIStyle speakerStyle;
     private GUIStyle dialogueStyle;
     private GUIStyle transitionStyle;
+    private GUIStyle alarmStyle;
 
     private int Cash { get { return StartCash + income - expenses; } }
 
@@ -628,6 +644,7 @@ public class KitchenSimulator : MonoBehaviour
         HandleMovement();
         HandleDialogue();
         UpdateSensors();
+        UpdateDispatch();
         UpdateGuide();
         UpdateSleep();
         UpdateColleagues();
@@ -641,6 +658,7 @@ public class KitchenSimulator : MonoBehaviour
         UpdateAnimate();
         UpdateMarkers();
         UpdateCurrentRoom();
+        UpdateCameraFov();
         if (toastTimer > 0f)
         {
             toastTimer -= Time.deltaTime;
@@ -660,6 +678,66 @@ public class KitchenSimulator : MonoBehaviour
         floorMaterial = MakeMaterial(floorA, 0.02f, 0.35f);
         // 无色透明玻璃：不能带蓝，否则窗玻璃看起来是蓝色的
         glassMaterial = MakeTransparent(new Color(0.94f, 0.96f, 0.97f), 0.10f, 0.95f);
+
+        // 地表材质：用运行时生成的噪声/砖缝贴图代替纯色，近看才有"地面"的颗粒感。
+        // 贴图很小（128×128），WebGL 下内存与带宽压力都可以忽略。
+        roadMaterial = MakeTexturedMaterial(0.05f, 0.58f,
+            CreateNoiseTexture("Asphalt", new Color(0.20f, 0.21f, 0.22f), new Color(0.38f, 0.39f, 0.40f), 0.055f, 17, false),
+            new Vector2(36f, 2f));
+        pavementMaterial = MakeTexturedMaterial(0.02f, 0.35f,
+            CreateNoiseTexture("Pavement", new Color(0.56f, 0.55f, 0.52f), new Color(0.80f, 0.79f, 0.75f), 0.08f, 41, true),
+            new Vector2(1f, 1f));
+        innerWalkMaterial = new Material(pavementMaterial);
+        innerWalkMaterial.mainTextureScale = new Vector2(24f, 1f);
+        lawnMaterial = MakeTexturedMaterial(0f, 0.18f,
+            CreateNoiseTexture("Lawn", new Color(0.26f, 0.44f, 0.20f), new Color(0.48f, 0.66f, 0.30f), 0.11f, 73, false),
+            new Vector2(90f, 90f));
+    }
+
+    // 程序化地表贴图：两层 Perlin 噪声叠加，铺装额外画砖缝。
+    private Texture2D CreateNoiseTexture(string name, Color dark, Color light, float frequency, int seed, bool paver)
+    {
+        const int size = 128;
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGB24, true);
+        texture.name = name;
+        System.Random rng = new System.Random(seed);
+        float ox = (float)rng.NextDouble() * 64f;
+        float oy = (float)rng.NextDouble() * 64f;
+        Color[] pixels = new Color[size * size];
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float coarse = Mathf.PerlinNoise(ox + x * frequency, oy + y * frequency);
+                float fine = Mathf.PerlinNoise(ox * 3f + x * frequency * 5f, oy * 3f + y * frequency * 5f);
+                float t = Mathf.Clamp01(coarse * 0.75f + fine * 0.25f);
+                Color c = Color.Lerp(dark, light, t);
+                if (paver)
+                {
+                    int row = y / 32;
+                    int sx = x + (row % 2) * 16;
+                    if (y % 32 < 2 || sx % 32 < 2)
+                    {
+                        c *= 0.74f;
+                    }
+                }
+                pixels[y * size + x] = c;
+            }
+        }
+        texture.SetPixels(pixels);
+        texture.Apply(true, false);
+        texture.wrapMode = TextureWrapMode.Repeat;
+        texture.filterMode = FilterMode.Trilinear;
+        texture.anisoLevel = 4;
+        return texture;
+    }
+
+    private Material MakeTexturedMaterial(float metallic, float smoothness, Texture2D texture, Vector2 tiling)
+    {
+        Material material = MakeMaterial(Color.white, metallic, smoothness);
+        material.mainTexture = texture;
+        material.mainTextureScale = tiling;
+        return material;
     }
 
     // ── 世界构建 ──────────────────────────────────────────
@@ -689,32 +767,55 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildOutdoor()
     {
         // 各层顶面高度严格错开，避免共面导致的 z-fighting 闪烁
-        CreateDecoCube("Lawn", new Vector3(20f, -0.27f, 0f), new Vector3(360f, 0.5f, 340f), new Color(0.38f, 0.6f, 0.3f));
+        // 草坪顶面必须低于路面/人行道，否则会把整条马路和车道线埋进草里。
+        // 顶面 = -0.34 + 0.25 = -0.09，路面顶面 = -0.06。
+        CreateDecoCube("Lawn", new Vector3(20f, -0.34f, 0f), new Vector3(360f, 0.5f, 340f), lawnMaterial);
 
-        Color asphalt = new Color(0.29f, 0.3f, 0.31f);
-        Color pavement = new Color(0.68f, 0.68f, 0.66f);
-        CreateDecoCube("Road Main", new Vector3(20f, -0.2f, -13f), new Vector3(200f, 0.28f, 7f), asphalt);
-        CreateDecoCube("Curb North", new Vector3(20f, -0.02f, -9.2f), new Vector3(200f, 0.16f, 0.6f), pavement);
-        CreateDecoCube("Curb South", new Vector3(20f, -0.02f, -16.8f), new Vector3(200f, 0.16f, 0.6f), pavement);
+        Color linePaint = new Color(0.93f, 0.91f, 0.80f);
+        CreateDecoCube("Road Main", new Vector3(20f, -0.2f, -13f), new Vector3(200f, 0.28f, 7f), roadMaterial);
+        CreateDecoCube("Curb North", new Vector3(20f, -0.02f, -9.2f), new Vector3(200f, 0.16f, 0.6f), pavementMaterial);
+        CreateDecoCube("Curb South", new Vector3(20f, -0.02f, -16.8f), new Vector3(200f, 0.16f, 0.6f), pavementMaterial);
+        // 人行道：把车行道和楼前场地接起来，路边不再是一道悬空的牙子
+        CreateDecoCube("Sidewalk North", new Vector3(20f, -0.05f, -8.55f), new Vector3(200f, 0.14f, 1.1f), pavementMaterial);
+        // 车道边缘实线
+        CreateDecoCube("Road Edge N", new Vector3(20f, -0.045f, -9.85f), new Vector3(200f, 0.02f, 0.12f), linePaint);
+        CreateDecoCube("Road Edge S", new Vector3(20f, -0.045f, -16.15f), new Vector3(200f, 0.02f, 0.12f), linePaint);
         for (int x = -70; x < 110; x += 9)
         {
-            CreateDecoCube("Road Mark", new Vector3(x, -0.04f, -13f), new Vector3(4f, 0.03f, 0.22f), new Color(0.93f, 0.91f, 0.8f));
+            CreateDecoCube("Road Mark", new Vector3(x, -0.04f, -13f), new Vector3(4f, 0.03f, 0.22f), linePaint);
+        }
+        // 公司门前的斑马线
+        for (int i = 0; i < 7; i++)
+        {
+            CreateDecoCube("Crosswalk", new Vector3(-19f + i * 1.15f, -0.04f, -13f),
+                new Vector3(0.55f, 0.03f, 5.4f), linePaint);
+        }
+        // 井盖与路面修补：打破大片纯色沥青的单调
+        CreateDecoCube("Manhole 1", new Vector3(-4f, -0.05f, -11.4f), new Vector3(0.9f, 0.03f, 0.9f), new Color(0.20f, 0.21f, 0.22f));
+        CreateDecoCube("Manhole 2", new Vector3(32f, -0.05f, -14.8f), new Vector3(0.9f, 0.03f, 0.9f), new Color(0.20f, 0.21f, 0.22f));
+        CreateDecoCube("Manhole 3", new Vector3(68f, -0.05f, -11.8f), new Vector3(0.9f, 0.03f, 0.9f), new Color(0.20f, 0.21f, 0.22f));
+        CreateDecoCube("Road Patch", new Vector3(46f, -0.052f, -15.2f), new Vector3(9f, 0.02f, 1.6f), new Color(0.18f, 0.19f, 0.20f));
+
+        for (int i = 0; i < 4; i++)
+        {
+            CreateDecoCube("Road Patch", new Vector3(-40f + i * 46f, -0.052f, -11.2f + (i % 2) * 2.4f),
+                new Vector3(6f + i, 0.02f, 0.9f), new Color(0.19f, 0.20f, 0.21f));
         }
 
         // 每栋楼门前的小路
         float[] doorX = { -17f, 5f, 21f, 37f, 53f };
         for (int i = 0; i < doorX.Length; i++)
         {
-            CreateDecoCube("Path", new Vector3(doorX[i], -0.06f, -8.3f), new Vector3(2.8f, 0.12f, 2.2f), pavement);
+            CreateDecoCube("Path", new Vector3(doorX[i], -0.06f, -8.3f), new Vector3(2.8f, 0.12f, 2.2f), pavementMaterial);
         }
         // 第二排住宅门前小路
         float[] doorX2 = { 13f, 29f, 45f };
         for (int i = 0; i < doorX2.Length; i++)
         {
-            CreateDecoCube("Path", new Vector3(doorX2[i], -0.06f, 11.2f), new Vector3(2.8f, 0.12f, 2.2f), pavement);
+            CreateDecoCube("Path", new Vector3(doorX2[i], -0.06f, 11.2f), new Vector3(2.8f, 0.12f, 2.2f), pavementMaterial);
         }
         // 小区内街（两排楼之间的横向步道）
-        CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), pavement);
+        CreateDecoCube("Inner Walk", new Vector3(28f, -0.06f, 7.5f), new Vector3(90f, 0.12f, 3f), innerWalkMaterial);
 
         BuildCitySkyline();
         BuildSkyline();
@@ -1587,7 +1688,23 @@ public class KitchenSimulator : MonoBehaviour
 
     // 传感器实时数据仿真：报警值带噪声波动；改造完成后回落到正常值
     private float sampleTimer;
-    private const float ObserveHours = 3f;   // 验收观察期（工程小时，约 21 秒实时）
+    private const float ObserveHours = 3f;   // 验收观察期：3 工程小时（≈64 秒实时，1 工程小时 21.4 秒）
+    // 报警确认时长（秒）：读数必须连续超阈值达此时长才判为报警。
+    // 单个尖峰（蒸汽、设备启停冲击、传感器抖动）不判报警，只标为「疑似干扰」——
+    // 对应手册中「持续 N 秒」的判定口径，避免正常波动造成误报。
+    private const float AlarmConfirmSeconds = 5f;
+    // 分级报警：预警线取正常值与报警值之间的 60% 处，严重线取报警值再外扩半程，
+    // 三条线全部由每个点位已有的 sensorNormal / sensorAlarm / sensorMax 自动推导，
+    // 不需要为 18 类隐患单独配表。
+    private const float WarnRatio = 0.6f;
+    private const float SevereExtendRatio = 0.5f;
+    private const float WarnConfirmSeconds = 3f;
+    private const float SevereConfirmSeconds = 3f;
+    private const float CalmReleaseSeconds = 8f;
+
+    // 报警派单给维修公司后的响应时限与超时扣罚
+    private const float DispatchResponseSeconds = 60f;
+    private const int DispatchPenalty = 100;
 
     private void UpdateSensors()
     {
@@ -1610,6 +1727,18 @@ public class KitchenSimulator : MonoBehaviour
 
             order.sensorValue = Mathf.Lerp(order.sensorValue, target, dt * (fixedOrder ? 1.6f : 0.7f)) * noise;
 
+            // 已改造完成的点位模拟偶发瞬时干扰（蒸汽、启停冲击等）：约每 8 秒出现一次、
+            // 持续约半秒的尖峰。这类尖峰必须被去抖抑制，否则就是误报 —— 数字孪生的
+            // 判定不能"见峰就报"，这正是真实工程里最常见的假警报来源。
+            if (fixedOrder)
+            {
+                float phase = Mathf.Repeat(Time.time * 0.125f + i * 0.37f, 1f);
+                if (phase < 0.06f)
+                {
+                    order.sensorValue = Mathf.Max(order.sensorValue, order.sensorAlarm * 1.15f);
+                }
+            }
+
             // 约 4Hz 采样一次，保留最近 48 点作为趋势曲线
             if (doSample)
             {
@@ -1619,6 +1748,57 @@ public class KitchenSimulator : MonoBehaviour
                     order.history.RemoveAt(0);
                 }
             }
+
+            // ── 分级阈值与分级确认 ──
+            // 预警线、严重线由正常值/报警值自动推导；三个计时器各自独立累计，
+            // 读数一回落就清零，避免"断断续续超一点"被累计成报警。
+            float warnThreshold = WarnThresholdOf(order);
+            float severeThreshold = SevereThresholdOf(order);
+            if (order.sensorValue >= warnThreshold)
+            {
+                if (order.warnSince <= 0f)
+                {
+                    order.warnSince = Time.time;
+                }
+                order.calmSince = 0f;
+            }
+            else
+            {
+                order.warnSince = 0f;
+                if (order.calmSince <= 0f)
+                {
+                    order.calmSince = Time.time;
+                }
+            }
+            order.overSince = order.sensorValue >= order.sensorAlarm
+                ? (order.overSince > 0f ? order.overSince : Time.time)
+                : 0f;
+            order.severeSince = order.sensorValue >= severeThreshold
+                ? (order.severeSince > 0f ? order.severeSince : Time.time)
+                : 0f;
+
+            int level = 0;
+            if (order.severeSince > 0f && Time.time - order.severeSince >= SevereConfirmSeconds)
+            {
+                level = 3;
+            }
+            else if (order.overSince > 0f && Time.time - order.overSince >= AlarmConfirmSeconds)
+            {
+                level = 2;
+            }
+            else if (order.warnSince > 0f && Time.time - order.warnSince >= WarnConfirmSeconds)
+            {
+                level = 1;
+            }
+
+            // 滞回：级别要降下来，必须连续低于预警线满 CalmReleaseSeconds，
+            // 否则读数在阈值上下抖动会导致界面和派单状态反复跳变。
+            if (level < order.alarmLevel
+                && !(order.calmSince > 0f && Time.time - order.calmSince >= CalmReleaseSeconds))
+            {
+                level = order.alarmLevel;
+            }
+            order.alarmLevel = level;
 
             // 记录"数据回归正常"的时刻，用于统计处置时长
             if (fixedOrder && order.fixTime <= 0f
@@ -1631,7 +1811,9 @@ public class KitchenSimulator : MonoBehaviour
             // 验收判据：读数稳定低于报警阈值并持续 OBSERVE_HOURS 游戏小时 → 判定闭环
             if (fixedOrder && !order.verified && order.fixTime > 0f)
             {
-                if (order.sensorValue < order.sensorAlarm)
+                // 注意：判据用「持续超标」而非瞬时超阈值 —— 否则瞬时干扰尖峰会不断
+                // 重置观察期，导致闭环永远无法达成（误报处理的必要性正在于此）
+                if (!IsSustainedOver(order))
                 {
                     if (order.normalSince <= 0f)
                     {
@@ -1647,7 +1829,7 @@ public class KitchenSimulator : MonoBehaviour
                 }
                 else
                 {
-                    order.normalSince = 0f;   // 数据反弹则重新计时
+                    order.normalSince = 0f;   // 数据确实反弹则重新计时
                 }
             }
         }
@@ -1932,7 +2114,13 @@ public class KitchenSimulator : MonoBehaviour
     private void BuildTree(float x, float z)
     {
         Material trunk = MakeMaterial(new Color(0.37f, 0.26f, 0.16f), 0.02f, 0.3f);
-        Material foliage = MakeMaterial(new Color(0.25f, 0.51f, 0.23f), 0.02f, 0.3f);
+        // 每棵树的叶色略微不同，成排时不会像复制粘贴
+        float tint = Mathf.PerlinNoise(x * 0.31f + 13f, z * 0.27f + 7f);
+        Material foliage = MakeMaterial(
+            Color.Lerp(new Color(0.19f, 0.43f, 0.18f), new Color(0.36f, 0.62f, 0.27f), tint), 0.02f, 0.3f);
+        // 树池：树根处的深色土圈，让树"种在地里"而不是浮在草地上
+        CreateDecoCube("Tree Pit", new Vector3(x, -0.055f, z), new Vector3(1.15f, 0.05f, 1.15f),
+            new Color(0.24f, 0.19f, 0.14f));
         CreateDecoCylinder("Tree Trunk", new Vector3(x, 1.1f, z), 0.15f, 2.2f, Quaternion.identity, trunk);
         CreateDecoSphere("Tree Crown 1", new Vector3(x, 2.9f, z), 1.25f, foliage);
         CreateDecoSphere("Tree Crown 2", new Vector3(x + 0.5f, 3.6f, z - 0.3f), 0.9f, foliage);
@@ -2387,6 +2575,7 @@ public class KitchenSimulator : MonoBehaviour
             dr - hDoor, dr + hDoor, 0f, DoorHeight);
 
         BuildRoof(tag + " Roof", x0 + L.width * 0.5f, z0 + L.depth * 0.5f, L.width, L.depth, roofColor);
+        BuildResidenceFacade(index, x0, x2, x1, z0, z1, doorC, doorW);
 
         Vector3 doorPoint = new Vector3(doorC, GroundLevel, z0 + 1.6f);
         for (int i = 0; i < 4; i++)
@@ -2419,6 +2608,105 @@ public class KitchenSimulator : MonoBehaviour
 
         CreateDecoCube(tag + " Plate", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.19f), new Vector3(1.5f, 0.6f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
         CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.32f), 0.05f, Color.white);
+    }
+
+    // 住宅外立面细节：门套、雨棚、勒脚、落水管、空调外机、窗台、檐沟。
+    // 这些都是纯装饰体（CreateDecoCube 会关掉碰撞体），不影响室内通行。
+    private void BuildResidenceFacade(int index, float left, float right, float splitX,
+        float z0, float z1, float doorC, float doorW)
+    {
+        Color trim = new Color(0.74f, 0.72f, 0.68f);
+        Color metal = new Color(0.80f, 0.81f, 0.82f);
+        Color darkMetal = new Color(0.42f, 0.44f, 0.47f);
+        string tag = index + "号楼 ";
+
+        // 门套：两侧立梃 + 上槛
+        CreateDecoCube(tag + "Door Jamb L",
+            new Vector3(doorC - doorW * 0.5f - 0.08f, DoorHeight * 0.5f, z0 - 0.14f),
+            new Vector3(0.14f, DoorHeight, 0.3f), trim);
+        CreateDecoCube(tag + "Door Jamb R",
+            new Vector3(doorC + doorW * 0.5f + 0.08f, DoorHeight * 0.5f, z0 - 0.14f),
+            new Vector3(0.14f, DoorHeight, 0.3f), trim);
+        CreateDecoCube(tag + "Door Lintel",
+            new Vector3(doorC, DoorHeight + 0.08f, z0 - 0.14f),
+            new Vector3(doorW + 0.5f, 0.16f, 0.3f), trim);
+
+        // 入口雨棚 + 两侧支撑
+        CreateDecoCube(tag + "Canopy",
+            new Vector3(doorC, DoorHeight + 0.42f, z0 - 0.55f),
+            new Vector3(doorW + 0.9f, 0.1f, 1.15f), darkMetal);
+        CreateDecoCube(tag + "Canopy Stay L",
+            new Vector3(doorC - doorW * 0.5f - 0.32f, DoorHeight + 0.24f, z0 - 0.92f),
+            new Vector3(0.06f, 0.34f, 0.06f), metal);
+        CreateDecoCube(tag + "Canopy Stay R",
+            new Vector3(doorC + doorW * 0.5f + 0.32f, DoorHeight + 0.24f, z0 - 0.92f),
+            new Vector3(0.06f, 0.34f, 0.06f), metal);
+
+        // 勒脚：沿外墙一圈的护墙裙，压住墙根，避免"墙直接插进地面"
+        float cx = (left + right) * 0.5f;
+        float cz = (z0 + z1) * 0.5f;
+        // 正面勒脚在入户门处断开，否则会像一道 32cm 高的门槛横在门口
+        float doorL = doorC - doorW * 0.5f;
+        float doorR = doorC + doorW * 0.5f;
+        if (doorL - left > 0.1f)
+        {
+            CreateDecoCube(tag + "Plinth Front L", new Vector3((left + doorL) * 0.5f, 0.16f, z0 - 0.14f),
+                new Vector3(doorL - left, 0.32f, 0.09f), trim);
+        }
+        if (right - doorR > 0.1f)
+        {
+            CreateDecoCube(tag + "Plinth Front R", new Vector3((doorR + right) * 0.5f, 0.16f, z0 - 0.14f),
+                new Vector3(right - doorR, 0.32f, 0.09f), trim);
+        }
+        CreateDecoCube(tag + "Plinth Back", new Vector3(cx, 0.16f, z1 + 0.14f),
+            new Vector3(right - left + 0.3f, 0.32f, 0.09f), trim);
+        CreateDecoCube(tag + "Plinth Left", new Vector3(left - 0.14f, 0.16f, cz),
+            new Vector3(0.09f, 0.32f, z1 - z0 + 0.3f), trim);
+        CreateDecoCube(tag + "Plinth Right", new Vector3(right + 0.14f, 0.16f, cz),
+            new Vector3(0.09f, 0.32f, z1 - z0 + 0.3f), trim);
+
+        // 檐沟：贴在屋檐外沿，给屋顶一个收口
+        CreateDecoCube(tag + "Gutter", new Vector3(cx, WallHeight + 0.52f, z0 - 0.62f),
+            new Vector3(right - left + 1.4f, 0.1f, 0.16f), darkMetal);
+
+        // 落水管：从檐沟到地面，贴在右前角
+        float pipeX = right - 0.18f;
+        float pipeZ = z0 - 0.28f;
+        CreateDecoCube(tag + "Downpipe", new Vector3(pipeX, WallHeight * 0.5f, pipeZ),
+            new Vector3(0.12f, WallHeight + 0.5f, 0.12f), metal);
+        CreateDecoCube(tag + "Downpipe Elbow", new Vector3(pipeX, 0.12f, pipeZ + 0.12f),
+            new Vector3(0.12f, 0.12f, 0.3f), metal);
+
+        // 空调外机 + 支架 + 百叶
+        float acX = right + 0.36f;
+        float acZ = z1 - 1.1f;
+        CreateDecoCube(tag + "AC Unit", new Vector3(acX, 2.18f, acZ),
+            new Vector3(0.5f, 0.58f, 0.82f), metal);
+        CreateDecoCube(tag + "AC Bracket", new Vector3(acX - 0.18f, 1.84f, acZ),
+            new Vector3(0.46f, 0.08f, 0.86f), darkMetal);
+        for (int i = 0; i < 4; i++)
+        {
+            CreateDecoCube(tag + "AC Louver", new Vector3(acX + 0.27f, 1.98f + i * 0.13f, acZ),
+                new Vector3(0.03f, 0.05f, 0.62f), darkMetal);
+        }
+
+        // 窗台：前窗只在前排右侧房间，后窗按左右两间分别压顶
+        float ws, we;
+        if (right - splitX > 3.0f)
+        {
+            WindowRange(splitX, right, 0.9f, 2.4f, out ws, out we);
+            CreateDecoCube(tag + "Sill Front", new Vector3((ws + we) * 0.5f, 0.92f, z0 - 0.15f),
+                new Vector3(we - ws + 0.3f, 0.1f, 0.14f), trim);
+        }
+        WindowRange(left, splitX, 0.9f, 2.6f, out ws, out we);
+        CreateDecoCube(tag + "Sill Back L", new Vector3((ws + we) * 0.5f, 0.92f, z1 + 0.15f),
+            new Vector3(we - ws + 0.3f, 0.1f, 0.14f), trim);
+        if (right - splitX > 3.0f)
+        {
+            WindowRange(splitX, right, 0.9f, 2.6f, out ws, out we);
+            CreateDecoCube(tag + "Sill Back R", new Vector3((ws + we) * 0.5f, 0.92f, z1 + 0.15f),
+                new Vector3(we - ws + 0.3f, 0.1f, 0.14f), trim);
+        }
     }
 
     private void AddRoom(string name, string type, int building, float xMin, float xMax, float zMin, float zMax, Vector3 doorPoint)
@@ -2627,34 +2915,132 @@ public class KitchenSimulator : MonoBehaviour
         float back = cz + d * 0.5f;
         float counterZ = back - 0.72f;
 
-        Material cab = MakeMaterial(new Color(0.5f, 0.36f, 0.22f), 0.02f, 0.4f);
-        Material door = MakeMaterial(new Color(0.62f, 0.46f, 0.3f), 0.02f, 0.4f);
+        Material cab = MakeMaterial(new Color(0.52f, 0.38f, 0.24f), 0.02f, 0.42f);
+        Material door = MakeMaterial(new Color(0.66f, 0.50f, 0.33f), 0.02f, 0.45f);
+        Material doorInset = MakeMaterial(new Color(0.58f, 0.43f, 0.28f), 0.02f, 0.4f);
         Material steel = MakeMaterial(new Color(0.72f, 0.75f, 0.78f), 0.75f, 0.7f);
+        Material dark = MakeMaterial(new Color(0.13f, 0.14f, 0.16f), 0.2f, 0.5f);
         EnsureTextures();
         Material top = TexturedMaterial(new Color(0.74f, 0.73f, 0.7f), stoneTexture, 3f);
+        Material tile = TexturedMaterial(new Color(0.86f, 0.87f, 0.86f), tileTexture, 8f);
 
-        // 柜体沿后墙铺满可用宽度，段数随房宽变化
         float usable = w - 0.7f;
         int count = Mathf.Max(1, Mathf.RoundToInt(usable / 1.9f));
         float seg = usable / count;
         for (int i = 0; i < count; i++)
         {
             float x = left + 0.35f + seg * (i + 0.5f);
-            DecoPart(PrimitiveType.Cube, "Cabinet", transform, new Vector3(x, 0.45f, counterZ), new Vector3(seg - 0.06f, 0.9f, 1.06f), Quaternion.identity, cab);
-            DecoPart(PrimitiveType.Cube, "Door", transform, new Vector3(x, 0.45f, counterZ - 0.56f), new Vector3(seg - 0.3f, 0.74f, 0.05f), Quaternion.identity, door);
-            DecoPart(PrimitiveType.Cylinder, "Handle", transform, new Vector3(x + seg * 0.28f, 0.45f, counterZ - 0.6f), new Vector3(0.022f, 0.16f, 0.022f), Quaternion.Euler(90f, 0f, 0f), steel);
-            DecoPart(PrimitiveType.Cube, "Wall Cabinet", transform, new Vector3(x, 1.9f, counterZ + 0.32f), new Vector3(seg - 0.14f, 0.7f, 0.42f), Quaternion.identity, cab);
+            CreateSoftBox("Cabinet", transform, new Vector3(x, 0.5f, counterZ),
+                new Vector3(seg - 0.06f, 0.86f, 1.06f), cab, 0.035f);
+            DecoPart(PrimitiveType.Cube, "Toe Kick", transform,
+                new Vector3(x, 0.08f, counterZ - 0.47f),
+                new Vector3(seg - 0.12f, 0.12f, 0.06f), Quaternion.identity, dark);
+            float handleSide = (i % 2 == 0) ? 0.32f : -0.32f;
+            CreateCabinetDoor("Cabinet Door", transform,
+                new Vector3(x, 0.5f, counterZ - 0.56f),
+                new Vector3(seg - 0.28f, 0.7f, 0.05f), door, doorInset, steel, handleSide);
+            CreateSoftBox("Wall Cabinet", transform,
+                new Vector3(x, 1.92f, counterZ + 0.34f),
+                new Vector3(seg - 0.14f, 0.68f, 0.42f), cab, 0.03f);
+            CreateCabinetDoor("Wall Door", transform,
+                new Vector3(x, 1.92f, counterZ + 0.12f),
+                new Vector3(seg - 0.28f, 0.5f, 0.04f), door, doorInset, steel, handleSide);
         }
         AddRotatedObstacle("Kitchen Counter", new Vector3(cx, 0.45f, counterZ), new Vector3(usable, 0.9f, 1.1f), 0f);
-        DecoPart(PrimitiveType.Cube, "Countertop", transform, new Vector3(cx, 0.93f, counterZ), new Vector3(usable + 0.16f, 0.07f, 1.2f), Quaternion.identity, top);
+        CreateSoftBox("Countertop", transform, new Vector3(cx, 0.945f, counterZ),
+            new Vector3(usable + 0.16f, 0.07f, 1.2f), top, 0.025f);
 
-        DecoPart(PrimitiveType.Cube, "Sink", transform, new Vector3(left + 1.0f, 0.98f, counterZ), new Vector3(1.0f, 0.05f, 0.68f), Quaternion.identity, steel);
-        DecoPart(PrimitiveType.Cylinder, "Faucet", transform, new Vector3(left + 1.0f, 1.14f, counterZ + 0.26f), new Vector3(0.03f, 0.3f, 0.03f), Quaternion.identity, steel);
-        DecoPart(PrimitiveType.Cube, "Stove", transform, new Vector3(right - 1.1f, 0.98f, counterZ), new Vector3(1.1f, 0.05f, 0.68f), Quaternion.identity, MakeMaterial(new Color(0.12f, 0.13f, 0.15f), 0.2f, 0.5f));
-        DecoPart(PrimitiveType.Cylinder, "Pot", transform, new Vector3(right - 1.1f, 1.06f, counterZ), new Vector3(0.15f, 0.12f, 0.15f), Quaternion.identity, steel);
+        // 墙面瓷砖与台面挡水沿
+        DecoPart(PrimitiveType.Cube, "Backsplash", transform,
+            new Vector3(cx, 1.22f, counterZ + 0.62f),
+            new Vector3(usable, 0.52f, 0.04f), Quaternion.identity, tile);
+        DecoPart(PrimitiveType.Cube, "Upstand", transform,
+            new Vector3(cx, 1.0f, counterZ + 0.58f),
+            new Vector3(usable, 0.08f, 0.05f), Quaternion.identity, top);
 
-        AddSolidBox("Fridge", new Vector3(right - 0.6f, 0.9f, cz - d * 0.5f + 0.75f), new Vector3(0.85f, 1.8f, 0.85f), new Color(0.78f, 0.8f, 0.82f));
-        DecoPart(PrimitiveType.Cylinder, "Fridge Handle", transform, new Vector3(right - 0.6f, 1.4f, cz - d * 0.5f + 1.18f), new Vector3(0.02f, 0.3f, 0.02f), Quaternion.identity, steel);
+        // ── 水槽：盆体凹陷 + 四边台沿 + 龙头 + 角阀 + 存水弯 ──
+        float sinkX = left + 1.0f;
+        DecoPart(PrimitiveType.Cube, "Sink Recess", transform,
+            new Vector3(sinkX, 0.945f, counterZ),
+            new Vector3(0.92f, 0.03f, 0.6f), Quaternion.identity, dark);
+        DecoPart(PrimitiveType.Cube, "Sink Rim L", transform,
+            new Vector3(sinkX - 0.49f, 0.985f, counterZ),
+            new Vector3(0.06f, 0.03f, 0.66f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "Sink Rim R", transform,
+            new Vector3(sinkX + 0.49f, 0.985f, counterZ),
+            new Vector3(0.06f, 0.03f, 0.66f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "Sink Rim F", transform,
+            new Vector3(sinkX, 0.985f, counterZ - 0.33f),
+            new Vector3(1.02f, 0.03f, 0.06f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "Sink Rim B", transform,
+            new Vector3(sinkX, 0.985f, counterZ + 0.33f),
+            new Vector3(1.02f, 0.03f, 0.06f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cylinder, "Faucet Base", transform,
+            new Vector3(sinkX, 0.99f, counterZ + 0.26f),
+            new Vector3(0.08f, 0.02f, 0.08f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cylinder, "Faucet", transform,
+            new Vector3(sinkX, 1.14f, counterZ + 0.26f),
+            new Vector3(0.03f, 0.16f, 0.03f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "Spout", transform,
+            new Vector3(sinkX, 1.29f, counterZ + 0.14f),
+            new Vector3(0.05f, 0.05f, 0.26f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cylinder, "Valve Hot", transform,
+            new Vector3(sinkX - 0.28f, 0.72f, counterZ + 0.45f),
+            new Vector3(0.025f, 0.06f, 0.025f), Quaternion.Euler(0f, 0f, 90f), steel);
+        DecoPart(PrimitiveType.Cylinder, "Valve Cold", transform,
+            new Vector3(sinkX + 0.28f, 0.72f, counterZ + 0.45f),
+            new Vector3(0.025f, 0.06f, 0.025f), Quaternion.Euler(0f, 0f, 90f), steel);
+        DecoPart(PrimitiveType.Cylinder, "P Trap", transform,
+            new Vector3(sinkX, 0.62f, counterZ + 0.18f),
+            new Vector3(0.035f, 0.18f, 0.035f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "P Trap Bend", transform,
+            new Vector3(sinkX, 0.45f, counterZ + 0.18f),
+            new Vector3(0.07f, 0.08f, 0.26f), Quaternion.identity, steel);
+
+        // ── 灶台：面板 + 四个炉头 + 锅 ──
+        float stoveX = right - 1.1f;
+        DecoPart(PrimitiveType.Cube, "Stove", transform,
+            new Vector3(stoveX, 0.985f, counterZ),
+            new Vector3(1.1f, 0.04f, 0.68f), Quaternion.identity, dark);
+        for (int i = 0; i < 4; i++)
+        {
+            float ox = stoveX + (i % 2 == 0 ? -0.26f : 0.26f);
+            float oz = counterZ + (i < 2 ? -0.16f : 0.16f);
+            DecoPart(PrimitiveType.Cylinder, "Burner", transform,
+                new Vector3(ox, 1.01f, oz), new Vector3(0.13f, 0.01f, 0.13f),
+                Quaternion.identity, steel);
+        }
+        DecoPart(PrimitiveType.Cylinder, "Pot", transform,
+            new Vector3(stoveX, 1.08f, counterZ), new Vector3(0.15f, 0.07f, 0.15f),
+            Quaternion.identity, steel);
+
+        // ── 抽油烟机：罩体 + 烟道 + 底灯 ──
+        CreateSoftBox("Range Hood", transform,
+            new Vector3(stoveX, 1.78f, counterZ + 0.18f),
+            new Vector3(1.15f, 0.2f, 0.62f), steel, 0.03f);
+        DecoPart(PrimitiveType.Cube, "Hood Chimney", transform,
+            new Vector3(stoveX, 2.15f, counterZ + 0.34f),
+            new Vector3(0.34f, 0.5f, 0.28f), Quaternion.identity, steel);
+        DecoPart(PrimitiveType.Cube, "Hood Light", transform,
+            new Vector3(stoveX, 1.68f, counterZ + 0.05f),
+            new Vector3(0.5f, 0.02f, 0.12f), Quaternion.identity,
+            MakeGlow(new Color(1f, 0.95f, 0.82f), 0.9f));
+
+        // 吊柜下沿灯带
+        DecoPart(PrimitiveType.Cube, "Under Cabinet Light", transform,
+            new Vector3(cx, 1.56f, counterZ + 0.12f),
+            new Vector3(usable * 0.9f, 0.02f, 0.04f), Quaternion.identity,
+            MakeGlow(new Color(1f, 0.93f, 0.78f), 0.7f));
+
+        // ── 冰箱：倒角柜体 + 门缝 + 长拉手 ──
+        Vector3 fridgePos = new Vector3(right - 0.6f, 0.9f, cz - d * 0.5f + 0.78f);
+        AddSolidBox("Fridge", fridgePos, new Vector3(0.85f, 1.8f, 0.85f), new Color(0.78f, 0.8f, 0.82f));
+        DecoPart(PrimitiveType.Cube, "Fridge Seam", transform,
+            new Vector3(fridgePos.x, 1.18f, fridgePos.z - 0.43f),
+            new Vector3(0.8f, 0.02f, 0.02f), Quaternion.identity, dark);
+        DecoPart(PrimitiveType.Cylinder, "Fridge Handle", transform,
+            new Vector3(fridgePos.x + 0.34f, 1.4f, fridgePos.z - 0.45f),
+            new Vector3(0.02f, 0.3f, 0.02f), Quaternion.identity, steel);
     }
 
     private void BuildBathroom(float cx, float cz, float w, float d)
@@ -2664,6 +3050,26 @@ public class KitchenSimulator : MonoBehaviour
         BuildToilet(right - 0.55f, cz - 0.2f, 270f);        // 马桶靠东墙
         BuildWashbasin(left + 0.5f, cz - 0.2f, 90f);        // 洗手台靠西墙
         BuildBathtub(cx, back - 0.62f, 0f);                 // 浴缸沿北墙
+
+        EnsureTextures();
+        Material tile = TexturedMaterial(new Color(0.86f, 0.88f, 0.88f), tileTexture, 8f);
+        Material grate = MakeMaterial(new Color(0.36f, 0.38f, 0.39f), 0.7f, 0.6f);
+        Material slot = MakeMaterial(new Color(0.12f, 0.13f, 0.14f), 0.2f, 0.4f);
+
+        // 洗手台背后的墙砖
+        CreateDecoCube("Bath Tile", new Vector3(left + 0.07f, 1.35f, cz - 0.2f),
+            new Vector3(0.04f, 1.5f, Mathf.Min(2.0f, d - 0.8f)), tile);
+        // 淋浴挡水条
+        CreateDecoCube("Shower Curb", new Vector3(cx, 0.08f, back - 1.12f),
+            new Vector3(1.8f, 0.16f, 0.12f), new Color(0.85f, 0.85f, 0.83f));
+        // 地漏：面板 + 四道格栅
+        CreateDecoCube("Floor Drain", new Vector3(cx + 0.7f, 0.035f, cz - 1.0f),
+            new Vector3(0.24f, 0.02f, 0.24f), grate);
+        for (int i = 0; i < 4; i++)
+        {
+            CreateDecoCube("Drain Slot", new Vector3(cx + 0.7f, 0.048f, cz - 1.09f + i * 0.06f),
+                new Vector3(0.18f, 0.006f, 0.02f), slot);
+        }
     }
 
     private void BuildBedroom(float cx, float cz, float w, float d)
@@ -2696,6 +3102,44 @@ public class KitchenSimulator : MonoBehaviour
             collider.enabled = false;
         }
         return part;
+    }
+
+    // 倒角盒：上下各内收一段，用三段叠层代替硬边立方体。
+    // 家具轮廓因此有轻微倒角，近看不再是"积木"。
+    private GameObject CreateSoftBox(string name, Transform parent, Vector3 localPosition,
+        Vector3 size, Material material, float bevel = 0.05f)
+    {
+        float b = Mathf.Min(bevel, Mathf.Min(size.y * 0.3f, Mathf.Min(size.x, size.z) * 0.2f));
+        if (b <= 0.004f)
+        {
+            return DecoPart(PrimitiveType.Cube, name, parent, localPosition, size, Quaternion.identity, material);
+        }
+        float midHeight = Mathf.Max(0.01f, size.y - b * 2f);
+        GameObject mid = DecoPart(PrimitiveType.Cube, name, parent, localPosition,
+            new Vector3(size.x, midHeight, size.z), Quaternion.identity, material);
+        DecoPart(PrimitiveType.Cube, name + " Top", parent,
+            localPosition + new Vector3(0f, size.y * 0.5f - b * 0.5f, 0f),
+            new Vector3(Mathf.Max(0.01f, size.x - b * 2f), b, Mathf.Max(0.01f, size.z - b * 2f)),
+            Quaternion.identity, material);
+        DecoPart(PrimitiveType.Cube, name + " Bottom", parent,
+            localPosition - new Vector3(0f, size.y * 0.5f - b * 0.5f, 0f),
+            new Vector3(Mathf.Max(0.01f, size.x - b * 2f), b, Mathf.Max(0.01f, size.z - b * 2f)),
+            Quaternion.identity, material);
+        return mid;
+    }
+
+    // 柜门：外框 + 内嵌门芯 + 拉手，替代一块薄板。
+    private void CreateCabinetDoor(string name, Transform parent, Vector3 localPosition,
+        Vector3 size, Material frame, Material panel, Material handle, float handleOffset = 0.32f)
+    {
+        CreateSoftBox(name, parent, localPosition, size, frame, 0.012f);
+        float depth = Mathf.Max(0.012f, size.z * 0.45f);
+        DecoPart(PrimitiveType.Cube, name + " Panel", parent,
+            localPosition - new Vector3(0f, 0f, size.z * 0.5f - depth * 0.35f),
+            new Vector3(size.x * 0.76f, size.y * 0.74f, depth), Quaternion.identity, panel);
+        DecoPart(PrimitiveType.Cylinder, name + " Handle", parent,
+            localPosition + new Vector3(size.x * handleOffset, 0f, -size.z * 0.5f - 0.025f),
+            new Vector3(0.018f, 0.11f, 0.018f), Quaternion.Euler(90f, 0f, 0f), handle);
     }
 
     private GameObject CreateDecoCylinder(string name, Vector3 position, float radius, float height, Quaternion rotation, Material material)
@@ -2756,7 +3200,12 @@ public class KitchenSimulator : MonoBehaviour
         EnsureTextures();
         Material wood = TexturedMaterial(new Color(0.6f, 0.43f, 0.26f), woodTexture, 2f);
 
-        DecoPart(PrimitiveType.Cube, "Top", g, new Vector3(0f, height, 0f), new Vector3(sizeX, 0.08f, sizeZ), Quaternion.identity, wood);
+        CreateSoftBox("Top", g, new Vector3(0f, height, 0f),
+            new Vector3(sizeX, 0.08f, sizeZ), wood, 0.02f);
+        DecoPart(PrimitiveType.Cube, "Shelf", g,
+            new Vector3(0f, height * 0.34f, 0f),
+            new Vector3(sizeX * 0.82f, 0.04f, sizeZ * 0.7f),
+            Quaternion.identity, wood);
         float lx = sizeX * 0.5f - 0.12f;
         float lz = sizeZ * 0.5f - 0.12f;
         for (int i = 0; i < 4; i++)
@@ -2776,11 +3225,21 @@ public class KitchenSimulator : MonoBehaviour
         Material pillow = MakeMaterial(new Color(0.96f, 0.96f, 0.93f), 0.02f, 0.4f);
         Material quilt = MakeMaterial(new Color(0.5f, 0.56f, 0.74f), 0.02f, 0.4f);
 
-        DecoPart(PrimitiveType.Cube, "Frame", g, new Vector3(0f, 0.2f, 0f), new Vector3(1.6f, 0.4f, 2.05f), Quaternion.identity, frame);
-        DecoPart(PrimitiveType.Cube, "Mattress", g, new Vector3(0f, 0.5f, 0f), new Vector3(1.5f, 0.22f, 1.95f), Quaternion.identity, sheet);
-        DecoPart(PrimitiveType.Cube, "Headboard", g, new Vector3(0f, 0.78f, -1.05f), new Vector3(1.6f, 1.15f, 0.12f), Quaternion.identity, frame);
-        DecoPart(PrimitiveType.Cube, "Pillow", g, new Vector3(0f, 0.65f, -0.72f), new Vector3(1.1f, 0.14f, 0.42f), Quaternion.identity, pillow);
-        DecoPart(PrimitiveType.Cube, "Quilt", g, new Vector3(0f, 0.63f, 0.35f), new Vector3(1.52f, 0.09f, 1.15f), Quaternion.identity, quilt);
+        CreateSoftBox("Frame", g, new Vector3(0f, 0.2f, 0f),
+            new Vector3(1.6f, 0.4f, 2.05f), frame, 0.04f);
+        CreateSoftBox("Mattress", g, new Vector3(0f, 0.5f, 0f),
+            new Vector3(1.5f, 0.22f, 1.95f), sheet, 0.05f);
+        CreateSoftBox("Headboard", g, new Vector3(0f, 0.78f, -1.05f),
+            new Vector3(1.6f, 1.15f, 0.12f), frame, 0.03f);
+        CreateSoftBox("Pillow L", g, new Vector3(-0.33f, 0.66f, -0.72f),
+            new Vector3(0.6f, 0.15f, 0.42f), pillow, 0.05f);
+        CreateSoftBox("Pillow R", g, new Vector3(0.33f, 0.66f, -0.72f),
+            new Vector3(0.6f, 0.15f, 0.42f), pillow, 0.05f);
+        CreateSoftBox("Quilt", g, new Vector3(0f, 0.64f, 0.38f),
+            new Vector3(1.54f, 0.1f, 1.12f), quilt, 0.04f);
+        DecoPart(PrimitiveType.Cube, "Quilt Fold", g,
+            new Vector3(0f, 0.7f, -0.08f), new Vector3(1.54f, 0.05f, 0.16f),
+            Quaternion.identity, MakeMaterial(new Color(0.62f, 0.66f, 0.82f), 0.02f, 0.45f));
         AddRotatedObstacle("Bed Body", new Vector3(x, 0.3f, z), new Vector3(1.7f, 0.6f, 2.15f), yaw);
     }
 
@@ -2791,12 +3250,26 @@ public class KitchenSimulator : MonoBehaviour
         Material fabric = TexturedMaterial(new Color(0.4f, 0.47f, 0.53f), fabricTexture, 4f);
         Material cushion = TexturedMaterial(new Color(0.5f, 0.58f, 0.64f), fabricTexture, 4f);
 
-        DecoPart(PrimitiveType.Cube, "Base", g, new Vector3(0f, 0.22f, 0f), new Vector3(2f, 0.44f, 0.85f), Quaternion.identity, fabric);
-        DecoPart(PrimitiveType.Cube, "Back", g, new Vector3(0f, 0.62f, -0.36f), new Vector3(2f, 0.55f, 0.14f), Quaternion.identity, fabric);
-        DecoPart(PrimitiveType.Cube, "Arm L", g, new Vector3(-0.93f, 0.55f, 0f), new Vector3(0.14f, 0.35f, 0.85f), Quaternion.identity, fabric);
-        DecoPart(PrimitiveType.Cube, "Arm R", g, new Vector3(0.93f, 0.55f, 0f), new Vector3(0.14f, 0.35f, 0.85f), Quaternion.identity, fabric);
-        DecoPart(PrimitiveType.Cube, "Cushion L", g, new Vector3(-0.47f, 0.48f, 0.06f), new Vector3(0.82f, 0.13f, 0.66f), Quaternion.identity, cushion);
-        DecoPart(PrimitiveType.Cube, "Cushion R", g, new Vector3(0.47f, 0.48f, 0.06f), new Vector3(0.82f, 0.13f, 0.66f), Quaternion.identity, cushion);
+        CreateSoftBox("Base", g, new Vector3(0f, 0.22f, 0f),
+            new Vector3(2f, 0.44f, 0.85f), fabric, 0.05f);
+        CreateSoftBox("Back", g, new Vector3(0f, 0.64f, -0.36f),
+            new Vector3(2f, 0.58f, 0.16f), fabric, 0.05f);
+        CreateSoftBox("Arm L", g, new Vector3(-0.93f, 0.56f, 0f),
+            new Vector3(0.16f, 0.38f, 0.85f), fabric, 0.05f);
+        CreateSoftBox("Arm R", g, new Vector3(0.93f, 0.56f, 0f),
+            new Vector3(0.16f, 0.38f, 0.85f), fabric, 0.05f);
+        CreateSoftBox("Cushion L", g, new Vector3(-0.47f, 0.49f, 0.06f),
+            new Vector3(0.82f, 0.14f, 0.68f), cushion, 0.05f);
+        CreateSoftBox("Cushion R", g, new Vector3(0.47f, 0.49f, 0.06f),
+            new Vector3(0.82f, 0.14f, 0.68f), cushion, 0.05f);
+        DecoPart(PrimitiveType.Cube, "Throw Pillow L", g,
+            new Vector3(-0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
+            Quaternion.Euler(0f, 0f, 12f),
+            MakeMaterial(new Color(0.78f, 0.62f, 0.42f), 0.02f, 0.45f));
+        DecoPart(PrimitiveType.Cube, "Throw Pillow R", g,
+            new Vector3(0.58f, 0.66f, -0.22f), new Vector3(0.34f, 0.34f, 0.12f),
+            Quaternion.Euler(0f, 0f, -12f),
+            MakeMaterial(new Color(0.62f, 0.68f, 0.52f), 0.02f, 0.45f));
         AddRotatedObstacle("Sofa Body", new Vector3(x, 0.4f, z), new Vector3(2.1f, 0.8f, 0.95f), yaw);
     }
 
@@ -2808,11 +3281,15 @@ public class KitchenSimulator : MonoBehaviour
         Material door = TexturedMaterial(new Color(0.62f, 0.46f, 0.28f), woodTexture, 2f);
         Material handle = MakeMaterial(new Color(0.82f, 0.78f, 0.45f), 0.7f, 0.6f);
 
-        DecoPart(PrimitiveType.Cube, "Body", g, new Vector3(0f, 1.1f, 0f), new Vector3(1.7f, 2.2f, 0.6f), Quaternion.identity, body);
-        DecoPart(PrimitiveType.Cube, "Door L", g, new Vector3(-0.42f, 1.1f, -0.32f), new Vector3(0.8f, 2.05f, 0.05f), Quaternion.identity, door);
-        DecoPart(PrimitiveType.Cube, "Door R", g, new Vector3(0.42f, 1.1f, -0.32f), new Vector3(0.8f, 2.05f, 0.05f), Quaternion.identity, door);
-        DecoPart(PrimitiveType.Cylinder, "Handle L", g, new Vector3(-0.06f, 1.1f, -0.36f), new Vector3(0.025f, 0.16f, 0.025f), Quaternion.identity, handle);
-        DecoPart(PrimitiveType.Cylinder, "Handle R", g, new Vector3(0.06f, 1.1f, -0.36f), new Vector3(0.025f, 0.16f, 0.025f), Quaternion.identity, handle);
+        CreateSoftBox("Body", g, new Vector3(0f, 1.1f, 0f),
+            new Vector3(1.7f, 2.2f, 0.6f), body, 0.04f);
+        CreateCabinetDoor("Door L", g, new Vector3(-0.42f, 1.1f, -0.32f),
+            new Vector3(0.8f, 2.05f, 0.05f), door, body, handle, 0.34f);
+        CreateCabinetDoor("Door R", g, new Vector3(0.42f, 1.1f, -0.32f),
+            new Vector3(0.8f, 2.05f, 0.05f), door, body, handle, -0.34f);
+        DecoPart(PrimitiveType.Cube, "Wardrobe Plinth", g,
+            new Vector3(0f, 0.06f, 0f), new Vector3(1.64f, 0.12f, 0.54f),
+            Quaternion.identity, MakeMaterial(new Color(0.28f, 0.22f, 0.17f), 0.02f, 0.4f));
         AddRotatedObstacle("Wardrobe Body", new Vector3(x, 1.1f, z), new Vector3(1.8f, 2.2f, 0.7f), yaw);
     }
 
@@ -2821,11 +3298,18 @@ public class KitchenSimulator : MonoBehaviour
         Transform g = CreateGroup("Cabinet", new Vector3(x, 0f, z), yaw);
         Material body = MakeMaterial(new Color(0.58f, 0.6f, 0.62f), 0.35f, 0.5f);
         Material drawer = MakeMaterial(new Color(0.7f, 0.72f, 0.74f), 0.35f, 0.5f);
+        Material handle = MakeMaterial(new Color(0.8f, 0.82f, 0.84f), 0.8f, 0.7f);
 
-        DecoPart(PrimitiveType.Cube, "Body", g, new Vector3(0f, 0.6f, 0f), new Vector3(0.9f, 1.2f, 0.5f), Quaternion.identity, body);
+        CreateSoftBox("Body", g, new Vector3(0f, 0.6f, 0f),
+            new Vector3(0.9f, 1.2f, 0.5f), body, 0.03f);
         for (int i = 0; i < 3; i++)
         {
-            DecoPart(PrimitiveType.Cube, "Drawer", g, new Vector3(0f, 0.3f + i * 0.37f, -0.26f), new Vector3(0.78f, 0.3f, 0.05f), Quaternion.identity, drawer);
+            float dy = 0.3f + i * 0.37f;
+            CreateSoftBox("Drawer", g, new Vector3(0f, dy, -0.26f),
+                new Vector3(0.78f, 0.3f, 0.05f), drawer, 0.012f);
+            DecoPart(PrimitiveType.Cylinder, "Drawer Handle", g,
+                new Vector3(0f, dy, -0.3f), new Vector3(0.016f, 0.12f, 0.016f),
+                Quaternion.Euler(0f, 0f, 90f), handle);
         }
         AddRotatedObstacle("Cabinet Body", new Vector3(x, 0.6f, z), new Vector3(1f, 1.2f, 0.6f), yaw);
     }
@@ -2834,11 +3318,34 @@ public class KitchenSimulator : MonoBehaviour
     {
         Transform g = CreateGroup("Toilet", new Vector3(x, 0f, z), yaw);
         Material white = MakeMaterial(new Color(0.95f, 0.96f, 0.96f), 0.05f, 0.65f);
+        Material chrome = MakeMaterial(new Color(0.75f, 0.78f, 0.8f), 0.8f, 0.75f);
+        Material dark = MakeMaterial(new Color(0.16f, 0.17f, 0.18f), 0.1f, 0.4f);
 
-        DecoPart(PrimitiveType.Cube, "Tank", g, new Vector3(0f, 0.74f, -0.28f), new Vector3(0.48f, 0.58f, 0.22f), Quaternion.identity, white);
-        DecoPart(PrimitiveType.Cylinder, "Pedestal", g, new Vector3(0f, 0.2f, 0.08f), new Vector3(0.16f, 0.2f, 0.2f), Quaternion.identity, white);
-        DecoPart(PrimitiveType.Cylinder, "Bowl", g, new Vector3(0f, 0.36f, 0.05f), new Vector3(0.26f, 0.1f, 0.32f), Quaternion.identity, white);
-        DecoPart(PrimitiveType.Cube, "Seat", g, new Vector3(0f, 0.46f, 0.03f), new Vector3(0.48f, 0.06f, 0.6f), Quaternion.identity, white);
+        CreateSoftBox("Pedestal", g, new Vector3(0f, 0.2f, 0.06f),
+            new Vector3(0.34f, 0.4f, 0.44f), white, 0.05f);
+        DecoPart(PrimitiveType.Cylinder, "Bowl", g,
+            new Vector3(0f, 0.4f, 0.06f), new Vector3(0.28f, 0.08f, 0.34f),
+            Quaternion.identity, white);
+        DecoPart(PrimitiveType.Cylinder, "Bowl Inner", g,
+            new Vector3(0f, 0.47f, 0.06f), new Vector3(0.2f, 0.012f, 0.26f),
+            Quaternion.identity, MakeMaterial(new Color(0.78f, 0.84f, 0.88f), 0.05f, 0.6f));
+        DecoPart(PrimitiveType.Cube, "Seat Hinge", g,
+            new Vector3(0f, 0.49f, -0.26f), new Vector3(0.16f, 0.04f, 0.04f),
+            Quaternion.identity, dark);
+        DecoPart(PrimitiveType.Cylinder, "Seat Ring", g,
+            new Vector3(0f, 0.49f, 0.06f), new Vector3(0.29f, 0.018f, 0.35f),
+            Quaternion.identity, white);
+        CreateSoftBox("Tank", g, new Vector3(0f, 0.72f, -0.3f),
+            new Vector3(0.46f, 0.56f, 0.22f), white, 0.04f);
+        DecoPart(PrimitiveType.Cube, "Tank Lid", g,
+            new Vector3(0f, 1.02f, -0.3f), new Vector3(0.48f, 0.04f, 0.24f),
+            Quaternion.identity, white);
+        DecoPart(PrimitiveType.Cylinder, "Flush Button", g,
+            new Vector3(0.12f, 1.05f, -0.3f), new Vector3(0.035f, 0.012f, 0.035f),
+            Quaternion.identity, chrome);
+        DecoPart(PrimitiveType.Cylinder, "Supply Pipe", g,
+            new Vector3(0.24f, 0.45f, -0.18f), new Vector3(0.02f, 0.2f, 0.02f),
+            Quaternion.identity, chrome);
         AddRotatedObstacle("Toilet Body", new Vector3(x, 0.4f, z), new Vector3(0.55f, 0.8f, 0.75f), yaw);
     }
 
@@ -2847,10 +3354,32 @@ public class KitchenSimulator : MonoBehaviour
         Transform g = CreateGroup("Bathtub", new Vector3(x, 0f, z), yaw);
         Material shell = MakeMaterial(new Color(0.92f, 0.94f, 0.95f), 0.05f, 0.65f);
         Material water = MakeMaterial(new Color(0.6f, 0.78f, 0.85f), 0.1f, 0.8f);
+        Material chrome = MakeMaterial(new Color(0.75f, 0.78f, 0.8f), 0.8f, 0.75f);
+        Material glass = MakeTransparent(new Color(0.86f, 0.93f, 0.95f), 0.28f, 0.95f);
 
-        DecoPart(PrimitiveType.Cube, "Shell", g, new Vector3(0f, 0.3f, 0f), new Vector3(1.7f, 0.6f, 0.8f), Quaternion.identity, shell);
-        DecoPart(PrimitiveType.Cube, "Water", g, new Vector3(0f, 0.48f, 0f), new Vector3(1.5f, 0.1f, 0.62f), Quaternion.identity, water);
-        DecoPart(PrimitiveType.Cylinder, "Tap", g, new Vector3(0f, 0.68f, -0.34f), new Vector3(0.03f, 0.16f, 0.03f), Quaternion.identity, shell);
+        CreateSoftBox("Shell", g, new Vector3(0f, 0.3f, 0f),
+            new Vector3(1.7f, 0.6f, 0.8f), shell, 0.05f);
+        DecoPart(PrimitiveType.Cube, "Water", g,
+            new Vector3(0f, 0.5f, 0f), new Vector3(1.48f, 0.06f, 0.62f),
+            Quaternion.identity, water);
+        DecoPart(PrimitiveType.Cube, "Rim Front", g,
+            new Vector3(0f, 0.6f, -0.37f), new Vector3(1.74f, 0.06f, 0.08f),
+            Quaternion.identity, shell);
+        DecoPart(PrimitiveType.Cube, "Rim Back", g,
+            new Vector3(0f, 0.6f, 0.37f), new Vector3(1.74f, 0.06f, 0.08f),
+            Quaternion.identity, shell);
+        DecoPart(PrimitiveType.Cylinder, "Tap", g,
+            new Vector3(-0.72f, 0.72f, -0.28f), new Vector3(0.03f, 0.14f, 0.03f),
+            Quaternion.identity, chrome);
+        DecoPart(PrimitiveType.Cube, "Tap Spout", g,
+            new Vector3(-0.64f, 0.84f, -0.28f), new Vector3(0.18f, 0.04f, 0.04f),
+            Quaternion.identity, chrome);
+        DecoPart(PrimitiveType.Cube, "Shower Glass", g,
+            new Vector3(0.82f, 0.95f, 0f), new Vector3(0.04f, 1.5f, 0.84f),
+            Quaternion.identity, glass);
+        DecoPart(PrimitiveType.Cube, "Shower Rail", g,
+            new Vector3(0.82f, 1.72f, 0f), new Vector3(0.06f, 0.05f, 0.9f),
+            Quaternion.identity, chrome);
         AddRotatedObstacle("Bathtub Body", new Vector3(x, 0.3f, z), new Vector3(1.8f, 0.6f, 0.9f), yaw);
     }
 
@@ -2860,11 +3389,46 @@ public class KitchenSimulator : MonoBehaviour
         Material cab = MakeMaterial(new Color(0.56f, 0.43f, 0.31f), 0.02f, 0.4f);
         Material basin = MakeMaterial(new Color(0.95f, 0.96f, 0.96f), 0.05f, 0.65f);
         Material mirror = MakeMaterial(new Color(0.8f, 0.89f, 0.92f), 0.7f, 0.9f);
+        Material chrome = MakeMaterial(new Color(0.78f, 0.8f, 0.82f), 0.8f, 0.75f);
+        Material frame = MakeMaterial(new Color(0.4f, 0.32f, 0.24f), 0.05f, 0.4f);
 
-        DecoPart(PrimitiveType.Cube, "Cabinet", g, new Vector3(0f, 0.4f, 0f), new Vector3(0.9f, 0.8f, 0.5f), Quaternion.identity, cab);
-        DecoPart(PrimitiveType.Cube, "Basin", g, new Vector3(0f, 0.84f, 0f), new Vector3(1f, 0.12f, 0.56f), Quaternion.identity, basin);
-        DecoPart(PrimitiveType.Cylinder, "Faucet", g, new Vector3(0f, 0.98f, -0.2f), new Vector3(0.03f, 0.14f, 0.03f), Quaternion.identity, basin);
-        DecoPart(PrimitiveType.Cube, "Mirror", g, new Vector3(0f, 1.6f, -0.24f), new Vector3(0.7f, 0.9f, 0.05f), Quaternion.identity, mirror);
+        CreateSoftBox("Cabinet", g, new Vector3(0f, 0.4f, 0f),
+            new Vector3(0.9f, 0.8f, 0.5f), cab, 0.03f);
+        DecoPart(PrimitiveType.Cube, "Cabinet Door", g,
+            new Vector3(0f, 0.4f, -0.26f), new Vector3(0.78f, 0.66f, 0.04f),
+            Quaternion.identity, MakeMaterial(new Color(0.62f, 0.48f, 0.34f), 0.02f, 0.45f));
+        DecoPart(PrimitiveType.Cylinder, "Cabinet Handle", g,
+            new Vector3(0.28f, 0.4f, -0.3f), new Vector3(0.018f, 0.1f, 0.018f),
+            Quaternion.Euler(90f, 0f, 0f), chrome);
+        CreateSoftBox("Counter", g, new Vector3(0f, 0.84f, 0f),
+            new Vector3(1f, 0.1f, 0.56f), basin, 0.02f);
+        DecoPart(PrimitiveType.Cylinder, "Basin Bowl", g,
+            new Vector3(0f, 0.9f, 0f), new Vector3(0.3f, 0.03f, 0.24f),
+            Quaternion.identity, basin);
+        DecoPart(PrimitiveType.Cylinder, "Basin Inner", g,
+            new Vector3(0f, 0.915f, 0f), new Vector3(0.22f, 0.008f, 0.17f),
+            Quaternion.identity, MakeMaterial(new Color(0.8f, 0.85f, 0.88f), 0.05f, 0.6f));
+        DecoPart(PrimitiveType.Cylinder, "Faucet", g,
+            new Vector3(0f, 1.0f, -0.2f), new Vector3(0.028f, 0.12f, 0.028f),
+            Quaternion.identity, chrome);
+        DecoPart(PrimitiveType.Cube, "Faucet Spout", g,
+            new Vector3(0f, 1.12f, -0.13f), new Vector3(0.04f, 0.04f, 0.16f),
+            Quaternion.identity, chrome);
+        DecoPart(PrimitiveType.Cube, "Mirror Frame", g,
+            new Vector3(0f, 1.65f, -0.24f), new Vector3(0.76f, 0.96f, 0.04f),
+            Quaternion.identity, frame);
+        DecoPart(PrimitiveType.Cube, "Mirror", g,
+            new Vector3(0f, 1.65f, -0.27f), new Vector3(0.66f, 0.86f, 0.03f),
+            Quaternion.identity, mirror);
+        DecoPart(PrimitiveType.Cylinder, "Towel Bar", g,
+            new Vector3(-0.55f, 1.2f, 0f), new Vector3(0.018f, 0.3f, 0.018f),
+            Quaternion.Euler(0f, 0f, 90f), chrome);
+        DecoPart(PrimitiveType.Cylinder, "Bottle L", g,
+            new Vector3(-0.28f, 0.98f, 0.16f), new Vector3(0.03f, 0.06f, 0.03f),
+            Quaternion.identity, MakeMaterial(new Color(0.45f, 0.62f, 0.66f), 0.1f, 0.6f));
+        DecoPart(PrimitiveType.Cylinder, "Bottle R", g,
+            new Vector3(-0.18f, 0.97f, 0.16f), new Vector3(0.025f, 0.05f, 0.025f),
+            Quaternion.identity, MakeMaterial(new Color(0.78f, 0.62f, 0.5f), 0.1f, 0.6f));
         AddRotatedObstacle("Washbasin Body", new Vector3(x, 0.45f, z), new Vector3(1f, 0.9f, 0.6f), yaw);
     }
 
@@ -2873,10 +3437,25 @@ public class KitchenSimulator : MonoBehaviour
         Transform g = CreateGroup("TV Unit", new Vector3(x, 0f, z), yaw);
         Material cab = MakeMaterial(new Color(0.6f, 0.44f, 0.27f), 0.02f, 0.4f);
         Material screen = MakeMaterial(new Color(0.07f, 0.08f, 0.1f), 0.35f, 0.8f);
+        Material bezel = MakeMaterial(new Color(0.12f, 0.13f, 0.15f), 0.4f, 0.6f);
 
-        DecoPart(PrimitiveType.Cube, "Stand", g, new Vector3(0f, 0.24f, 0f), new Vector3(1.9f, 0.48f, 0.45f), Quaternion.identity, cab);
-        DecoPart(PrimitiveType.Cube, "TV Base", g, new Vector3(0f, 0.52f, 0f), new Vector3(0.4f, 0.06f, 0.24f), Quaternion.identity, screen);
-        DecoPart(PrimitiveType.Cube, "TV", g, new Vector3(0f, 0.95f, 0.02f), new Vector3(1.45f, 0.82f, 0.06f), Quaternion.identity, screen);
+        CreateSoftBox("Stand", g, new Vector3(0f, 0.24f, 0f),
+            new Vector3(1.9f, 0.48f, 0.45f), cab, 0.03f);
+        DecoPart(PrimitiveType.Cube, "TV Base", g,
+            new Vector3(0f, 0.52f, 0f), new Vector3(0.42f, 0.06f, 0.26f),
+            Quaternion.identity, bezel);
+        DecoPart(PrimitiveType.Cube, "TV Neck", g,
+            new Vector3(0f, 0.64f, 0f), new Vector3(0.08f, 0.2f, 0.08f),
+            Quaternion.identity, bezel);
+        DecoPart(PrimitiveType.Cube, "TV Bezel", g,
+            new Vector3(0f, 0.98f, 0.02f), new Vector3(1.5f, 0.86f, 0.06f),
+            Quaternion.identity, bezel);
+        DecoPart(PrimitiveType.Cube, "TV Screen", g,
+            new Vector3(0f, 0.98f, -0.02f), new Vector3(1.4f, 0.76f, 0.02f),
+            Quaternion.identity, screen);
+        DecoPart(PrimitiveType.Cube, "Soundbar", g,
+            new Vector3(0f, 0.5f, -0.16f), new Vector3(1.1f, 0.08f, 0.1f),
+            Quaternion.identity, bezel);
         AddRotatedObstacle("TV Unit Body", new Vector3(x, 0.3f, z), new Vector3(2f, 0.6f, 0.55f), yaw);
     }
 
@@ -3002,7 +3581,9 @@ public class KitchenSimulator : MonoBehaviour
         viewCamera = cameraObject.AddComponent<Camera>();
         cameraObject.AddComponent<AudioListener>();
         cameraObject.tag = "MainCamera";
-        viewCamera.fieldOfView = 68f;
+        viewCamera.fieldOfView = BaseVerticalFov;
+        baseHorizontalFov = 2f * Mathf.Atan(
+            Mathf.Tan(BaseVerticalFov * 0.5f * Mathf.Deg2Rad) * (16f / 9f)) * Mathf.Rad2Deg;
         viewCamera.nearClipPlane = 0.06f;
         viewCamera.farClipPlane = 400f;
         viewCamera.clearFlags = CameraClearFlags.SolidColor;
@@ -3016,6 +3597,20 @@ public class KitchenSimulator : MonoBehaviour
             ColorGradeEffect grade = cameraObject.AddComponent<ColorGradeEffect>();
             grade.gradeMaterial = new Material(gradeShader);
         }
+    }
+
+    // 窗口比例变化时保持"水平视野"不变，只调整垂直 FOV。
+    // 否则同一个人物在宽窗口里变小、在窄窗口里被拉宽，构图就不和谐了。
+    private void UpdateCameraFov()
+    {
+        if (viewCamera == null)
+        {
+            return;
+        }
+        float aspect = Mathf.Max(0.5f, (float)Screen.width / Mathf.Max(1, Screen.height));
+        float vertical = 2f * Mathf.Atan(
+            Mathf.Tan(baseHorizontalFov * 0.5f * Mathf.Deg2Rad) / aspect) * Mathf.Rad2Deg;
+        viewCamera.fieldOfView = Mathf.Clamp(vertical, 48f, 82f);
     }
 
     // ── 第一人称视角 ──────────────────────────────────────
@@ -3089,10 +3684,17 @@ public class KitchenSimulator : MonoBehaviour
         {
             SetCursorLock(!cursorLocked);
         }
-        else if (Input.GetKeyDown(KeyCode.Escape) && !repairPanelOpen)
+        else if (Input.GetKeyDown(KeyCode.Escape))
         {
-            // 处置面板打开时 Esc 交给 UpdateRepair 处理（放弃处置并锁回鼠标）
-            SetCursorLock(false);
+            // Esc 先关最上层的知识手册；手册没开时才释放鼠标或交给处置面板放弃维修
+            if (faultManualOpen)
+            {
+                faultManualOpen = false;
+            }
+            else if (!repairPanelOpen)
+            {
+                SetCursorLock(false);
+            }
         }
         else if (loggedIn && !cursorLocked && !mouseNeeded
             && Input.GetMouseButtonDown(0) && !IsPointerOverGui(Input.mousePosition))
@@ -4537,9 +5139,18 @@ public class KitchenSimulator : MonoBehaviour
         rightLegPivot.localPosition = new Vector3(0.13f, 0.68f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Right Leg", rightLegPivot, new Vector3(0f, -0.28f, 0f), new Vector3(0.16f, 0.56f, 0.16f), Quaternion.identity, legMaterial);
 
+        // 工装鞋与腰带：第三人称下不再是"两根柱子"
+        Material playerShoe = MakeMaterial(new Color(0.12f, 0.13f, 0.15f), 0.06f, 0.35f);
+        MakePrimitive(PrimitiveType.Cube, "Player Shoe L", leftLegPivot, new Vector3(0f, -0.57f, 0.05f), new Vector3(0.17f, 0.09f, 0.28f), Quaternion.identity, playerShoe);
+        MakePrimitive(PrimitiveType.Cube, "Player Shoe R", rightLegPivot, new Vector3(0f, -0.57f, 0.05f), new Vector3(0.17f, 0.09f, 0.28f), Quaternion.identity, playerShoe);
+        MakePrimitive(PrimitiveType.Cube, "Player Belt", player.transform, new Vector3(0f, 0.79f, 0f), new Vector3(0.44f, 0.06f, 0.3f), Quaternion.identity, MakeMaterial(new Color(0.24f, 0.2f, 0.16f), 0.08f, 0.4f));
+
         // 头部（第一人称隐藏、第三人称显示）
         GameObject head = MakePrimitive(PrimitiveType.Cube, "Player Head", player.transform, new Vector3(0f, 1.36f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
         GameObject helmet = MakePrimitive(PrimitiveType.Cube, "Player Helmet", player.transform, new Vector3(0f, 1.56f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f));
+        Material playerEye = MakeMaterial(new Color(0.12f, 0.11f, 0.12f), 0.02f, 0.5f);
+        GameObject eyeL = MakePrimitive(PrimitiveType.Cube, "Player Eye L", player.transform, new Vector3(-0.075f, 1.39f, 0.165f), new Vector3(0.05f, 0.05f, 0.02f), Quaternion.identity, playerEye);
+        GameObject eyeR = MakePrimitive(PrimitiveType.Cube, "Player Eye R", player.transform, new Vector3(0.075f, 1.39f, 0.165f), new Vector3(0.05f, 0.05f, 0.02f), Quaternion.identity, playerEye);
         GameObject vest = MakePrimitive(PrimitiveType.Cube, "Player Vest", player.transform, new Vector3(0f, 0.92f, -0.19f), new Vector3(0.36f, 0.6f, 0.05f), Quaternion.identity, MakeMaterial(new Color(0.95f, 0.6f, 0.15f), 0.05f, 0.4f));
         GameObject waist = MakePrimitive(PrimitiveType.Cube, "Player Waist", player.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, playerClothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Player Neck", player.transform, new Vector3(0f, 1.24f, 0f), new Vector3(0.12f, 0.1f, 0.12f), Quaternion.identity, MakeMaterial(new Color(0.84f, 0.66f, 0.5f), 0.02f, 0.3f));
@@ -4553,6 +5164,8 @@ public class KitchenSimulator : MonoBehaviour
         {
             head.GetComponent<Renderer>(),
             helmet.GetComponent<Renderer>(),
+            eyeL.GetComponent<Renderer>(),
+            eyeR.GetComponent<Renderer>(),
             vest.GetComponent<Renderer>(),
             torso.GetComponent<Renderer>()
         };
@@ -5126,6 +5739,7 @@ public class KitchenSimulator : MonoBehaviour
         public Transform body;
         public Transform leftArm, rightArm, leftLeg, rightLeg;
         public Transform leftKnee, rightKnee;   // 膝关节，用于坐姿
+        public float phase;                      // 待机呼吸相位，避免所有 NPC 同步起伏
     }
 
     private CharacterRig BuildCharacterModel(string name, Vector3 position, float yaw, Color cloth, Color skin)
@@ -5139,16 +5753,23 @@ public class KitchenSimulator : MonoBehaviour
         Material skinMaterial = MakeMaterial(skin, 0.02f, 0.3f);
         Material trouserMaterial = MakeMaterial(new Color(0.22f, 0.26f, 0.3f), 0.05f, 0.3f);
         Material helmetMaterial = MakeMaterial(new Color(0.95f, 0.72f, 0.12f), 0.1f, 0.45f);
+        Material shoeMaterial = MakeMaterial(new Color(0.13f, 0.14f, 0.16f), 0.05f, 0.35f);
+        Material beltMaterial = MakeMaterial(new Color(0.24f, 0.20f, 0.16f), 0.08f, 0.4f);
 
         // 躯干分胸/腰两段，比例更像人
         Transform body = MakePrimitive(PrimitiveType.Cube, "Chest", root.transform, new Vector3(0f, 1.02f, 0f), new Vector3(0.48f, 0.44f, 0.3f), Quaternion.identity, clothMaterial).transform;
         MakePrimitive(PrimitiveType.Cube, "Waist", root.transform, new Vector3(0f, 0.68f, 0f), new Vector3(0.4f, 0.3f, 0.26f), Quaternion.identity, clothMaterial);
+        // 腰带与衣领：把上下装分开，人物轮廓不再是一整块
+        MakePrimitive(PrimitiveType.Cube, "Belt", root.transform, new Vector3(0f, 0.79f, 0f), new Vector3(0.42f, 0.06f, 0.28f), Quaternion.identity, beltMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Collar", root.transform, new Vector3(0f, 1.2f, 0f), new Vector3(0.36f, 0.05f, 0.26f), Quaternion.identity, beltMaterial);
         MakePrimitive(PrimitiveType.Cube, "Neck", root.transform, new Vector3(0f, 1.26f, 0f), new Vector3(0.13f, 0.12f, 0.13f), Quaternion.identity, skinMaterial);
         MakePrimitive(PrimitiveType.Cube, "Shoulder L", root.transform, new Vector3(-0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
         MakePrimitive(PrimitiveType.Cube, "Shoulder R", root.transform, new Vector3(0.28f, 1.17f, 0f), new Vector3(0.14f, 0.12f, 0.18f), Quaternion.identity, clothMaterial);
         // 头/安全帽挂在根节点上（绝对高度），不受身体动画影响，保证始终可见
         MakePrimitive(PrimitiveType.Cube, "Head", root.transform, new Vector3(0f, 1.44f, 0f), new Vector3(0.32f, 0.32f, 0.32f), Quaternion.identity, skinMaterial);
         MakePrimitive(PrimitiveType.Cube, "Helmet", root.transform, new Vector3(0f, 1.63f, 0f), new Vector3(0.4f, 0.1f, 0.4f), Quaternion.identity, helmetMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Ear L", root.transform, new Vector3(-0.175f, 1.44f, 0f), new Vector3(0.035f, 0.09f, 0.07f), Quaternion.identity, skinMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Ear R", root.transform, new Vector3(0.175f, 1.44f, 0f), new Vector3(0.035f, 0.09f, 0.07f), Quaternion.identity, skinMaterial);
 
         // 五官（脸在角色朝向的 +Z 面）
         Material faceMaterial = MakeMaterial(new Color(0.12f, 0.11f, 0.12f), 0.02f, 0.5f);
@@ -5165,12 +5786,14 @@ public class KitchenSimulator : MonoBehaviour
         leftArm.SetParent(root.transform, false);
         leftArm.localPosition = new Vector3(-0.34f, 1.12f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Cuff L", leftArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
         MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         Transform rightArm = new GameObject("Right Arm Pivot").transform;
         rightArm.SetParent(root.transform, false);
         rightArm.localPosition = new Vector3(0.34f, 1.12f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.12f, 0.5f, 0.12f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Cuff R", rightArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
         MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
@@ -5182,7 +5805,8 @@ public class KitchenSimulator : MonoBehaviour
         leftKnee.SetParent(leftLeg, false);
         leftKnee.localPosition = new Vector3(0f, -0.3f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Shin", leftKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Foot", leftKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Foot", leftKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, shoeMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Toe", leftKnee, new Vector3(0f, -0.325f, 0.19f), new Vector3(0.15f, 0.07f, 0.08f), Quaternion.identity, shoeMaterial);
 
         Transform rightLeg = new GameObject("Right Leg Pivot").transform;
         rightLeg.SetParent(root.transform, false);
@@ -5192,7 +5816,8 @@ public class KitchenSimulator : MonoBehaviour
         rightKnee.SetParent(rightLeg, false);
         rightKnee.localPosition = new Vector3(0f, -0.3f, 0f);
         MakePrimitive(PrimitiveType.Cube, "Shin", rightKnee, new Vector3(0f, -0.15f, 0f), new Vector3(0.16f, 0.3f, 0.16f), Quaternion.identity, trouserMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Foot", rightKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, trouserMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Foot", rightKnee, new Vector3(0f, -0.32f, 0.05f), new Vector3(0.16f, 0.08f, 0.26f), Quaternion.identity, shoeMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Toe", rightKnee, new Vector3(0f, -0.325f, 0.19f), new Vector3(0.15f, 0.07f, 0.08f), Quaternion.identity, shoeMaterial);
 
         Collider[] colliders = root.GetComponentsInChildren<Collider>();
         for (int i = 0; i < colliders.Length; i++)
@@ -5209,7 +5834,8 @@ public class KitchenSimulator : MonoBehaviour
             leftLeg = leftLeg,
             rightLeg = rightLeg,
             leftKnee = leftKnee,
-            rightKnee = rightKnee
+            rightKnee = rightKnee,
+            phase = Mathf.Repeat(position.x * 0.37f + position.z * 0.61f, 1f) * Mathf.PI * 2f
         };
     }
 
@@ -5229,14 +5855,19 @@ public class KitchenSimulator : MonoBehaviour
             rig.leftLeg.localRotation = Quaternion.Euler(-swing, 0f, 0f);
             rig.rightLeg.localRotation = Quaternion.Euler(swing, 0f, 0f);
             rig.body.localPosition = new Vector3(0f, 1.02f + Mathf.Abs(Mathf.Sin(t)) * 0.04f, 0f);
+            rig.body.localScale = Vector3.one;
         }
         else
         {
-            rig.leftArm.localRotation = Quaternion.identity;
-            rig.rightArm.localRotation = Quaternion.identity;
+            // 站立也不是完全静止：呼吸起伏 + 手臂极轻微摆动，避免像假人
+            float breath = Mathf.Sin(Time.time * 1.7f + rig.phase);
+            float sway = Mathf.Sin(Time.time * 1.1f + rig.phase) * 1.6f;
+            rig.leftArm.localRotation = Quaternion.Euler(sway, 0f, 1.2f);
+            rig.rightArm.localRotation = Quaternion.Euler(-sway, 0f, -1.2f);
             rig.leftLeg.localRotation = Quaternion.identity;
             rig.rightLeg.localRotation = Quaternion.identity;
-            rig.body.localPosition = new Vector3(0f, 1.02f, 0f);
+            rig.body.localPosition = new Vector3(0f, 1.02f + breath * 0.008f, 0f);
+            rig.body.localScale = new Vector3(1f + breath * 0.004f, 1f - breath * 0.003f, 1f);
         }
     }
 
@@ -5471,6 +6102,40 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // ── 移动（手动 AABB 碰撞）────────────────────────────
+    // 玩家与 NPC 的软碰撞：不允许直接穿过对方身体
+    private bool BlockedByNpc(Vector3 position)
+    {
+        for (int i = 0; i < homeowners.Count; i++)
+        {
+            Homeowner h = homeowners[i];
+            if (h.phase == 2 || h.rig == null || h.rig.root == null)
+            {
+                continue;
+            }
+            if (Distance2D(position, h.rig.root.position) < 0.62f)
+            {
+                return true;
+            }
+        }
+        for (int i = 0; i < colleagues.Count; i++)
+        {
+            Colleague c = colleagues[i];
+            if (c.rig == null || c.rig.root == null || !c.rig.root.gameObject.activeSelf)
+            {
+                continue;
+            }
+            if (Distance2D(position, c.rig.root.position) < 0.58f)
+            {
+                return true;
+            }
+        }
+        if (bossRig != null && bossRig.root != null && Distance2D(position, bossRig.root.position) < 0.62f)
+        {
+            return true;
+        }
+        return false;
+    }
+
     private void HandleMovement()
     {
         if (player == null)
@@ -5522,7 +6187,7 @@ public class KitchenSimulator : MonoBehaviour
             Vector3 move = direction * speed * Time.deltaTime;
             Vector3 target = playerPosition + move;
 
-            if (!Collides(target))
+            if (!Collides(target) && !BlockedByNpc(target))
             {
                 playerPosition = target;
             }
@@ -5530,12 +6195,12 @@ public class KitchenSimulator : MonoBehaviour
             {
                 // 分离轴滑动，让角色贴墙走
                 Vector3 xOnly = new Vector3(playerPosition.x + move.x, 0f, playerPosition.z);
-                if (!Collides(xOnly))
+                if (!Collides(xOnly) && !BlockedByNpc(xOnly))
                 {
                     playerPosition = xOnly;
                 }
                 Vector3 zOnly = new Vector3(playerPosition.x, 0f, playerPosition.z + move.z);
-                if (!Collides(zOnly))
+                if (!Collides(zOnly) && !BlockedByNpc(zOnly))
                 {
                     playerPosition = zOnly;
                 }
@@ -6518,7 +7183,10 @@ public class KitchenSimulator : MonoBehaviour
         if (GUI.Button(close, GUIContent.none, GUIStyle.none))
         {
             faultManualOpen = false;
-            SetCursorLock(true);
+            if (!repairPanelOpen)
+            {
+                SetCursorLock(true);
+            }
         }
         GUI.Label(close, "关闭", cardButtonStyle);
 
@@ -7003,7 +7671,7 @@ public class KitchenSimulator : MonoBehaviour
                     Vector3 next = owner.rig.root.position + step;
 
                     bool moved = false;
-                    if (!Collides(next, true))
+                    if (!Collides(next, true) && Distance2D(next, playerPosition) > 0.9f)
                     {
                         owner.rig.root.position = next;
                         moved = true;
@@ -7012,7 +7680,7 @@ public class KitchenSimulator : MonoBehaviour
                     {
                         // 分离轴滑动，让他贴着墙找路
                         Vector3 xOnly = new Vector3(next.x, owner.rig.root.position.y, owner.rig.root.position.z);
-                        if (!Collides(xOnly, true))
+                        if (!Collides(xOnly, true) && Distance2D(xOnly, playerPosition) > 0.9f)
                         {
                             owner.rig.root.position = xOnly;
                             moved = true;
@@ -7020,7 +7688,7 @@ public class KitchenSimulator : MonoBehaviour
                         else
                         {
                             Vector3 zOnly = new Vector3(owner.rig.root.position.x, owner.rig.root.position.y, next.z);
-                            if (!Collides(zOnly, true))
+                            if (!Collides(zOnly, true) && Distance2D(zOnly, playerPosition) > 0.9f)
                             {
                                 owner.rig.root.position = zOnly;
                                 moved = true;
@@ -7044,14 +7712,14 @@ public class KitchenSimulator : MonoBehaviour
                 owner.timer -= Time.deltaTime;
                 if (owner.timer <= 0f)
                 {
-                    FileReport(owner);
+                    // 不在前台登记时建单：等玩家按 E 听完诉求，EndConversation 里统一建单
                     // 登记后主动找人沟通：玩家在公司内就找玩家，否则找在场的同事
                     bool playerInside = Distance2D(playerPosition, owner.rig.root.position) < 12f;
                     if (playerInside && dialogueIndex < 0 && talkTarget == null && !dialogueJustEnded)
                     {
+                        // 登记后只走到玩家身边等按 E，不再强制进入对话
                         owner.phase = 3;
                         owner.timer = 90f;
-                        StartConversation(owner);
                     }
                     else
                     {
@@ -7072,10 +7740,30 @@ public class KitchenSimulator : MonoBehaviour
             }
             else if (owner.phase == 3)
             {
-                // 与玩家对话中：等 EndConversation 把 phase 切到 2
-                owner.moving = false;
-                FacePlayer(owner, 5f);
+                // 走到玩家 2.2 米外停下等待；玩家按 E 才真正开始对话
+                Vector3 toPlayer = playerPosition - owner.rig.root.position;
+                toPlayer.y = 0f;
+                float dist = toPlayer.magnitude;
                 owner.timer -= Time.deltaTime;
+                if (dist > 2.2f && owner.timer > 0f)
+                {
+                    Vector3 step = toPlayer.normalized * Mathf.Min(1.8f, dist - 2.2f) * Time.deltaTime * 1.6f;
+                    Vector3 next = owner.rig.root.position + step;
+                    if (!Collides(next, true) && Distance2D(next, playerPosition) > 0.9f)
+                    {
+                        owner.rig.root.position = next;
+                        owner.moving = true;
+                    }
+                    else
+                    {
+                        owner.moving = false;
+                    }
+                }
+                else
+                {
+                    owner.moving = false;
+                }
+                FacePlayer(owner, 5f);
                 if (owner.timer <= 0f)
                 {
                     owner.phase = 2;
@@ -7431,6 +8119,7 @@ public class KitchenSimulator : MonoBehaviour
         {
             activeOrder = null;
             activeColleague = null;
+            activeHomeowner = null;
             return;
         }
 
@@ -7457,6 +8146,29 @@ public class KitchenSimulator : MonoBehaviour
             }
         }
         activeOrder = nearest;
+
+        // 附近有上门登记的业主：按 E 主动交谈，不再自动弹对话
+        activeHomeowner = null;
+        float bestOwner = 2.6f;
+        for (int i = 0; i < homeowners.Count; i++)
+        {
+            Homeowner h = homeowners[i];
+            if (h.phase != 3 || h.rig == null || h.rig.root == null)
+            {
+                continue;
+            }
+            float d = Distance2D(playerPosition, h.rig.root.position);
+            if (d < bestOwner)
+            {
+                bestOwner = d;
+                activeHomeowner = h;
+            }
+        }
+        if (activeHomeowner != null && Input.GetKeyDown(KeyCode.E))
+        {
+            StartConversation(activeHomeowner);
+            return;
+        }
 
         // 附近有同事就优先提示聊天
         activeColleague = null;
@@ -7545,6 +8257,11 @@ public class KitchenSimulator : MonoBehaviour
         repairingOrder = order;
         order.state = OrderState.Repairing;
         order.repairProgress = 0f;
+        // 上门开始处置即视为维修公司接单，响应超时计时到此为止
+        if (order.acceptedAt <= 0f)
+        {
+            order.acceptedAt = Time.time;
+        }
         repairStage = RepairStage.Diagnose;
         repairPanelOpen = true;
         diagnoseWrongCount = 0;
@@ -7803,7 +8520,7 @@ public class KitchenSimulator : MonoBehaviour
             shockTimer = Mathf.Max(0f, shockTimer - Time.deltaTime * 1.6f);
         }
         // 处置面板：Esc 放弃，避免卡在面板里
-        if (repairPanelOpen && Input.GetKeyDown(KeyCode.Escape))
+        if (repairPanelOpen && !faultManualOpen && Input.GetKeyDown(KeyCode.Escape))
         {
             AbortRepair();
         }
@@ -7831,8 +8548,27 @@ public class KitchenSimulator : MonoBehaviour
             // 数据牌实时文字：传感器名 / 当前读数 / 状态
             if (order.tag != null)
             {
-                bool over = order.state != OrderState.Fixed && order.sensorValue >= order.sensorAlarm;
-                string mark = order.state == OrderState.Fixed ? "OK" : (over ? "超标" : "预警");
+                string mark;
+                if (order.state == OrderState.Fixed)
+                {
+                    mark = "OK";
+                }
+                else if (IsPendingSpike(order))
+                {
+                    mark = "干扰";
+                }
+                else if (IsSevereAlarm(order))
+                {
+                    mark = "严重";
+                }
+                else if (IsConfirmedAlarm(order))
+                {
+                    mark = "超标";
+                }
+                else
+                {
+                    mark = order.alarmLevel >= 1 ? "预警" : "正常";
+                }
                 order.tag.text = order.sensorName + "\n" + order.sensorValue.ToString("F1") + " " + order.sensorUnit + "  " + mark
                     + (OrderSelfRepairable(order) ? "" : " ·须物业");
                 order.tag.color = stateColors[(int)order.state];
@@ -7968,6 +8704,7 @@ public class KitchenSimulator : MonoBehaviour
         DrawBag();
         DrawShop();
         DrawAlmanac();
+        DrawAlarmBadge();
         DrawTwinPanel();
         DrawGuide();
         DrawToolChip();
@@ -7980,8 +8717,8 @@ public class KitchenSimulator : MonoBehaviour
         DrawLogin();
         DrawLobby();
         DrawChat();
-        DrawFaultManual();
         DrawRepairPanel();
+        DrawFaultManual();
         DrawShockFlash();
         DrawStartError();
     }
@@ -8232,10 +8969,29 @@ public class KitchenSimulator : MonoBehaviour
         bool hasTool = HasTool(order.requiredTool);
         Color toolColor = order.state == OrderState.Fixed ? fixedColor
             : (hasTool ? new Color(0.62f, 0.86f, 0.72f) : new Color(1f, 0.55f, 0.42f));
+        // 派单状态：待接单时显示剩余响应秒数，超时后标红
+        string dispatchText = string.Empty;
+        if (order.dispatchedAt > 0f && order.state != OrderState.Fixed)
+        {
+            if (order.acceptedAt > 0f)
+            {
+                dispatchText = "　· 已接单";
+            }
+            else if (order.dispatchPenalized)
+            {
+                dispatchText = "　· 响应超时";
+                toolColor = pendingColor;
+            }
+            else
+            {
+                int left = Mathf.Max(0, Mathf.CeilToInt(DispatchResponseSeconds - (Time.time - order.dispatchedAt)));
+                dispatchText = "　· 待接单 " + left + "s";
+            }
+        }
         Color prevTool = GUI.color;
         GUI.color = toolColor;
         GUI.Label(new Rect(card.x + 22f, card.y + 40f, card.width - 32f, 18f),
-            (hasTool ? "工具：" : "缺工具：") + ToolName(order.requiredTool), smallStyle);
+            (hasTool ? "工具：" : "缺工具：") + ToolName(order.requiredTool) + dispatchText, smallStyle);
         GUI.color = prevTool;
         GUI.color = previous;
     }
@@ -8554,6 +9310,26 @@ public class KitchenSimulator : MonoBehaviour
     private Rect TwinRect { get { return new Rect(Screen.width * 0.5f - 390f, 60f, 780f, 566f); } }
     // 收起时的紧凑状态条（顶部居中，不挡视野）
     private Rect TwinBarRect { get { return new Rect(Screen.width * 0.5f - 200f, 16f, 400f, 42f); } }
+    // 报警角标：只在有报警时出现，位于监测条左侧，点一下打开报警页签
+    private Rect AlarmBadgeRect { get { return new Rect(Screen.width * 0.5f - 242f, 20f, 30f, 30f); } }
+
+    private void DrawAlarmBadge()
+    {
+        if (twinPanelOpen || AlarmCount() <= 0)
+        {
+            return;
+        }
+        Rect rect = AlarmBadgeRect;
+        float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 4.5f);
+        Fill(rect, new Color(0.92f, 0.16f, 0.14f, 0.70f + pulse * 0.30f));
+        if (GUI.Button(rect, GUIContent.none, GUIStyle.none))
+        {
+            twinPanelOpen = true;
+            twinTab = 2;
+            SetCursorLock(false);
+        }
+        GUI.Label(rect, "!", alarmStyle);
+    }
 
     // 现场详情：优先取离玩家最近的点位
     private Order FocusOrder()
@@ -8635,12 +9411,168 @@ public class KitchenSimulator : MonoBehaviour
         return Mathf.Max(0.2f, mean + (float)normal * sd);
     }
 
+    // ── 报警判定（唯一入口，全部界面与统计都走这里）──────────
+    // 读数须连续超阈值达 AlarmConfirmSeconds 才算"持续超标"；
+    // 未达时长的单点尖峰只算「疑似干扰」，被抑制、不触发报警。
+    // 预警线：正常值与报警值之间按 WarnRatio 划分。
+    private float WarnThresholdOf(Order o)
+    {
+        float span = o.sensorAlarm - o.sensorNormal;
+        if (span <= 0.0001f)
+        {
+            return o.sensorAlarm * 0.8f;
+        }
+        return o.sensorNormal + span * WarnRatio;
+    }
+
+    // 严重线：在报警值基础上再外扩半程，并以量程上限封顶。
+    private float SevereThresholdOf(Order o)
+    {
+        float span = o.sensorAlarm - o.sensorNormal;
+        float severe = o.sensorAlarm + Mathf.Max(0f, span) * SevereExtendRatio;
+        return Mathf.Min(o.sensorMax > 0f ? o.sensorMax : severe, severe);
+    }
+
+    private bool IsSustainedOver(Order o)
+    {
+        return o.sensorValue >= o.sensorAlarm
+            && o.overSince > 0f
+            && Time.time - o.overSince >= AlarmConfirmSeconds;
+    }
+
+    // 已确认报警：未完工点位 + 读数额持续超标
+    private bool IsConfirmedAlarm(Order o)
+    {
+        return o.state != OrderState.Fixed && IsSustainedOver(o);
+    }
+
+    // 疑似干扰：读数超阈值但未达确认时长（含已完工点位受瞬时干扰，标为已抑制）
+    private bool IsPendingSpike(Order o)
+    {
+        return o.sensorValue >= o.sensorAlarm && !IsSustainedOver(o);
+    }
+
+    // 严重级报警：超过严重线并持续确认时长
+    private bool IsSevereAlarm(Order o)
+    {
+        return o.state != OrderState.Fixed && o.alarmLevel >= 3;
+    }
+
+    // 单点状态文案：严重 / 报警 / 已抑制干扰 / 疑似干扰 / 已消除 / 预警
+    private string SensorStateText(Order o)
+    {
+        if (IsPendingSpike(o))
+        {
+            return o.state == OrderState.Fixed ? "已抑制干扰" : "疑似干扰";
+        }
+        if (o.state == OrderState.Fixed)
+        {
+            return "已消除";
+        }
+        if (IsSevereAlarm(o))
+        {
+            return "严重";
+        }
+        if (IsConfirmedAlarm(o))
+        {
+            return "报警";
+        }
+        return o.alarmLevel >= 1 ? "预警" : "正常";
+    }
+
     private int AlarmCount()
     {
         int count = 0;
         for (int i = 0; i < orders.Count; i++)
         {
-            if (orders[i].state != OrderState.Fixed && orders[i].sensorValue >= orders[i].sensorAlarm)
+            if (orders[i].state != OrderState.Fixed && orders[i].alarmLevel >= 2)
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // 当前处于「疑似干扰（未达确认时长）」的点位数
+    private int PendingSpikeCount()
+    {
+        int count = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (IsPendingSpike(orders[i]))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // ── 报警派单：监测平台确认报警后自动推送维修公司 ──────────
+    private int dispatchPenalties;
+    private readonly List<string> dispatchLog = new List<string>();
+
+    private void UpdateDispatch()
+    {
+        if (!loggedIn)
+        {
+            return;
+        }
+        for (int i = 0; i < orders.Count; i++)
+        {
+            Order o = orders[i];
+            if (o.state == OrderState.Fixed)
+            {
+                continue;
+            }
+
+            // 达到报警级或严重级，且尚未派过单 → 自动推送给维修公司
+            if (o.alarmLevel >= 2 && o.dispatchedAt <= 0f)
+            {
+                o.dispatchedAt = Time.time;
+                if (o.alarmTime <= 0f)
+                {
+                    o.alarmTime = gameTime;
+                }
+                string level = o.alarmLevel >= 3 ? "严重报警" : "报警";
+                AddDispatchLog(o.Code + " " + level + " · " + o.room + " " + o.sensorName
+                    + " " + o.sensorValue.ToString("F1") + o.sensorUnit
+                    + "　已派单至维修公司");
+                PlayNotify();
+                // 不再弹大提示条：顶部的小感叹号就是报警入口
+            }
+
+            // 派单后迟迟没有接单 → 响应超时扣罚
+            if (o.dispatchedAt > 0f && o.acceptedAt <= 0f && !o.dispatchPenalized
+                && Time.time - o.dispatchedAt >= DispatchResponseSeconds)
+            {
+                o.dispatchPenalized = true;
+                dispatchPenalties++;
+                AddExpense(DispatchPenalty);
+                AddDispatchLog(o.Code + " 响应超时 · " + o.room + " 超时 "
+                    + DispatchResponseSeconds.ToString("F0") + " 秒未接单，赔付 ¥" + DispatchPenalty);
+                ShowToast("响应超时：" + o.Code + " " + o.room + " 派单后 "
+                    + DispatchResponseSeconds.ToString("F0") + " 秒未接单，赔付 ¥" + DispatchPenalty, 6f);
+            }
+        }
+    }
+
+    private void AddDispatchLog(string text)
+    {
+        dispatchLog.Add(ClockText + "　" + text);
+        if (dispatchLog.Count > 12)
+        {
+            dispatchLog.RemoveAt(0);
+        }
+    }
+
+    // 已派单但尚未接单的数量
+    private int AwaitingAcceptCount()
+    {
+        int count = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].state != OrderState.Fixed
+                && orders[i].dispatchedAt > 0f && orders[i].acceptedAt <= 0f)
             {
                 count++;
             }
@@ -8713,7 +9645,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            if (o.sensorValue >= o.sensorAlarm) alarm = true;
+            if (IsConfirmedAlarm(o)) alarm = true;
             else active = true;
         }
         if (alarm) return new Color(0.94f, 0.26f, 0.22f, 0.55f);
@@ -8885,7 +9817,7 @@ public class KitchenSimulator : MonoBehaviour
                 else
                 {
                     active++;
-                    if (o.sensorValue >= o.sensorAlarm)
+                    if (IsConfirmedAlarm(o))
                     {
                         alarm++;
                     }
@@ -9012,6 +9944,81 @@ public class KitchenSimulator : MonoBehaviour
         GUI.EndScrollView();
     }
 
+    // ── 报警中心：分级阈值区间 + 自动派单记录 ──────────────
+    private void DrawAlarmCenter(Rect rect)
+    {
+        float top = rect.y + 70f;
+        int alarms = AlarmCount();
+        int awaiting = AwaitingAcceptCount();
+        int dispatched = 0;
+        for (int i = 0; i < orders.Count; i++)
+        {
+            if (orders[i].dispatchedAt > 0f)
+            {
+                dispatched++;
+            }
+        }
+
+        DrawPanel(new Rect(rect.x + 20f, top, rect.width - 40f, 46f),
+            alarms > 0 ? new Color(0.86f, 0.24f, 0.20f, 0.20f) : new Color(1f, 1f, 1f, 0.05f),
+            dividerColor);
+        GUI.Label(new Rect(rect.x + 34f, top + 5f, 300f, 18f), "报警判定状态", cardTitleStyle);
+        GUI.Label(new Rect(rect.x + 34f, top + 24f, rect.width - 68f, 16f),
+            "报警中 " + alarms + " 个　·　待接单 " + awaiting + " 个　·　累计派单 " + dispatched
+            + " 次　·　响应超时 " + dispatchPenalties + " 次", smallStyle);
+
+        // 左栏：每个点位的三条阈值线（正常 / 预警 / 报警 / 严重）
+        float listTop = top + 58f;
+        GUI.Label(new Rect(rect.x + 20f, listTop, 360f, 18f),
+            "分级阈值（由正常值与报警值自动推导）", cardTitleStyle);
+        Fill(new Rect(rect.x + 20f, listTop + 20f, 372f, 1f), dividerColor);
+
+        float rowY = listTop + 26f;
+        int shown = 0;
+        for (int i = 0; i < orders.Count && shown < 7; i++)
+        {
+            Order o = orders[i];
+            float warn = WarnThresholdOf(o);
+            float severe = SevereThresholdOf(o);
+            Color stateColor = o.alarmLevel >= 3 ? pendingColor
+                : (o.alarmLevel == 2 ? pendingColor : (o.alarmLevel == 1 ? workingColor : fixedColor));
+
+            GUI.Label(new Rect(rect.x + 20f, rowY, 372f, 17f),
+                o.Code + "　" + o.room + "　" + o.sensorName, smallStyle);
+            Color prev = GUI.color;
+            GUI.color = stateColor;
+            GUI.Label(new Rect(rect.x + 20f, rowY + 16f, 372f, 16f),
+                "预警 " + warn.ToString("F1") + "　报警 " + o.sensorAlarm.ToString("F1")
+                + "　严重 " + severe.ToString("F1") + " " + o.sensorUnit
+                + "　当前 " + o.sensorValue.ToString("F1"), smallStyle);
+            GUI.color = prev;
+            rowY += 34f;
+            shown++;
+        }
+
+        // 右栏：派单流水
+        float rx = rect.x + 412f;
+        GUI.Label(new Rect(rx, listTop, 340f, 18f), "派单至维修公司", cardTitleStyle);
+        Fill(new Rect(rx, listTop + 20f, 348f, 1f), dividerColor);
+        if (dispatchLog.Count == 0)
+        {
+            GUI.Label(new Rect(rx, listTop + 28f, 340f, 40f),
+                "暂无派单。读数连续超过报警线后，系统会自动把工单推送到维修公司。", smallStyle);
+        }
+        else
+        {
+            float ly = listTop + 26f;
+            for (int i = dispatchLog.Count - 1; i >= 0 && ly < rect.yMax - 44f; i--)
+            {
+                GUI.Label(new Rect(rx, ly, 348f, 18f), dispatchLog[i], smallStyle);
+                ly += 22f;
+            }
+            GUI.Label(new Rect(rx, rect.yMax - 38f, 348f, 16f),
+                "响应时限 " + DispatchResponseSeconds.ToString("F0") + " 秒　·　超时赔付 ¥" + DispatchPenalty,
+                smallStyle);
+        }
+    }
+
     private void DrawTwinPanel()
     {
         // 收起状态：只显示一条紧凑状态条，不遮挡视野
@@ -9021,9 +10028,13 @@ public class KitchenSimulator : MonoBehaviour
             DrawPanel(bar, new Color(0.04f, 0.07f, 0.1f, 0.92f), new Color(0.45f, 0.75f, 0.9f, 0.3f));
 
             int alarms = AlarmCount();
+            int spikes = PendingSpikeCount();
             Fill(new Rect(bar.x + 12f, bar.y + 11f, 4f, 20f), alarms > 0 ? pendingColor : fixedColor);
-            GUI.Label(new Rect(bar.x + 24f, bar.y + 10f, 250f, 22f),
-                "数字孪生监测　·　报警 " + alarms + " 个　·　已消除 " + CountFixed() + "/" + orders.Count + "　·　已闭环 " + CountVerified(), smallStyle);
+            GUI.Label(new Rect(bar.x + 24f, bar.y + 10f, 300f, 22f),
+                "数字孪生监测　·　报警 " + alarms + " 个"
+                + (spikes > 0 ? "（抑制干扰 " + spikes + "）" : "")
+                + "　·　待接单 " + AwaitingAcceptCount()
+                + "　·　已消除 " + CountFixed() + "/" + orders.Count + "　·　已闭环 " + CountVerified(), smallStyle);
 
             Rect expand = new Rect(bar.x + bar.width - 84f, bar.y + 8f, 72f, 26f);
             bool hoverExpand = expand.Contains(Event.current.mousePosition);
@@ -9046,8 +10057,8 @@ public class KitchenSimulator : MonoBehaviour
         GUI.color = new Color(1f, 1f, 1f, Mathf.Clamp01(0.35f + ease * 0.65f));
         DrawPanel(rect, new Color(0.04f, 0.07f, 0.1f, 0.96f), new Color(0.45f, 0.75f, 0.9f, 0.35f));
 
-        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 400f, 28f), "数字孪生监测平台　·　厨房改造工程", titleStyle);
-        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 560f, 18f), ClockText + "　·　监测点位 " + orders.Count + " 个　·　" + RankTitle() + "　·　楼栋 " + UnlockedBuildingCount() + "/" + ResidenceCount, smallStyle);
+        GUI.Label(new Rect(rect.x + 20f, rect.y + 14f, 380f, 28f), "数字孪生监测平台", titleStyle);
+        GUI.Label(new Rect(rect.x + 21f, rect.y + 42f, 560f, 18f), ClockText + "　·　老旧住宅改造工程　·　监测点位 " + orders.Count + " 个　·　" + RankTitle() + "　·　楼栋 " + UnlockedBuildingCount() + "/" + ResidenceCount, smallStyle);
 
         Rect collapse = new Rect(rect.x + rect.width - 96f, rect.y + 16f, 76f, 30f);
         bool hoverCollapse = collapse.Contains(Event.current.mousePosition);
@@ -9058,15 +10069,22 @@ public class KitchenSimulator : MonoBehaviour
         }
         GUI.Label(collapse, "收起 T", cardButtonStyle);
 
-        // ── 页签：实时数据 / 小区俯视图 ──
-        Rect tabLive = new Rect(rect.x + 428f, rect.y + 16f, 96f, 26f);
-        Rect tabMap = new Rect(rect.x + 530f, rect.y + 16f, 96f, 26f);
+        // ── 页签：实时数据 / 小区俯视图 / 报警派单 ──
+        Rect tabLive = new Rect(rect.x + 412f, rect.y + 16f, 82f, 26f);
+        Rect tabMap = new Rect(rect.x + 500f, rect.y + 16f, 90f, 26f);
+        Rect tabAlarm = new Rect(rect.x + 596f, rect.y + 16f, 78f, 26f);
         if (DrawTwinTab(tabLive, "实时数据", twinTab == 0)) { twinTab = 0; twinSelectedBuilding = 0; }
         if (DrawTwinTab(tabMap, "小区俯视图", twinTab == 1)) { twinTab = 1; }
+        if (DrawTwinTab(tabAlarm, "报警派单", twinTab == 2)) { twinTab = 2; }
 
         if (twinTab == 1)
         {
             DrawTwinMap(rect);
+            return;
+        }
+        if (twinTab == 2)
+        {
+            DrawAlarmCenter(rect);
             return;
         }
 
@@ -9078,7 +10096,7 @@ public class KitchenSimulator : MonoBehaviour
         GUI.Label(new Rect(rect.x + 20f, top + 28f, 70f, 18f), "编号", smallStyle);
         GUI.Label(new Rect(rect.x + 92f, top + 28f, 170f, 18f), "点位 / 传感器", smallStyle);
         GUI.Label(new Rect(rect.x + 268f, top + 28f, 110f, 18f), "实时值", smallStyle);
-        GUI.Label(new Rect(rect.x + 388f, top + 28f, 90f, 18f), "报警阈值", smallStyle);
+        GUI.Label(new Rect(rect.x + 388f, top + 28f, 90f, 18f), "报警线", smallStyle);
         GUI.Label(new Rect(rect.x + 486f, top + 28f, 90f, 18f), "状态", smallStyle);
         GUI.Label(new Rect(rect.x + 566f, top + 28f, 100f, 18f), "验收", smallStyle);
 
@@ -9093,9 +10111,11 @@ public class KitchenSimulator : MonoBehaviour
             }
 
             bool fixedOrder = order.state == OrderState.Fixed;
-            bool alarm = !fixedOrder && order.sensorValue >= order.sensorAlarm;
-            Color stateColor = fixedOrder ? fixedColor : (alarm ? pendingColor : workingColor);
-            string stateText = fixedOrder ? "已消除" : (alarm ? "报警" : "预警");
+            bool alarm = IsConfirmedAlarm(order);
+            bool spike = IsPendingSpike(order);
+            Color stateColor = alarm ? pendingColor
+                : (spike ? new Color(0.62f, 0.72f, 0.78f) : (fixedOrder ? fixedColor : workingColor));
+            string stateText = SensorStateText(order);
 
             GUI.Label(new Rect(rect.x + 20f, ry, 70f, 18f), order.Code, smallStyle);
             GUI.Label(new Rect(rect.x + 92f, ry, 170f, 18f), order.room + "　" + order.sensorName, smallStyle);
@@ -9158,7 +10178,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 float step = chartW / (n - 1);
                 Color lineColor = focus.state == OrderState.Fixed ? fixedColor
-                    : (focus.sensorValue >= focus.sensorAlarm ? pendingColor : workingColor);
+                    : (IsConfirmedAlarm(focus) ? pendingColor : workingColor);
                 for (int k = 0; k < n - 1; k++)
                 {
                     float v0 = Mathf.Clamp01(focus.history[k] / maxRange);
@@ -9174,14 +10194,19 @@ public class KitchenSimulator : MonoBehaviour
             // 阈值分区条
             float barY = dy + 128f;
             Rect zone = new Rect(rect.x + 20f, barY, chartW, 10f);
+            float warnRatio = Mathf.Clamp01(WarnThresholdOf(focus) / maxRange);
             float alarmRatio = Mathf.Clamp01(focus.sensorAlarm / maxRange);
-            Fill(new Rect(zone.x, zone.y, zone.width * alarmRatio, zone.height), new Color(0.28f, 0.62f, 0.4f, 0.85f));
-            Fill(new Rect(zone.x + zone.width * alarmRatio, zone.y, zone.width * (1f - alarmRatio), zone.height), new Color(0.72f, 0.28f, 0.26f, 0.85f));
+            float severeRatio = Mathf.Clamp01(SevereThresholdOf(focus) / maxRange);
+            Fill(new Rect(zone.x, zone.y, zone.width * warnRatio, zone.height), new Color(0.28f, 0.62f, 0.4f, 0.85f));
+            Fill(new Rect(zone.x + zone.width * warnRatio, zone.y, zone.width * Mathf.Max(0f, alarmRatio - warnRatio), zone.height), new Color(0.85f, 0.68f, 0.22f, 0.85f));
+            Fill(new Rect(zone.x + zone.width * alarmRatio, zone.y, zone.width * Mathf.Max(0f, 1f - alarmRatio), zone.height), new Color(0.72f, 0.28f, 0.26f, 0.85f));
+            Fill(new Rect(zone.x + zone.width * severeRatio - 1f, zone.y - 2f, 2f, zone.height + 4f), new Color(0.55f, 0.08f, 0.08f, 1f));
             float valueRatio = Mathf.Clamp01(focus.sensorValue / maxRange);
             Fill(new Rect(zone.x + zone.width * valueRatio - 1f, zone.y - 3f, 3f, zone.height + 6f), Color.white);
             GUI.Label(new Rect(zone.x, barY + 14f, chartW, 16f),
-                "正常区间 ← " + focus.sensorAlarm.ToString("F1") + " " + focus.sensorUnit + " → 报警区间　当前 "
-                + focus.sensorValue.ToString("F1"), smallStyle);
+                "正常 ← " + WarnThresholdOf(focus).ToString("F1") + " 预警 ← "
+                + focus.sensorAlarm.ToString("F1") + " 报警 ← " + SevereThresholdOf(focus).ToString("F1")
+                + " 严重　当前 " + focus.sensorValue.ToString("F1"), smallStyle);
 
             // 右栏：规范 / 材料 / 成因
             float rx = rect.x + 340f;
@@ -9467,6 +10492,15 @@ public class KitchenSimulator : MonoBehaviour
             return;
         }
 
+        if (activeHomeowner != null)
+        {
+            DrawPanel(rect, panelFill, panelBorder);
+            Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), workingColor);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), "业主（上门报修）", titleStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f), "按 E 与业主交谈，登记工单", bodyStyle);
+            return;
+        }
+
         if (activeColleague != null)
         {
             DrawPanel(rect, panelFill, panelBorder);
@@ -9486,7 +10520,7 @@ public class KitchenSimulator : MonoBehaviour
     {
         Rect rect = HintRect;
         Fill(rect, new Color(0.03f, 0.05f, 0.07f, 0.9f));
-        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 现场施工　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测平台　·　K 知识手册　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　L 联机　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
+        GUI.Label(rect, "WASD 移动　·　Shift 加速　·　空格 跳跃　·　左键 处置工单　·　E 对话　·　Q/滚轮 换工具　·　F 开关门　·　V 视角切换　·　P 静音　·　T 监测与报警派单　·　K 知识手册　·　G 商店　·　B 工具包　·　N 日历账目　·　M 地图　·　L 联机　·　R 夜间休息　·　Tab 唤出鼠标", centerStyle);
     }
 
     private void DrawToast()
@@ -9607,6 +10641,7 @@ public class KitchenSimulator : MonoBehaviour
         speakerStyle = new GUIStyle(GUI.skin.label) { fontSize = 19, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.98f, 0.86f, 0.6f) } };
         dialogueStyle = new GUIStyle(GUI.skin.label) { fontSize = 16, wordWrap = true, normal = { textColor = new Color(0.94f, 0.95f, 0.96f) } };
         transitionStyle = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = new Color(0.96f, 0.93f, 0.86f) } };
+        alarmStyle = new GUIStyle(GUI.skin.label) { fontSize = 20, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, normal = { textColor = Color.white } };
 
         Font font = UiFont;
         if (font != null)
@@ -9623,6 +10658,7 @@ public class KitchenSimulator : MonoBehaviour
             speakerStyle.font = font;
             dialogueStyle.font = font;
             transitionStyle.font = font;
+            alarmStyle.font = font;
         }
     }
 
@@ -9634,6 +10670,7 @@ public class KitchenSimulator : MonoBehaviour
             || (bagOpen && BagRect.Contains(point)) || (shopOpen && ShopRect.Contains(point))
             || (almanacOpen && AlmanacRect.Contains(point))
             || (twinPanelOpen ? TwinRect.Contains(point) : TwinBarRect.Contains(point))
+            || (!twinPanelOpen && AlarmCount() > 0 && AlarmBadgeRect.Contains(point))
             || (lobbyOpen && LobbyRect.Contains(point)) || (inRoom && ChatRect.Contains(point))
             || (faultManualOpen && FaultManualRect.Contains(point))
             || (repairPanelOpen && RepairPanelRect.Contains(point))
