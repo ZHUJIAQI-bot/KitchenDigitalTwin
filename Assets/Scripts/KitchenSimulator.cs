@@ -334,7 +334,9 @@ public class KitchenSimulator : MonoBehaviour
         public Transform pivot;
         public bool alongX;
         public bool open;
-        public float angle;
+        public float slide;
+        public float length;
+        public Vector3 closedPosition;
     }
     private readonly List<WindowPane> windowPanes = new List<WindowPane>();
     private WindowPane activeWindow;
@@ -990,7 +992,13 @@ public class KitchenSimulator : MonoBehaviour
             mullionCollider.enabled = false;
         }
 
-        windowPanes.Add(new WindowPane { pivot = pivot, alongX = alongX });
+        windowPanes.Add(new WindowPane
+        {
+            pivot = pivot,
+            alongX = alongX,
+            length = length,
+            closedPosition = pivotObject.transform.position
+        });
         generatedObjects.Add(pivotObject);
     }
 
@@ -1750,6 +1758,8 @@ public class KitchenSimulator : MonoBehaviour
     // 传感器实时数据仿真：报警值带噪声波动；改造完成后回落到正常值
     private float sampleTimer;
     private const float ObserveHours = 3f;   // 验收观察期：3 工程小时（≈64 秒实时，1 工程小时 21.4 秒）
+    // 刚修完的点位在观察期内不再重新派单，避免出现"转身又报同一处"的不专业情况
+    private const float RevisitCooldownHours = 4f;
     // 报警确认时长（秒）：读数必须连续超阈值达此时长才判为报警。
     // 单个尖峰（蒸汽、设备启停冲击、传感器抖动）不判报警，只标为「疑似干扰」——
     // 对应手册中「持续 N 秒」的判定口径，避免正常波动造成误报。
@@ -2963,7 +2973,7 @@ public class KitchenSimulator : MonoBehaviour
                 if (pane != null)
                 {
                     pane.open = !pane.open;
-                    ShowToast(pane.open ? "窗户已推开" : "窗户已关上", 2f);
+                    ShowToast(pane.open ? "窗户已拉开" : "窗户已关上", 2f);
                 }
             }
         }
@@ -2989,9 +2999,11 @@ public class KitchenSimulator : MonoBehaviour
         for (int i = 0; i < windowPanes.Count; i++)
         {
             WindowPane pane = windowPanes[i];
-            float targetAngle = pane.open ? 72f : 0f;
-            pane.angle = Mathf.MoveTowards(pane.angle, targetAngle, Time.deltaTime * 140f);
-            pane.pivot.localRotation = Quaternion.Euler(0f, pane.alongX ? pane.angle : -pane.angle, 0f);
+            float target = pane.open ? 1f : 0f;
+            pane.slide = Mathf.MoveTowards(pane.slide, target, Time.deltaTime * 3.2f);
+            Vector3 dir = pane.alongX ? Vector3.right : Vector3.forward;
+            pane.pivot.position = pane.closedPosition + dir * (pane.length * 0.82f * pane.slide);
+            pane.pivot.localRotation = Quaternion.identity;
         }
 
         // 公司感应玻璃门：玩家或任何 NPC 靠近都自动滑开
@@ -8342,12 +8354,18 @@ public class KitchenSimulator : MonoBehaviour
     {
         for (int i = 0; i < orders.Count; i++)
         {
-            if (orders[i].state == OrderState.Fixed)
-            {
-                continue;
-            }
             if (Distance2D(orders[i].site, spot) < 1.2f)
             {
+                if (orders[i].state == OrderState.Fixed)
+                {
+                    // 刚修好且仍在冷却期：视为不可再次派单
+                    if (orders[i].fixTime <= 0f
+                        || (gameTime - orders[i].fixTime) / RealSecondsPerGameHour < RevisitCooldownHours)
+                    {
+                        return true;
+                    }
+                    continue;
+                }
                 return true;
             }
         }
@@ -8845,6 +8863,19 @@ public class KitchenSimulator : MonoBehaviour
             if (order.marker == null)
             {
                 continue;
+            }
+            // 修好后报警解除：现场数据牌、光圈和光柱一起消失
+            if (order.state == OrderState.Fixed)
+            {
+                if (order.marker.activeSelf)
+                {
+                    order.marker.SetActive(false);
+                }
+                continue;
+            }
+            if (!order.marker.activeSelf)
+            {
+                order.marker.SetActive(true);
             }
 
             Material material = stateMaterials[(int)order.state];
@@ -10895,7 +10926,7 @@ public class KitchenSimulator : MonoBehaviour
             Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), "窗户", titleStyle);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f),
-                activeWindow.open ? "按 F 关上窗户" : "按 F 推开窗户", bodyStyle);
+                activeWindow.open ? "按 F 关上窗户" : "按 F 拉开窗户", bodyStyle);
             return;
         }
 
