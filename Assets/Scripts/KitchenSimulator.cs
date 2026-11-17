@@ -1123,8 +1123,15 @@ public class KitchenSimulator : MonoBehaviour
             }
             string objectName = filter.gameObject.name;
             if (objectName.StartsWith("Globe") || objectName.StartsWith("Label")
-                || objectName == "Head" || objectName == "Neck" || objectName == "Helmet"
-                || objectName == "Hand" || objectName == "Foot")
+                || objectName.StartsWith("Arm") || objectName.StartsWith("Hand")
+                || objectName.StartsWith("Foot") || objectName.StartsWith("Toe")
+                || objectName.StartsWith("Thigh") || objectName.StartsWith("Shin")
+                || objectName.StartsWith("Cuff") || objectName.StartsWith("Shoulder")
+                || objectName.StartsWith("Ear") || objectName.StartsWith("Eye")
+                || objectName.StartsWith("Brow")
+                || objectName == "Chest" || objectName == "Waist" || objectName == "Belt"
+                || objectName == "Collar" || objectName == "Head" || objectName == "Neck"
+                || objectName == "Helmet" || objectName == "Nose" || objectName == "Mouth")
             {
                 continue;   // 灯罩/文字要换材质；角色部件保持独立（双保险）
             }
@@ -3273,7 +3280,7 @@ public class KitchenSimulator : MonoBehaviour
         // 窄客厅不摆茶几：电视柜与沙发之间只剩 0.3m，茶几会把通道彻底堵死
         if (w >= 4.8f)
         {
-            BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.2f, w * 0.3f), 0f, 0.45f);
+            BuildRoundCoffeeTable(cx, axisZ);
         }
         CreateDecoCube("Rug", new Vector3(cx, 0.02f, axisZ),
             new Vector3(Mathf.Max(1.6f, w - 1.5f), 0.02f, 2.0f), new Color(0.68f, 0.55f, 0.44f));
@@ -3314,11 +3321,25 @@ public class KitchenSimulator : MonoBehaviour
     // 餐桌 + 四把椅子，比只放一张桌子更像有人住的餐厅
     private void BuildDiningSet(float cx, float cz, float w, float d)
     {
-        float tableW = Mathf.Min(1.5f, w * 0.45f);
-        float tableD = Mathf.Min(1.1f, d * 0.35f);
-        BuildTable(cx, cz, tableW, tableD, 0f, 0.74f);
+        EnsureTextures();
+        Material wood = TexturedMaterial(new Color(0.58f, 0.42f, 0.26f), woodTexture, 2f);
+        float radius = Mathf.Clamp(Mathf.Min(w, d) * 0.18f, 0.55f, 0.8f);
+        Transform g = CreateGroup("Dining Set", new Vector3(cx, 0f, cz), 0f);
+        AddContactShadow(g, Vector3.zero, radius * 2.4f, radius * 2.4f);
+        CreateDecoCylinder("Round Dining Top", new Vector3(cx, 0.74f, cz), radius, 0.08f,
+            Quaternion.identity, wood);
+        CreateDecoCylinder("Dining Pedestal", new Vector3(cx, 0.38f, cz), radius * 0.12f, 0.7f,
+            Quaternion.identity, wood);
+        CreateDecoCylinder("Dining Base", new Vector3(cx, 0.04f, cz), radius * 0.55f, 0.08f,
+            Quaternion.identity, wood);
+        CreateDecoCylinder("Dining Vase", new Vector3(cx, 0.86f, cz), 0.06f, 0.16f,
+            Quaternion.identity, MakeMaterial(new Color(0.7f, 0.72f, 0.68f), 0.05f, 0.5f));
+        CreateDecoSphere("Dining Flower", new Vector3(cx, 0.98f, cz), 0.08f,
+            MakeMaterial(new Color(0.78f, 0.46f, 0.44f), 0.02f, 0.4f));
+        AddRotatedObstacle("Dining Table", new Vector3(cx, 0.35f, cz),
+            new Vector3(radius * 2f, 0.7f, radius * 2f), 0f);
 
-        float oz = tableD * 0.5f + 0.38f;
+        float oz = radius + 0.42f;
         // 只摆前后两把椅子，左右留出通往客厅/厨房的门洞
         BuildChair(cx, cz - oz, 0f);
         BuildChair(cx, cz + oz, 180f);
@@ -3707,6 +3728,23 @@ public class KitchenSimulator : MonoBehaviour
             DecoPart(PrimitiveType.Cube, "Leg", g, new Vector3(ox, height * 0.5f, oz), new Vector3(0.08f, height, 0.08f), Quaternion.identity, wood);
         }
         AddRotatedObstacle("Table Body", new Vector3(x, height * 0.5f, z), new Vector3(sizeX, height, sizeZ), yaw);
+    }
+
+    // 圆形茶几：给客厅一个非方盒的主件
+    private void BuildRoundCoffeeTable(float cx, float cz)
+    {
+        Transform g = CreateGroup("Round Coffee Table", new Vector3(cx, 0f, cz), 0f);
+        AddContactShadow(g, Vector3.zero, 1.05f, 1.05f);
+        EnsureTextures();
+        Material wood = TexturedMaterial(new Color(0.58f, 0.42f, 0.26f), woodTexture, 2f);
+        CreateDecoCylinder("Round Table Top", new Vector3(cx, 0.45f, cz), 0.45f, 0.08f,
+            Quaternion.identity, wood);
+        CreateDecoCylinder("Round Table Pedestal", new Vector3(cx, 0.22f, cz), 0.09f, 0.45f,
+            Quaternion.identity, wood);
+        CreateDecoCylinder("Round Table Base", new Vector3(cx, 0.03f, cz), 0.28f, 0.06f,
+            Quaternion.identity, wood);
+        AddRotatedObstacle("Round Coffee Table", new Vector3(cx, 0.22f, cz),
+            new Vector3(0.95f, 0.45f, 0.95f), 0f);
     }
 
     private void BuildBed(float x, float z, float yaw)
@@ -6353,17 +6391,17 @@ public class KitchenSimulator : MonoBehaviour
 
         Transform leftArm = new GameObject("Left Arm Pivot").transform;
         leftArm.SetParent(root.transform, false);
-        leftArm.localPosition = new Vector3(-0.30f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.10f, 0.5f, 0.10f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Cuff L", leftArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.095f, 0.1f, 0.095f), Quaternion.identity, skinMaterial);
+        leftArm.localPosition = new Vector3(-0.33f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm L", leftArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.13f, 0.5f, 0.13f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Cuff L", leftArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.15f, 0.06f, 0.15f), Quaternion.identity, beltMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", leftArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         Transform rightArm = new GameObject("Right Arm Pivot").transform;
         rightArm.SetParent(root.transform, false);
-        rightArm.localPosition = new Vector3(0.30f, 1.12f, 0f);
-        MakePrimitive(PrimitiveType.Cube, "Arm", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.10f, 0.5f, 0.10f), Quaternion.identity, clothMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Cuff R", rightArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.13f, 0.06f, 0.13f), Quaternion.identity, beltMaterial);
-        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.095f, 0.1f, 0.095f), Quaternion.identity, skinMaterial);
+        rightArm.localPosition = new Vector3(0.33f, 1.12f, 0f);
+        MakePrimitive(PrimitiveType.Cube, "Arm R", rightArm, new Vector3(0f, -0.25f, 0f), new Vector3(0.13f, 0.5f, 0.13f), Quaternion.identity, clothMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Cuff R", rightArm, new Vector3(0f, -0.47f, 0f), new Vector3(0.15f, 0.06f, 0.15f), Quaternion.identity, beltMaterial);
+        MakePrimitive(PrimitiveType.Cube, "Hand", rightArm, new Vector3(0f, -0.53f, 0f), new Vector3(0.11f, 0.1f, 0.11f), Quaternion.identity, skinMaterial);
 
         // 每条腿分两段：髋枢轴（大腿）→ 膝枢轴（小腿），这样才能坐下
         Transform leftLeg = new GameObject("Left Leg Pivot").transform;
@@ -6681,7 +6719,7 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            if (Distance2D(position, h.rig.root.position) < 0.50f)
+            if (Distance2D(position, h.rig.root.position) < 0.70f)
             {
                 return true;
             }
@@ -6693,12 +6731,12 @@ public class KitchenSimulator : MonoBehaviour
             {
                 continue;
             }
-            if (Distance2D(position, c.rig.root.position) < 0.46f)
+            if (Distance2D(position, c.rig.root.position) < 0.65f)
             {
                 return true;
             }
         }
-        if (bossRig != null && bossRig.root != null && Distance2D(position, bossRig.root.position) < 0.50f)
+        if (bossRig != null && bossRig.root != null && Distance2D(position, bossRig.root.position) < 0.70f)
         {
             return true;
         }
@@ -6872,7 +6910,7 @@ public class KitchenSimulator : MonoBehaviour
         }
 
         // NPC 身体也挡人，玩家不能从户主身上穿过去
-        const float npcRadius = 0.34f;
+        const float npcRadius = 0.40f;
         for (int i = 0; i < homeowners.Count; i++)
         {
             if (homeowners[i].rig == null || homeowners[i].rig.root == null)
