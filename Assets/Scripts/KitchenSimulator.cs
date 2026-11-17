@@ -2752,8 +2752,27 @@ public class KitchenSimulator : MonoBehaviour
 
         BuildHouseDoor(tag + " Door", doorC - doorW * 0.5f, doorC + doorW * 0.5f, z0);
 
-        CreateDecoCube(tag + " Plate", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.19f), new Vector3(1.5f, 0.6f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
-        CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.32f), 0.05f, Color.white);
+        // 楼牌号贴在入户门旁的空墙面，避开前窗
+        float plateW = 0.8f;
+        float doorLeft = doorC - doorW * 0.5f;
+        float doorRight = doorC + doorW * 0.5f;
+        float leftSpace = doorLeft - entry.x0;
+        float rightSpace = entry.x1 - doorRight;
+        float plateX;
+        if (rightSpace >= leftSpace)
+        {
+            float offset = Mathf.Clamp(rightSpace * 0.5f, 0.25f, 0.55f);
+            plateX = doorRight + offset;
+        }
+        else
+        {
+            float offset = Mathf.Clamp(leftSpace * 0.5f, 0.25f, 0.55f);
+            plateX = doorLeft - offset;
+        }
+        plateX = Mathf.Clamp(plateX, entry.x0 + plateW * 0.5f + 0.1f, entry.x1 - plateW * 0.5f - 0.1f);
+        CreateDecoCube(tag + " Plate", new Vector3(plateX, 1.95f, z0 - 0.19f),
+            new Vector3(plateW, 0.36f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
+        CreateWorldLabel(index + "号楼", new Vector3(plateX, 1.95f, z0 - 0.32f), 0.04f, Color.white);
     }
 
     // 把一排的房间按比例铺满开间
