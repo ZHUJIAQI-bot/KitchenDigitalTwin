@@ -326,6 +326,17 @@ public class KitchenSimulator : MonoBehaviour
         public bool manualOpen;
     }
     private readonly List<HouseDoor> houseDoors = new List<HouseDoor>();
+
+    private class WindowPane
+    {
+        public Transform pivot;
+        public bool alongX;
+        public bool open;
+        public float angle;
+    }
+    private readonly List<WindowPane> windowPanes = new List<WindowPane>();
+    private WindowPane activeWindow;
+    private Material windowMullionMaterial;
     private Transform sensorDoorLeft;
     private Transform sensorDoorRight;
     private Vector3 sensorDoorCenter;
@@ -935,14 +946,45 @@ public class KitchenSimulator : MonoBehaviour
     {
         float length = end - start;
         float height = top - bottom;
-        float center = (start + end) * 0.5f;
-        float y = bottom + height * 0.5f;
-        Vector3 position = alongX ? new Vector3(center, y, fixedCoord) : new Vector3(fixedCoord, y, center);
+        if (length <= 0.05f || height <= 0.05f)
+        {
+            return;
+        }
+
+        // 以窗洞左/下边缘为转轴，整扇窗可以绕 Y 轴推开
+        float midY = bottom + height * 0.5f;
+        GameObject pivotObject = new GameObject("Window Pivot");
+        pivotObject.transform.SetParent(transform, false);
+        pivotObject.transform.position = alongX
+            ? new Vector3(start, midY, fixedCoord)
+            : new Vector3(fixedCoord, midY, start);
+        Transform pivot = pivotObject.transform;
+
+        Vector3 local = alongX ? new Vector3(length * 0.5f, 0f, 0f) : new Vector3(0f, 0f, length * 0.5f);
         Vector3 size = alongX ? new Vector3(length, height, 0.04f) : new Vector3(0.04f, height, length);
-        CreateDecoCube("Window Glass", position, size, glassMaterial);
-        // 窗棂
-        Vector3 bar = alongX ? new Vector3(0.05f, height, 0.07f) : new Vector3(0.07f, height, 0.05f);
-        CreateDecoCube("Window Mullion", position, bar, new Color(0.55f, 0.53f, 0.5f));
+        GameObject glass = MakePrimitive(PrimitiveType.Cube, "Window Glass", pivot, local, size, Quaternion.identity, glassMaterial);
+        Collider glassCollider = glass.GetComponent<Collider>();
+        if (glassCollider != null)
+        {
+            glassCollider.enabled = false;
+        }
+
+        if (windowMullionMaterial == null)
+        {
+            windowMullionMaterial = MakeMaterial(new Color(0.55f, 0.53f, 0.50f), 0.15f, 0.45f);
+        }
+        Vector3 bar = alongX
+            ? new Vector3(0.05f, height * 0.92f, 0.07f)
+            : new Vector3(0.07f, height * 0.92f, 0.05f);
+        GameObject mullion = MakePrimitive(PrimitiveType.Cube, "Window Mullion", pivot, local, bar, Quaternion.identity, windowMullionMaterial);
+        Collider mullionCollider = mullion.GetComponent<Collider>();
+        if (mullionCollider != null)
+        {
+            mullionCollider.enabled = false;
+        }
+
+        windowPanes.Add(new WindowPane { pivot = pivot, alongX = alongX });
+        generatedObjects.Add(pivotObject);
     }
 
     // ── 本地账户存储（将来替换为真实后端只需改这个类）──────
@@ -1029,6 +1071,13 @@ public class KitchenSimulator : MonoBehaviour
             if (houseDoors[i].pivot != null)
             {
                 protectedRoots.Add(houseDoors[i].pivot);
+            }
+        }
+        for (int i = 0; i < windowPanes.Count; i++)
+        {
+            if (windowPanes[i].pivot != null)
+            {
+                protectedRoots.Add(windowPanes[i].pivot);
             }
         }
         if (sensorDoorLeft != null)
@@ -2425,45 +2474,64 @@ public class KitchenSimulator : MonoBehaviour
         BuildResidence(5, 26f, 13f, roofColors[5]);
     }
 
-    // 单层住宅：12×12，四个 6×6 房间
-    //   前左 客厅（入户）/ 前右 厨房
-    //   后左 卫生间       / 后右 卧室
-    // ── 户型参数：参考现实住宅，每家开间/进深/隔墙位置/房间组合都不同 ──
-    private class HouseLayout
+    // 户型：前后两排，每排按开间比例切成若干房间。
+    // 这样 1 室 1 厅、2 室 2 厅、3 室 2 厅都能用同一套墙体/门洞逻辑生成。
+    private class PlanRoom
     {
-        public float width;      // 开间
-        public float depth;      // 进深
-        public float splitX;     // 前排竖向隔墙（距左侧外墙）
-        public float splitX2;    // 后排竖向隔墙（可与前排不同，用于让卫生间更小）
-        public float splitZ;     // 横向隔墙（距前墙）
-        public string frontRight;
-        public string backLeft;
-        public string backRight;
-
-        public HouseLayout(float width, float depth, float splitX, float splitX2, float splitZ,
-            string frontRight, string backLeft, string backRight)
+        public string type;
+        public float fraction;
+        public PlanRoom(string type, float fraction)
         {
-            this.width = width;
-            this.depth = depth;
-            this.splitX = splitX;
-            this.splitX2 = splitX2;
-            this.splitZ = splitZ;
-            this.frontRight = frontRight;
-            this.backLeft = backLeft;
-            this.backRight = backRight;
+            this.type = type;
+            this.fraction = fraction;
         }
     }
 
-    // 前左固定为客厅（入户所在）；厨房、卫生间靠近入口，卧室靠里
-    private static readonly HouseLayout[] HouseLayouts =
+    private class HousePlan
     {
-        new HouseLayout(12f, 12f, 8.6f, 6.0f, 6.0f, "卫生间", "厨房", "卧室"),
-        new HouseLayout(11f, 13f, 8.0f, 3.2f, 7.0f, "厨房", "卫生间", "卧室"),
-        new HouseLayout(13f, 11f, 9.4f, 6.6f, 5.4f, "卫生间", "厨房", "卧室"),
-        new HouseLayout(12f, 11f, 8.4f, 5.6f, 5.6f, "卫生间", "厨房", "卧室"),
-        new HouseLayout(10f, 12f, 6.8f, 5.0f, 7.0f, "卫生间", "厨房", "卧室"),
-        new HouseLayout(13f, 12f, 9.6f, 3.4f, 6.4f, "厨房", "卫生间", "卧室"),
-        new HouseLayout(11f, 11f, 7.8f, 5.4f, 5.8f, "卫生间", "厨房", "卧室"),
+        public float width;
+        public float depth;
+        public float frontRatio;
+        public float corridorDepth;
+        public PlanRoom[] front;
+        public PlanRoom[] back;
+
+        public HousePlan(float width, float depth, float frontRatio, float corridorDepth,
+            PlanRoom[] front, PlanRoom[] back)
+        {
+            this.width = width;
+            this.depth = depth;
+            this.frontRatio = frontRatio;
+            this.corridorDepth = corridorDepth;
+            this.front = front;
+            this.back = back;
+        }
+    }
+
+    private struct RoomRect
+    {
+        public string type;
+        public float x0, x1, z0, z1;
+    }
+
+    private static readonly HousePlan[] HousePlans =
+    {
+        // A：一室一厅一卫一厨
+        new HousePlan(12f, 12f, 0.55f, 1.2f,
+            new[] { new PlanRoom("客厅", 0.64f), new PlanRoom("厨房", 0.36f) },
+            new[] { new PlanRoom("卫生间", 0.30f), new PlanRoom("卧室", 0.70f) }),
+
+        // B：两室两厅一卫一厨
+        new HousePlan(12.5f, 12.5f, 0.50f, 1.2f,
+            new[] { new PlanRoom("客厅", 0.34f), new PlanRoom("餐厅", 0.32f), new PlanRoom("厨房", 0.34f) },
+            new[] { new PlanRoom("卫生间", 0.22f), new PlanRoom("卧室", 0.39f), new PlanRoom("卧室", 0.39f) }),
+
+        // C：三室两厅两卫一厨
+        new HousePlan(13.5f, 12.5f, 0.50f, 1.2f,
+            new[] { new PlanRoom("客厅", 0.30f), new PlanRoom("餐厅", 0.26f),
+                    new PlanRoom("厨房", 0.24f), new PlanRoom("卫生间", 0.20f) },
+            new[] { new PlanRoom("卫生间", 0.18f), new PlanRoom("卧室", 0.27f),
+                    new PlanRoom("卧室", 0.27f), new PlanRoom("卧室", 0.28f) }),
     };
 
     private static Color FloorColorOf(string type)
@@ -2493,52 +2561,66 @@ public class KitchenSimulator : MonoBehaviour
 
     private void BuildResidence(int index, float x0, float z0, Color roofColor)
     {
-        HouseLayout L = HouseLayouts[(index - 1) % HouseLayouts.Length];
-        float x1 = x0 + L.splitX;         // 前排竖向隔墙
-        float x3 = x0 + L.splitX2;        // 后排竖向隔墙（让卫生间更窄）
-        float x2 = x0 + L.width;
-        float zMid = z0 + L.splitZ;
-        float z1 = z0 + L.depth;
+        HousePlan plan = HousePlans[(index - 1) % HousePlans.Length];
+        float x2 = x0 + plan.width;
+        float zMid = z0 + plan.depth * plan.frontRatio;
+        float z1 = z0 + plan.depth;
         Color wall = new Color(0.88f, 0.86f, 0.81f);
         Color inner = new Color(0.84f, 0.82f, 0.77f);
         string tag = index + "号楼";
 
-        string[] types = { "客厅", L.frontRight, L.backLeft, L.backRight };
-        float[,] rects =
+        // 生成前后两排房间矩形
+        List<RoomRect> rooms = new List<RoomRect>();
+        AddPlanRow(rooms, plan.front, x0, x2, z0, zMid);
+        float backStart = zMid + plan.corridorDepth;
+        rooms.Add(new RoomRect
         {
-            { x0, x1, z0, zMid },
-            { x1, x2, z0, zMid },
-            { x0, x3, zMid, z1 },
-            { x3, x2, zMid, z1 },
-        };
-
-        for (int i = 0; i < 4; i++)
+            type = "过道",
+            x0 = x0,
+            x1 = x2,
+            z0 = zMid,
+            z1 = backStart
+        });
+        AddPlanRow(rooms, plan.back, x0, x2, backStart, z1);
+        for (int i = 0; i < rooms.Count; i++)
         {
-            BuildRoomFloor(rects[i, 0], rects[i, 1], rects[i, 2], rects[i, 3], FloorColorOf(types[i]), FloorIsWood(types[i]));
+            RoomRect r = rooms[i];
+            BuildRoomFloor(r.x0, r.x1, r.z0, r.z1, FloorColorOf(r.type), FloorIsWood(r.type));
         }
 
-        // ── 外墙：入户门 + 按房间外墙面自动开窗 ──
-        float doorW = Mathf.Min(2.2f, L.splitX - 1.2f);
-        float doorC = (x0 + x1) * 0.5f;
+        // ── 外墙：入户门 + 按房间自动开窗 ──
+        RoomRect entry = rooms[0];
+        float doorW = Mathf.Clamp(entry.x1 - entry.x0 - 1.2f, 1.2f, 2.2f);
+        float doorC = (entry.x0 + entry.x1) * 0.5f;
         float ws, we;
         List<float> front = new List<float> { doorC - doorW * 0.5f, doorC + doorW * 0.5f, 0f, DoorHeight };
-        if (x2 - x1 > 3.0f)
+        for (int i = 1; i < plan.front.Length; i++)
         {
-            WindowRange(x1, x2, 0.9f, 2.4f, out ws, out we);
+            RoomRect fr = rooms[i];
+            if (fr.x1 - fr.x0 < 2.8f)
+            {
+                continue;
+            }
+            WindowRange(fr.x0, fr.x1, 0.7f, 2.2f, out ws, out we);
             front.AddRange(new[] { ws, we, 0.95f, 2.15f });
             AddGlassPane(true, z0 + 0.14f, ws, we, 0.95f, 2.15f);
         }
         BuildWallWithOpenings("Res Front Wall", true, z0, x0, x2, 0.24f, wall, front.ToArray());
 
         List<float> back = new List<float>();
-        WindowRange(x0, x1, 0.9f, 2.6f, out ws, out we);
-        back.AddRange(new[] { ws, we, 0.95f, 2.15f });
-        AddGlassPane(true, z1 - 0.14f, ws, we, 0.95f, 2.15f);
-        if (x2 - x1 > 3.0f)
+        for (int i = plan.front.Length + 1; i < rooms.Count; i++)
         {
-            WindowRange(x1, x2, 0.9f, 2.6f, out ws, out we);
-            back.AddRange(new[] { ws, we, 0.95f, 2.15f });
-            AddGlassPane(true, z1 - 0.14f, ws, we, 0.95f, 2.15f);
+            RoomRect br = rooms[i];
+            float width = br.x1 - br.x0;
+            if (width < 2.0f || br.type == "过道")
+            {
+                continue;
+            }
+            float bottom = br.type == "卫生间" ? 1.65f : 0.95f;
+            float top = br.type == "卫生间" ? 2.2f : 2.15f;
+            WindowRange(br.x0, br.x1, 0.55f, 2.2f, out ws, out we);
+            back.AddRange(new[] { ws, we, bottom, top });
+            AddGlassPane(true, z1 - 0.14f, ws, we, bottom, top);
         }
         BuildWallWithOpenings("Res Back Wall", true, z1, x0, x2, 0.24f, wall, back.ToArray());
 
@@ -2563,56 +2645,136 @@ public class KitchenSimulator : MonoBehaviour
         }
         BuildWallWithOpenings("Res Right Wall", false, x2, z0, z1, 0.24f, wall, right.ToArray());
 
-        // ── 内墙：门洞开在相邻两房间正中，随隔墙位置自动变化 ──
-        float dDoor = Mathf.Min(1.6f, (zMid - z0) * 0.28f);
-        BuildWallWithOpenings("Res Wall Front Vertical", false, x1, z0, zMid, 0.22f, inner,
-            (z0 + zMid) * 0.5f - dDoor, (z0 + zMid) * 0.5f + dDoor, 0f, DoorHeight);
-        BuildWallWithOpenings("Res Wall Back Vertical", false, x3, zMid, z1, 0.22f, inner,
-            (zMid + z1) * 0.5f - dDoor, (zMid + z1) * 0.5f + dDoor, 0f, DoorHeight);
-
-        float leftOverlap1 = Mathf.Min(x1, x3);
-        float rightOverlap0 = Mathf.Max(x1, x3);
-        float hDoor = Mathf.Min(1.6f, (x2 - x0) * 0.14f);
-        float dl = (x0 + leftOverlap1) * 0.5f;
-        float dr = (rightOverlap0 + x2) * 0.5f;
+        // ── 内墙：每排相邻房间开门，前后排只在走廊处开一个门 ──
+        BuildRowWalls(plan.front, x0, x2, z0, zMid, inner, tag + " Front", true);
+        BuildRowWalls(plan.back, x0, x2, backStart, z1, inner, tag + " Back", false);
+        float hallX = (entry.x0 + entry.x1) * 0.5f;
         BuildWallWithOpenings("Res Wall Horizontal", true, zMid, x0, x2, 0.22f, inner,
-            dl - hDoor, dl + hDoor, 0f, DoorHeight,
-            dr - hDoor, dr + hDoor, 0f, DoorHeight);
+            hallX - 0.75f, hallX + 0.75f, 0f, DoorHeight);
 
-        BuildRoof(tag + " Roof", x0 + L.width * 0.5f, z0 + L.depth * 0.5f, L.width, L.depth, roofColor);
-        BuildResidenceFacade(index, x0, x2, x1, z0, z1, doorC, doorW);
+        // 走廊与后排每个房间之间各开一个门
+        List<float> backDoors = new List<float>();
+        for (int i = plan.front.Length + 1; i < rooms.Count; i++)
+        {
+            float cx = (rooms[i].x0 + rooms[i].x1) * 0.5f;
+            backDoors.Add(cx - 0.55f);
+            backDoors.Add(cx + 0.55f);
+            backDoors.Add(0f);
+            backDoors.Add(DoorHeight);
+        }
+        BuildWallWithOpenings("Res Corridor Back Wall", true, backStart, x0, x2, 0.22f, inner,
+            backDoors.ToArray());
+
+        BuildRoof(tag + " Roof", x0 + plan.width * 0.5f, z0 + plan.depth * 0.5f, plan.width, plan.depth, roofColor);
+        BuildResidenceFacade(index, x0, x2, (entry.x0 + entry.x1) * 0.5f + (entry.x1 - entry.x0) * 0.5f, z0, z1, doorC, doorW);
 
         Vector3 doorPoint = new Vector3(doorC, GroundLevel, z0 + 1.6f);
-        for (int i = 0; i < 4; i++)
+        Dictionary<string, int> totals = new Dictionary<string, int>();
+        for (int i = 0; i < rooms.Count; i++)
         {
-            AddRoom(tag + " " + types[i], types[i], index, rects[i, 0], rects[i, 1], rects[i, 2], rects[i, 3], doorPoint);
+            totals[rooms[i].type] = totals.TryGetValue(rooms[i].type, out int n) ? n + 1 : 1;
+        }
+        Dictionary<string, int> seen = new Dictionary<string, int>();
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            RoomRect r = rooms[i];
+            string label = r.type;
+            if (totals[r.type] > 1)
+            {
+                seen[r.type] = seen.TryGetValue(r.type, out int k) ? k + 1 : 1;
+                label = r.type + seen[r.type];
+            }
+            AddRoom(tag + " " + label, r.type, index, r.x0, r.x1, r.z0, r.z1, doorPoint);
         }
 
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < rooms.Count; i++)
         {
-            float cx = (rects[i, 0] + rects[i, 1]) * 0.5f;
-            float cz = (rects[i, 2] + rects[i, 3]) * 0.5f;
-            float rw = rects[i, 1] - rects[i, 0];
-            float rd = rects[i, 3] - rects[i, 2];
-            switch (types[i])
+            RoomRect r = rooms[i];
+            float cx = (r.x0 + r.x1) * 0.5f;
+            float cz = (r.z0 + r.z1) * 0.5f;
+            float rw = r.x1 - r.x0;
+            float rd = r.z1 - r.z0;
+            switch (r.type)
             {
                 case "厨房": BuildKitchenRoom(cx, cz, rw, rd); break;
                 case "卫生间": BuildBathroom(cx, cz, rw, rd); break;
                 case "卧室": BuildBedroom(cx, cz, rw, rd); break;
-                default: BuildLivingRoom(cx, cz, rw, rd); break;
+                case "餐厅": BuildTable(cx, cz, Mathf.Min(1.6f, rw * 0.45f), Mathf.Min(1.4f, rd * 0.4f), 0f, 0.74f); break;
+                case "客厅": BuildLivingRoom(cx, cz, rw, rd); break;
+                default: break;   // 过道不摆家具
             }
+            BuildCeilingLight(cx, cz);
         }
-
-        BuildCeilingLight((x0 + x1) * 0.5f, (z0 + zMid) * 0.5f);
-        BuildCeilingLight((x1 + x2) * 0.5f, (z0 + zMid) * 0.5f);
-        BuildCeilingLight((x0 + x1) * 0.5f, (zMid + z1) * 0.5f);
-        BuildCeilingLight((x1 + x2) * 0.5f, (zMid + z1) * 0.5f);
-        AddRoomLight(x0 + L.width * 0.5f, z0 + L.depth * 0.5f, Mathf.Max(L.width, L.depth) * 1.4f);
+        AddRoomLight(x0 + plan.width * 0.5f, z0 + plan.depth * 0.5f, Mathf.Max(plan.width, plan.depth) * 1.4f);
 
         BuildHouseDoor(tag + " Door", doorC - doorW * 0.5f, doorC + doorW * 0.5f, z0);
 
         CreateDecoCube(tag + " Plate", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.19f), new Vector3(1.5f, 0.6f, 0.08f), new Color(0.16f, 0.24f, 0.4f));
         CreateWorldLabel(index + "号楼", new Vector3(x2 - 1.6f, 1.75f, z0 - 0.32f), 0.05f, Color.white);
+    }
+
+    // 把一排的房间按比例铺满开间
+    private static void AddPlanRow(List<RoomRect> rooms, PlanRoom[] row, float x0, float x1, float z0, float z1)
+    {
+        float sum = 0f;
+        for (int i = 0; i < row.Length; i++)
+        {
+            sum += Mathf.Max(0.01f, row[i].fraction);
+        }
+        float cursor = x0;
+        for (int i = 0; i < row.Length; i++)
+        {
+            float width = (x1 - x0) * Mathf.Max(0.01f, row[i].fraction) / sum;
+            rooms.Add(new RoomRect
+            {
+                type = row[i].type,
+                x0 = cursor,
+                x1 = cursor + width,
+                z0 = z0,
+                z1 = z1
+            });
+            cursor += width;
+        }
+    }
+
+    // 一排内部的竖向隔墙：每个相邻房间之间开一个门
+    private void BuildRowWalls(PlanRoom[] row, float x0, float x1, float z0, float z1,
+        Color inner, string tag, bool withDoors)
+    {
+        float sum = 0f;
+        for (int i = 0; i < row.Length; i++)
+        {
+            sum += Mathf.Max(0.01f, row[i].fraction);
+        }
+        float cursor = x0;
+        float doorC = (z0 + z1) * 0.5f;
+        float doorHalf = Mathf.Min(0.75f, (z1 - z0) * 0.18f);
+        for (int i = 0; i < row.Length - 1; i++)
+        {
+            cursor += (x1 - x0) * Mathf.Max(0.01f, row[i].fraction) / sum;
+            if (withDoors)
+            {
+                BuildWallWithOpenings(tag + " Wall " + i, false, cursor, z0, z1, 0.22f, inner,
+                    doorC - doorHalf, doorC + doorHalf, 0f, DoorHeight);
+            }
+            else
+            {
+                BuildWallWithOpenings(tag + " Wall " + i, false, cursor, z0, z1, 0.22f, inner);
+            }
+        }
+    }
+
+    // 后排走廊的中心 x：前后排之间的门开在这里，避免卫生间直冲客厅
+    private static float HallCenterX(List<RoomRect> rooms, float zMid)
+    {
+        for (int i = 0; i < rooms.Count; i++)
+        {
+            if (rooms[i].type == "过道" && rooms[i].z0 >= zMid - 0.01f)
+            {
+                return (rooms[i].x0 + rooms[i].x1) * 0.5f;
+            }
+        }
+        return (rooms[0].x0 + rooms[0].x1) * 0.5f;
     }
 
     // 住宅外立面细节：门套、雨棚、勒脚、落水管、空调外机、窗台、檐沟。
@@ -2769,6 +2931,26 @@ public class KitchenSimulator : MonoBehaviour
                 nearest.manualOpen = !nearest.manualOpen;
                 ShowToast(nearest.manualOpen ? "门已设为常开" : "门已设为常闭（有人靠近仍会自动开）", 2.5f);
             }
+            else
+            {
+                // 附近没有门时，F 用来开关窗
+                WindowPane pane = null;
+                float bestWindow = 2.4f;
+                for (int i = 0; i < windowPanes.Count; i++)
+                {
+                    float d = Distance2D(playerPosition, windowPanes[i].pivot.position);
+                    if (d < bestWindow)
+                    {
+                        bestWindow = d;
+                        pane = windowPanes[i];
+                    }
+                }
+                if (pane != null)
+                {
+                    pane.open = !pane.open;
+                    ShowToast(pane.open ? "窗户已推开" : "窗户已关上", 2f);
+                }
+            }
         }
 
         for (int i = 0; i < houseDoors.Count; i++)
@@ -2786,6 +2968,15 @@ public class KitchenSimulator : MonoBehaviour
 
             door.open = Mathf.Lerp(door.open, door.target, Time.deltaTime * 5f);
             door.pivot.localRotation = Quaternion.Euler(0f, -95f * door.open, 0f);
+        }
+
+        // 窗扇开合动画
+        for (int i = 0; i < windowPanes.Count; i++)
+        {
+            WindowPane pane = windowPanes[i];
+            float targetAngle = pane.open ? 72f : 0f;
+            pane.angle = Mathf.MoveTowards(pane.angle, targetAngle, Time.deltaTime * 140f);
+            pane.pivot.localRotation = Quaternion.Euler(0f, pane.alongX ? pane.angle : -pane.angle, 0f);
         }
 
         // 公司感应玻璃门：玩家或任何 NPC 靠近都自动滑开
@@ -2857,12 +3048,12 @@ public class KitchenSimulator : MonoBehaviour
 
         // 坐具轴线：需在入户门扇的扫掠区之外（门向内摆，扫掠半径约等于门宽 2.2m）
         float axisZ = Mathf.Min(front + 3.7f, back - 1.15f);
-        float tvX = left + 0.45f;
-        float sofaX = right - 0.65f;
+        float tvX = left + 1.0f;
+        float sofaX = right - 1.05f;
 
         BuildTvUnit(tvX, axisZ, 90f);                       // 电视靠西墙，面朝东
         BuildSofa(sofaX, axisZ, 270f);                      // 沙发正对电视，面朝西
-        BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.35f, w * 0.42f), 0f, 0.45f);   // 长边沿 Z，与沙发视线垂直
+        BuildTable(cx, axisZ, 0.68f, Mathf.Min(1.2f, w * 0.3f), 0f, 0.45f);   // 长边沿 Z，与沙发视线垂直
         CreateDecoCube("Rug", new Vector3(cx, 0.02f, axisZ),
             new Vector3(Mathf.Max(1.6f, w - 1.5f), 0.02f, 2.0f), new Color(0.68f, 0.55f, 0.44f));
         BuildPlant(left + 0.55f, back - 0.65f);             // 绿植摆后角，不挡门
@@ -2872,7 +3063,7 @@ public class KitchenSimulator : MonoBehaviour
         BuildWallArt(tvX + 0.14f, axisZ - 1.35f, new Color(0.44f, 0.52f, 0.48f));
         BuildTableDecor(cx, axisZ);
         BuildPendantLamp(cx, axisZ);
-        BuildCurtains();
+        BuildCurtains(cx, cz, w, d);
     }
 
     // 电视墙挂画（画框 + 画心）
@@ -2907,11 +3098,13 @@ public class KitchenSimulator : MonoBehaviour
     }
 
     // 窗帘（挂在客厅东西两侧窗洞旁）
-    private void BuildCurtains()
+    private void BuildCurtains(float cx, float cz, float w, float d)
     {
         Material cloth = MakeMaterial(new Color(0.72f, 0.66f, 0.6f), 0.02f, 0.35f);
-        CreateDecoCube("Curtain W", new Vector3(-27.6f, 1.55f, -1.6f), new Vector3(0.08f, 1.3f, 0.5f), cloth);
-        CreateDecoCube("Curtain E", new Vector3(-23.4f, 1.55f, -1.6f), new Vector3(0.08f, 1.3f, 0.5f), cloth);
+        float halfW = w * 0.5f - 0.16f;
+        float curtainD = Mathf.Min(0.6f, d * 0.18f);
+        CreateDecoCube("Curtain W", new Vector3(cx - halfW, 1.55f, cz), new Vector3(0.08f, 1.3f, curtainD), cloth);
+        CreateDecoCube("Curtain E", new Vector3(cx + halfW, 1.55f, cz), new Vector3(0.08f, 1.3f, curtainD), cloth);
     }
 
     private void BuildKitchenRoom(float cx, float cz, float w, float d)
@@ -3037,15 +3230,18 @@ public class KitchenSimulator : MonoBehaviour
             new Vector3(usable * 0.9f, 0.02f, 0.04f), Quaternion.identity,
             MakeGlow(new Color(1f, 0.93f, 0.78f), 0.7f));
 
-        // ── 冰箱：倒角柜体 + 门缝 + 长拉手 ──
-        Vector3 fridgePos = new Vector3(right - 0.6f, 0.9f, cz - d * 0.5f + 0.78f);
-        AddSolidBox("Fridge", fridgePos, new Vector3(0.85f, 1.8f, 0.85f), new Color(0.78f, 0.8f, 0.82f));
-        DecoPart(PrimitiveType.Cube, "Fridge Seam", transform,
-            new Vector3(fridgePos.x, 1.18f, fridgePos.z - 0.43f),
-            new Vector3(0.8f, 0.02f, 0.02f), Quaternion.identity, dark);
-        DecoPart(PrimitiveType.Cylinder, "Fridge Handle", transform,
-            new Vector3(fridgePos.x + 0.34f, 1.4f, fridgePos.z - 0.45f),
-            new Vector3(0.02f, 0.3f, 0.02f), Quaternion.identity, steel);
+        // ── 冰箱：窄厨房放不下就跳过，避免和灶台重叠 ──
+        if (w >= 3.6f)
+        {
+            Vector3 fridgePos = new Vector3(right - 0.6f, 0.9f, cz - d * 0.5f + 0.78f);
+            AddSolidBox("Fridge", fridgePos, new Vector3(0.85f, 1.8f, 0.85f), new Color(0.78f, 0.8f, 0.82f));
+            DecoPart(PrimitiveType.Cube, "Fridge Seam", transform,
+                new Vector3(fridgePos.x, 1.18f, fridgePos.z - 0.43f),
+                new Vector3(0.8f, 0.02f, 0.02f), Quaternion.identity, dark);
+            DecoPart(PrimitiveType.Cylinder, "Fridge Handle", transform,
+                new Vector3(fridgePos.x + 0.34f, 1.4f, fridgePos.z - 0.45f),
+                new Vector3(0.02f, 0.3f, 0.02f), Quaternion.identity, steel);
+        }
     }
 
     private void BuildBathroom(float cx, float cz, float w, float d)
@@ -3053,36 +3249,63 @@ public class KitchenSimulator : MonoBehaviour
         float left = cx - w * 0.5f, right = cx + w * 0.5f;
         float front = cz - d * 0.5f;
         float back = cz + d * 0.5f;
-        BuildToilet(right - 0.55f, cz - 0.2f, 270f);        // 马桶靠东墙
-        BuildWashbasin(left + 0.5f, cz - 0.2f, 90f);        // 洗手台靠西墙
-        BuildBathtub(cx, back - 0.62f, 0f);                 // 浴缸沿北墙
+
+        // 干湿分区：外侧 1.2~1.8m 做洗衣/干区，内侧才是真正的卫生间
+        float dryDepth = Mathf.Clamp(d * 0.28f, 1.2f, 1.8f);
+        float bathFront = front + dryDepth;
+        float bathDepth = Mathf.Max(1.8f, back - bathFront);
+        float bathCz = (bathFront + back) * 0.5f;
+        Color partition = new Color(0.88f, 0.88f, 0.85f);
+        BuildWallWithOpenings("Bath Partition", true, bathFront, left, right, 0.1f,
+            partition, cx - 0.55f, cx + 0.55f, 0f, DoorHeight);
+
+        BuildToilet(right - 0.55f, bathCz - 0.2f, 270f);    // 马桶靠东墙
+        BuildWashbasin(left + 0.5f, bathCz - 0.2f, 90f);    // 洗手台靠西墙
+        if (w >= 2.6f && bathDepth >= 3.2f)
+        {
+            BuildBathtub(cx, back - 0.62f, 0f);             // 小卫生间不塞浴缸
+        }
 
         EnsureTextures();
         Material tile = TexturedMaterial(new Color(0.86f, 0.88f, 0.88f), tileTexture, 8f);
         Material grate = MakeMaterial(new Color(0.36f, 0.38f, 0.39f), 0.7f, 0.6f);
         Material slot = MakeMaterial(new Color(0.12f, 0.13f, 0.14f), 0.2f, 0.4f);
+        Material appliance = MakeMaterial(new Color(0.86f, 0.88f, 0.9f), 0.25f, 0.6f);
+        Material glass = MakeMaterial(new Color(0.35f, 0.4f, 0.44f), 0.4f, 0.85f);
 
         // 洗手台背后的墙砖
-        CreateDecoCube("Bath Tile", new Vector3(left + 0.07f, 1.35f, cz - 0.2f),
-            new Vector3(0.04f, 1.5f, Mathf.Min(2.0f, d - 0.8f)), tile);
-        // 淋浴挡水条
-        CreateDecoCube("Shower Curb", new Vector3(cx, 0.08f, back - 1.12f),
-            new Vector3(1.8f, 0.16f, 0.12f), new Color(0.85f, 0.85f, 0.83f));
+        CreateDecoCube("Bath Tile", new Vector3(left + 0.07f, 1.35f, bathCz),
+            new Vector3(0.04f, 1.5f, Mathf.Min(2.0f, bathDepth - 0.6f)), tile);
+        // 淋浴挡水条（只有放得下浴缸的卫生间才做）
+        if (w >= 2.6f && bathDepth >= 3.2f)
+        {
+            CreateDecoCube("Shower Curb", new Vector3(cx, 0.08f, back - 1.12f),
+                new Vector3(1.8f, 0.16f, 0.12f), new Color(0.85f, 0.85f, 0.83f));
+        }
         // 地漏：面板 + 四道格栅
-        CreateDecoCube("Floor Drain", new Vector3(cx + 0.7f, 0.035f, cz - 1.0f),
+        CreateDecoCube("Floor Drain", new Vector3(cx + 0.55f, 0.035f, bathCz - 0.7f),
             new Vector3(0.24f, 0.02f, 0.24f), grate);
         for (int i = 0; i < 4; i++)
         {
-            CreateDecoCube("Drain Slot", new Vector3(cx + 0.7f, 0.048f, cz - 1.09f + i * 0.06f),
+            CreateDecoCube("Drain Slot", new Vector3(cx + 0.55f, 0.048f, bathCz - 0.79f + i * 0.06f),
                 new Vector3(0.18f, 0.006f, 0.02f), slot);
         }
 
-        // 入口屏挡：从门外看不到马桶，保证隐私；留出左侧通行口
-        Color screenColor = new Color(0.88f, 0.88f, 0.85f);
-        AddSolidBox("Bath Screen", new Vector3(left + w * 0.72f, 1.1f, front + 0.9f),
-            new Vector3(0.08f, 2.2f, 1.8f), screenColor);
-        AddSolidBox("Bath Screen Return", new Vector3(left + w * 0.86f, 1.1f, front + 1.8f),
-            new Vector3(w * 0.28f, 2.2f, 0.08f), screenColor);
+        // 湿区入口屏挡：从干区看不到马桶
+        AddSolidBox("Bath Screen", new Vector3(left + w * 0.60f, 1.1f, bathFront + 0.85f),
+            new Vector3(0.08f, 2.2f, 1.6f), partition);
+        AddSolidBox("Bath Screen Return", new Vector3(left + w * 0.80f, 1.1f, bathFront + 1.65f),
+            new Vector3(w * 0.40f, 2.2f, 0.08f), partition);
+
+        // 干区：洗衣机 + 洗衣液架
+        AddSolidBox("Washer", new Vector3(left + 0.55f, 0.45f, front + 0.55f),
+            new Vector3(0.58f, 0.9f, 0.58f), new Color(0.86f, 0.88f, 0.9f));
+        CreateDecoCylinder("Washer Door", new Vector3(left + 0.55f, 0.5f, front + 0.85f),
+            0.17f, 0.03f, Quaternion.Euler(90f, 0f, 0f), glass);
+        CreateDecoCube("Washer Panel", new Vector3(left + 0.55f, 0.84f, front + 0.85f),
+            new Vector3(0.42f, 0.08f, 0.02f), appliance);
+        CreateDecoCube("Laundry Shelf", new Vector3(left + 0.55f, 1.45f, front + 0.35f),
+            new Vector3(0.7f, 0.05f, 0.22f), appliance);
     }
 
     private void BuildBedroom(float cx, float cz, float w, float d)
@@ -3090,9 +3313,18 @@ public class KitchenSimulator : MonoBehaviour
         float left = cx - w * 0.5f, right = cx + w * 0.5f;
         float front = cz - d * 0.5f, back = cz + d * 0.5f;
         BuildBed(cx - 0.3f, back - 1.55f, 180f);            // 床头靠北墙
-        BuildCabinet(Mathf.Min(cx + 1.45f, right - 0.55f), back - 0.7f, 180f);
-        BuildWardrobe(left + 0.5f, cz - 0.4f, 90f);         // 衣柜靠西墙
-        BuildPlant(right - 0.6f, front + 0.7f);
+        if (w >= 3.0f)
+        {
+            BuildCabinet(Mathf.Min(cx + 1.45f, right - 0.55f), back - 0.7f, 180f);
+        }
+        if (w >= 3.8f)
+        {
+            BuildWardrobe(left + 0.5f, cz - 0.4f, 90f);     // 衣柜靠西墙，窄房间不塞
+        }
+        if (w >= 3.0f)
+        {
+            BuildPlant(right - 0.6f, front + 0.7f);
+        }
     }
 
     // ── 家具构件 ──────────────────────────────────────────
@@ -8133,6 +8365,7 @@ public class KitchenSimulator : MonoBehaviour
             activeOrder = null;
             activeColleague = null;
             activeHomeowner = null;
+            activeWindow = null;
             return;
         }
 
@@ -8181,6 +8414,19 @@ public class KitchenSimulator : MonoBehaviour
         {
             StartConversation(activeHomeowner);
             return;
+        }
+
+        // 附近有窗扇：提示按 F 开关
+        activeWindow = null;
+        float bestWindow = 2.2f;
+        for (int i = 0; i < windowPanes.Count; i++)
+        {
+            float d = Distance2D(playerPosition, windowPanes[i].pivot.position);
+            if (d < bestWindow)
+            {
+                bestWindow = d;
+                activeWindow = windowPanes[i];
+            }
         }
 
         // 附近有同事就优先提示聊天
@@ -10521,6 +10767,16 @@ public class KitchenSimulator : MonoBehaviour
             Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), workingColor);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), "业主（上门报修）", titleStyle);
             GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f), "按 E 与业主交谈，登记工单", bodyStyle);
+            return;
+        }
+
+        if (activeWindow != null)
+        {
+            DrawPanel(rect, panelFill, panelBorder);
+            Fill(new Rect(rect.x + 12f, rect.y + 14f, 4f, rect.height - 28f), btnBlue);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 14f, rect.width - 56f, 28f), "窗户", titleStyle);
+            GUI.Label(new Rect(rect.x + 28f, rect.y + 46f, rect.width - 56f, 24f),
+                activeWindow.open ? "按 F 关上窗户" : "按 F 推开窗户", bodyStyle);
             return;
         }
 
